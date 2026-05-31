@@ -212,6 +212,21 @@ select option,
   color: var(--white);
 }
 .btn-danger:hover { background: var(--danger-deep); }
+
+/* Action-by-purpose colors used in admin order cards.
+   Mark preparing = warm yellow (in progress), Mark served = green (done). */
+.btn-prep {
+  background: var(--yellow-700);
+  color: #2A1E07;
+  border-color: var(--yellow-700);
+}
+.btn-prep:hover { filter: brightness(1.06); }
+.btn-serve {
+  background: #3A6E3B;
+  color: #FFFFFF;
+  border-color: #3A6E3B;
+}
+.btn-serve:hover { background: #2E5A2F; }
 .btn-block { width: 100%; }
 .btn[disabled] { opacity: .55; cursor: not-allowed; transform: none; }
 
@@ -1274,6 +1289,68 @@ code {
 .status-preparing { background: var(--brown-100); color: var(--primary-deep); }
 .status-served    { background: #DDF0D5; color: #3A6E3B; }
 .status-cancelled { background: rgba(220, 53, 69, 0.15); color: var(--danger); }
+
+/* Whole-card visual cues so admins can scan a long list and tell at a glance
+   which orders need attention vs. which are done. */
+.order-card[data-status="pending"] {
+  border-left: 5px solid var(--yellow-700);
+}
+.order-card[data-status="preparing"] {
+  border-left: 5px solid var(--primary);
+  background: linear-gradient(90deg, var(--brown-50) 0%, var(--white) 30%);
+}
+.order-card[data-status="served"] {
+  border-left: 5px solid #3A6E3B;
+  background: #F4FAF1;
+  opacity: .78;
+}
+.order-card[data-status="served"] .order-head h3,
+.order-card[data-status="served"] .order-total {
+  text-decoration: none;
+}
+.order-card[data-status="cancelled"] {
+  border-left: 5px solid var(--danger);
+  background: #FBF1F2;
+  opacity: .72;
+}
+.order-card[data-status="cancelled"] .order-head h3 {
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+}
+[data-theme="dark"] .order-card[data-status="preparing"] {
+  background: linear-gradient(90deg, var(--brown-100) 0%, var(--white) 30%);
+}
+[data-theme="dark"] .order-card[data-status="served"]    { background: #1F2A1B; }
+[data-theme="dark"] .order-card[data-status="cancelled"] { background: #2B1A1C; }
+
+/* Prominent table tag in the order card header — admins call out tables
+   verbally when food is ready, so this needs to read instantly. */
+.table-tag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #FFFFFF;
+  font-size: .82rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  box-shadow: var(--shadow-sm);
+}
+.table-tag-label {
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  opacity: .82;
+}
+.table-tag strong {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+[data-theme="dark"] .table-tag { color: #0E1419; }
 
 /* ----- Admin tables ----- */
 .toolbar {

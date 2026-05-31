@@ -721,25 +721,28 @@ function renderOrders() {
         <span>${peso(i.unitPrice * i.qty)}</span>
       </li>
     `).join('');
+    const tableLabel = o.tableNumber ? escapeHtml(String(o.tableNumber)) : '—';
     return `
-      <article class="order-card" data-id="${o.id}">
+      <article class="order-card" data-id="${o.id}" data-status="${o.status}">
         <header class="order-head">
           <h3>#${o.number}</h3>
+          <span class="table-tag" title="Table">
+            <span class="table-tag-label">Table</span>
+            <strong>${tableLabel}</strong>
+          </span>
           <span class="status-pill status-${o.status}">${o.status}</span>
         </header>
-        <div class="order-meta">
-          Table ${o.tableNumber ?? '—'} · placed ${placedAgo}
-        </div>
+        <div class="order-meta">placed ${placedAgo}</div>
         <ul>${itemsHtml}</ul>
         <div class="order-total">
           <span>Total</span>
           <span>${peso(o.total)}</span>
         </div>
         <div class="order-actions">
-          ${o.status === 'pending'    ? `<button class="btn btn-primary" data-act="preparing">Mark preparing</button>` : ''}
-          ${o.status === 'preparing'  ? `<button class="btn btn-primary" data-act="served">Mark served</button>`        : ''}
+          ${o.status === 'pending'    ? `<button class="btn btn-prep"   data-act="preparing">Mark preparing</button>` : ''}
+          ${o.status === 'preparing'  ? `<button class="btn btn-serve"  data-act="served">Mark served</button>`        : ''}
           ${o.status !== 'served' && o.status !== 'cancelled'
-            ? `<button class="btn btn-ghost"  data-act="cancelled">Cancel</button>` : ''}
+            ? `<button class="btn btn-danger" data-act="cancelled">Cancel</button>` : ''}
           <button class="btn btn-ghost" data-act="delete">Delete</button>
         </div>
       </article>
