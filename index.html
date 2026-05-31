@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=11" />
+  <link rel="stylesheet" href="style.css?v=12" />
 
   <script>
     (function () {
@@ -320,6 +320,12 @@
         </label>
         <button type="submit" class="btn btn-primary btn-block">Continue</button>
       </form>
+      <!-- Staff escape hatch — admins can sign in directly from
+           here without typing a fake table label (which would
+           otherwise become this device's table forever). -->
+      <button type="button" class="staff-login-link" id="tableStaffLoginBtn">
+        Staff? Sign in here
+      </button>
     </div>
   </div>
 
@@ -361,6 +367,28 @@
       </div>
       <div class="admin-topbar-right">
         <span class="admin-user" id="adminUserName">Admin</span>
+
+        <!-- Theme toggle — same toggleTheme handler as the customer
+             topbar button, lets admins flip dark mode without
+             leaving the panel. -->
+        <button class="icon-btn theme-toggle" id="adminThemeToggleBtn" aria-label="Toggle theme">
+          <svg class="sun" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" fill="currentColor"/>
+            <g stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <line x1="12" y1="2"  x2="12" y2="5"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+              <line x1="2"  y1="12" x2="5"  y2="12"/>
+              <line x1="19" y1="12" x2="22" y2="12"/>
+              <line x1="4.2" y1="4.2"  x2="6.3" y2="6.3"/>
+              <line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/>
+              <line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/>
+              <line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+            </g>
+          </svg>
+          <svg class="moon" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/>
+          </svg>
+        </button>
 
         <!-- Activity bell — opens a dropdown of recent admin actions
              (orders placed, status changes, menu edits, deletions).
@@ -577,6 +605,6 @@
   <div class="admin-toast-stack" id="adminToastStack" aria-live="polite"></div>
 
   <script src="store.js?v=4"></script>
-  <script src="script.js?v=8"></script>
+  <script src="script.js?v=10"></script>
 </body>
 </html>

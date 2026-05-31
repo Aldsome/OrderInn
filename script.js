@@ -150,6 +150,11 @@ function ensureTable() {
     setTableLabel(t);
     localStorage.setItem('bossb_table', t);
   } else {
+    // Don't force the table prompt on a returning admin — they
+    // might just be reopening the panel and shouldn't have to
+    // type a fake table to get past this screen.
+    const session = Store.getSession();
+    if (session && session.role === 'admin') return;
     openTableModal();
   }
 }
@@ -398,10 +403,55 @@ cartItemsEl.addEventListener('click', (e) => {
   }
 });
 
-function openCart()  { cartDrawer.classList.add('open');    cartDrawer.setAttribute('aria-hidden', 'false'); }
-function closeCart() { cartDrawer.classList.remove('open'); cartDrawer.setAttribute('aria-hidden', 'true');  }
+function openCart()  {
+  cartDrawer.classList.add('open');
+  cartDrawer.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('cart-open');   // hides the FAB via CSS
+}
+function closeCart() {
+  cartDrawer.classList.remove('open');
+  cartDrawer.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('cart-open');
+}
 $('#fabCartBtn').addEventListener('click', openCart);
 $('#closeCartBtn').addEventListener('click', closeCart);
+
+/* Click outside the drawer to close it — but ONLY when the
+   click lands on truly empty page area. Clicking a product
+   card (to add another item), a category chip, a modal, or
+   any cart-related control keeps the drawer open. */
+document.addEventListener('click', (e) => {
+  if (!cartDrawer.classList.contains('open')) return;
+  const t = e.target;
+  if (cartDrawer.contains(t))                    return;   // inside drawer
+  if (t.closest('.product-card'))                return;   // adding another item
+  if (t.closest('.chip'))                        return;   // switching categories
+  if (t.closest('.fab-cart, .fab-myorders'))     return;   // floating controls
+  if (t.closest('.modal, .myorders-sheet'))      return;   // any open popup
+  if (t.closest('.topbar-actions, .table-strip, .order-status-banner')) return;
+  closeCart();
+});
+
+/* Shake animation — called whenever an item is added to the
+   cart. The cart FAB pulses to draw the eye toward where the
+   item went; the source product card briefly rocks so the
+   customer can see "yes, this one." */
+function bumpShake(itemId) {
+  const fab = $('#fabCartBtn');
+  if (fab) {
+    fab.classList.remove('shake');
+    void fab.offsetWidth;                     // restart the animation
+    fab.classList.add('shake');
+    setTimeout(() => fab.classList.remove('shake'), 600);
+  }
+  const card = document.querySelector(`.product-card[data-id="${itemId}"]`);
+  if (card) {
+    card.classList.remove('shake');
+    void card.offsetWidth;
+    card.classList.add('shake');
+    setTimeout(() => card.classList.remove('shake'), 600);
+  }
+}
 
 /* ==========================================================
    CUSTOMIZER MODAL
@@ -440,6 +490,7 @@ function openCustomizer(itemId, opts = {}) {
   if (!canCustomize && !opts.editLineKey) {
     addLine(item.id, defaultConfigFor(item), 1);
     showToast(`${item.name} added`, 'success');
+    bumpShake(item.id);
     return;
   }
 
@@ -492,6 +543,7 @@ function openCustomizer(itemId, opts = {}) {
     } else {
       addLine(item.id, config, state.pendingQty);
       showToast(`${item.name} added`, 'success');
+      bumpShake(item.id);
     }
     closeCustomizer();
   };
@@ -947,6 +999,16 @@ $('#openStaffLoginBtn').addEventListener('click', () => {
   else                                      openStaffLogin();
 });
 
+/* Staff escape hatch on the forced table modal — lets an admin
+   sign in without first being forced to type a table label
+   (which would otherwise be locked in as this device's table). */
+$('#tableStaffLoginBtn').addEventListener('click', () => {
+  closeTableModal();
+  const session = Store.getSession();
+  if (session && session.role === 'admin') enterAdminPanel(session);
+  else                                      openStaffLogin();
+});
+
 /* Header Admin shortcut — visible only when a staff session
    is active. Click enters the admin panel directly. */
 function refreshAdminHeaderBtn() {
@@ -974,6 +1036,10 @@ $('#staffLoginForm').addEventListener('submit', async (e) => {
     showToast(`Welcome, ${session.name}`, 'success');
     e.target.reset();
     closeStaffLogin();
+    // If the table prompt was still up (admin signed in before
+    // setting a table), dismiss it — admins aren't required to
+    // pick a table to access the panel.
+    closeTableModal();
     enterAdminPanel(session);
   } catch (err) {
     errEl.textContent = err.message;
@@ -1746,9 +1812,10 @@ $('#exportCsvBtn').addEventListener('click', () => {
 });
 
 /* ==========================================================
-   THEME TOGGLE
+   THEME TOGGLE  (customer + admin both wired to the same fn)
    ========================================================== */
 $('#themeToggleBtn').addEventListener('click', toggleTheme);
+$('#adminThemeToggleBtn').addEventListener('click', toggleTheme);
 
 /* ==========================================================
    HELPERS
