@@ -23,5 +23,7 @@ create index if not exists bb_sessions_last_active_idx on public.bb_sessions (la
 -- Prototype-grade RLS (matches the other tables in supabase.sql):
 -- open to the anon role so the customer UI can read/claim names.
 alter table public.bb_sessions enable row level security;
+drop policy if exists "sessions read"  on public.bb_sessions;
+drop policy if exists "sessions write" on public.bb_sessions;
 create policy "sessions read"  on public.bb_sessions for select using (true);
 create policy "sessions write" on public.bb_sessions for all    using (true) with check (true);
