@@ -1867,9 +1867,25 @@ $('#bellList').addEventListener('click', (e) => {
   const orderId = row.dataset.jumpOrder;
   $('#bellDropdown').hidden = true;
   if (!orderId) return;
-  switchAdminTab('orders');
-  // renderOrders runs synchronously inside switchAdminTab; wait
-  // one frame so the new DOM is laid out before we scroll.
+
+  // The order may have been cleared/deleted since the notification
+  // was logged — there's nothing to jump to.
+  if (!Store.getOrders().some(o => o.id === orderId)) {
+    showAdminToast({ title: 'That order is no longer in the list', variant: 'info' });
+    return;
+  }
+
+  switchAdminTab('orders');   // renders the orders list synchronously
+  // If the active filter (e.g. "Pending only") hides this order,
+  // widen to "All" so the notification can always reach its target
+  // — otherwise the card isn't in the DOM and the jump silently
+  // does nothing.
+  if (!$(`.order-card[data-id="${orderId}"]`)) {
+    $('#orderFilter').value = 'all';
+    renderOrders();
+  }
+  // Wait one frame so the (possibly re-rendered) DOM is laid out
+  // before we scroll + flash.
   requestAnimationFrame(() => flashOrderCard(orderId));
 });
 
