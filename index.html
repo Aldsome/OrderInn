@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BossB Coffee Shop — Order</title>
+  <meta name="description" content="Scan, tap, sip. In-store ordering for BossB Coffee Shop." />
+  <meta name="theme-color" content="#A0855E" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=5" />
+
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('bossb-theme');
+        var theme = (saved === 'dark' || saved === 'light')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+
+  <!-- ==========================================================
+       CUSTOMER VIEW  (default)
+       ========================================================== -->
+  <div class="customer-view" id="customerView">
+
+    <!-- Header -->
+    <header class="topbar">
+      <div class="container topbar-row">
+        <div class="brand">
+          <span class="brand-mark">BB</span>
+          <div>
+            <strong class="brand-name" id="brandName">BossB Coffee Shop</strong>
+            <small class="brand-tagline" id="brandTagline">Freshly brewed, locally loved.</small>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-btn theme-toggle" id="themeToggleBtn" aria-label="Toggle theme">
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" fill="currentColor"/>
+              <g stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <line x1="12" y1="2"  x2="12" y2="5"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+                <line x1="2"  y1="12" x2="5"  y2="12"/>
+                <line x1="19" y1="12" x2="22" y2="12"/>
+                <line x1="4.2" y1="4.2"  x2="6.3" y2="6.3"/>
+                <line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/>
+                <line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/>
+                <line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+              </g>
+            </svg>
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Table strip — shows the table number (from ?table= URL) -->
+      <div class="table-strip container">
+        <span>Table</span>
+        <strong id="tableNumberDisplay">—</strong>
+        <button class="link-mini" id="changeTableBtn">change</button>
+      </div>
+    </header>
+
+    <!-- Category chips -->
+    <nav class="chips container" id="categoryChips" aria-label="Menu categories">
+      <button class="chip active" data-category="all">All</button>
+      <button class="chip" data-category="coffee">Coffee</button>
+      <button class="chip" data-category="tea">Tea</button>
+      <button class="chip" data-category="cold">Cold</button>
+      <button class="chip" data-category="pastry">Pastries</button>
+    </nav>
+
+    <!-- Menu grid -->
+    <main class="menu container" id="menuGrid">
+      <!-- cards injected via script.js -->
+    </main>
+
+    <!-- Floating cart button -->
+    <button class="fab-cart" id="fabCartBtn" aria-label="Open cart">
+      <span class="fab-cart-text">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path fill="currentColor" d="M7 4h-2l-1 2v2h2l3.6 7.59-1.35 2.44A2 2 0 0 0 10 21h12v-2H10.42a.25.25 0 0 1-.22-.37L11.1 17h7.45a2 2 0 0 0 1.8-1.11l3.24-6.5A1 1 0 0 0 22.7 8H6.21L5.27 6H3V4z"/>
+          <circle cx="10" cy="22" r="1.5" fill="currentColor"/>
+          <circle cx="20" cy="22" r="1.5" fill="currentColor"/>
+        </svg>
+        <span>View Cart</span>
+      </span>
+      <span class="fab-cart-meta">
+        <span id="fabCartCount">0</span> items · <span id="fabCartTotal">₱0</span>
+      </span>
+    </button>
+
+    <!-- Footer (discreet Staff Login link) -->
+    <footer class="site-footer container">
+      <p class="muted small">© <span id="year"></span> BossB Coffee Shop · In-store ordering</p>
+      <button class="staff-login-link" id="openStaffLoginBtn">Staff Login</button>
+    </footer>
+  </div>
+
+  <!-- ==========================================================
+       CART DRAWER
+       ========================================================== -->
+  <aside class="cart-drawer" id="cartDrawer" aria-hidden="true">
+    <header class="drawer-head">
+      <h3>Your Order</h3>
+      <button class="icon-btn close-btn" id="closeCartBtn" aria-label="Close cart">✕</button>
+    </header>
+    <div class="drawer-body" id="cartItems">
+      <p class="empty-state">Your cart is empty. Tap any item to add ☕</p>
+    </div>
+    <footer class="drawer-foot">
+      <div class="row total">
+        <span>Total</span>
+        <strong id="cartTotal">₱0.00</strong>
+      </div>
+      <button class="btn btn-primary btn-block" id="placeOrderBtn" disabled>Place Order</button>
+      <p class="pay-note muted small">💵 Pay at the counter when ready.</p>
+    </footer>
+  </aside>
+
+  <!-- ==========================================================
+       ITEM CUSTOMIZER MODAL
+       ========================================================== -->
+  <div class="modal" id="customizerModal" aria-hidden="true">
+    <div class="modal-card customizer-card" role="dialog" aria-labelledby="czTitle">
+      <header class="modal-head">
+        <h3 id="czTitle">Customize</h3>
+        <button class="icon-btn close-btn" id="closeCustomizerBtn" aria-label="Close">✕</button>
+      </header>
+
+      <div class="customizer-body">
+        <div class="cz-hero">
+          <div class="placeholder-img cz-img" id="czImage" aria-hidden="true"></div>
+          <div>
+            <p class="eyebrow" id="czCategory">Coffee</p>
+            <h4 id="czName">Item name</h4>
+            <p class="muted small" id="czDesc">Description</p>
+            <p class="cz-base"><span id="czBasePrice">₱0</span></p>
+          </div>
+        </div>
+
+        <form id="customizerForm">
+          <section class="cz-section" id="czSizeSection">
+            <h5>Size</h5>
+            <div class="cz-options" id="czSizeOptions"></div>
+          </section>
+
+          <section class="cz-section" id="czTempSection">
+            <h5>Serve it</h5>
+            <div class="cz-options" id="czTempOptions"></div>
+          </section>
+
+          <section class="cz-section" id="czMilkSection">
+            <h5>Milk</h5>
+            <div class="cz-options" id="czMilkOptions"></div>
+          </section>
+
+          <section class="cz-section" id="czSugarSection">
+            <h5>Sweetness</h5>
+            <div class="cz-options cz-pill-row" id="czSugarOptions"></div>
+          </section>
+
+          <section class="cz-section">
+            <h5>Notes <small class="muted">(optional)</small></h5>
+            <textarea id="czNotes" rows="2" placeholder="less ice, decaf, light foam…"></textarea>
+          </section>
+
+          <footer class="cz-footer">
+            <div class="qty-stepper">
+              <button type="button" id="czQtyDec" aria-label="Less">−</button>
+              <span id="czQty">1</span>
+              <button type="button" id="czQtyInc" aria-label="More">+</button>
+            </div>
+            <button type="submit" class="btn btn-primary cz-add-btn">
+              <span id="czAddLabel">Add to cart</span>
+              <span class="cz-total" id="czTotal">₱0</span>
+            </button>
+          </footer>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       ORDER PLACED MODAL  (customer confirmation)
+       ========================================================== -->
+  <div class="modal" id="orderPlacedModal" aria-hidden="true">
+    <div class="modal-card placed-card" role="dialog">
+      <div class="placed-tick" aria-hidden="true">✓</div>
+      <h3>Order placed!</h3>
+      <p class="muted">Show this number to your server.</p>
+      <div class="order-number">#<span id="placedOrderNumber">—</span></div>
+      <p class="muted small" id="placedTable">Table —</p>
+      <p class="pay-note">💵 Pay at the counter when your order is ready.</p>
+      <button class="btn btn-primary btn-block" id="newOrderBtn">Start new order</button>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       TABLE NUMBER MODAL  (if URL has no ?table=)
+       ========================================================== -->
+  <div class="modal" id="tableModal" aria-hidden="true">
+    <div class="modal-card small-card" role="dialog">
+      <h3>Which table are you at?</h3>
+      <p class="muted small">Helps our staff find you when your order is ready.</p>
+      <form id="tableForm">
+        <label>Table number
+          <input type="number" id="tableInput" min="1" max="999" required placeholder="e.g. 7" />
+        </label>
+        <button type="submit" class="btn btn-primary btn-block">Continue</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       STAFF LOGIN MODAL  (admin-only, no register)
+       ========================================================== -->
+  <div class="modal" id="staffLoginModal" aria-hidden="true">
+    <div class="modal-card auth-card" role="dialog" aria-labelledby="staffLoginTitle">
+      <header class="modal-head">
+        <h3 id="staffLoginTitle">Staff Login</h3>
+        <button class="icon-btn close-btn" id="closeStaffLoginBtn" aria-label="Close">✕</button>
+      </header>
+
+      <form id="staffLoginForm" class="auth-form">
+        <label>Email
+          <input type="email" name="email" required autocomplete="username" placeholder="admin@bossb.com" />
+        </label>
+        <label>Password
+          <input type="password" name="password" required autocomplete="current-password" minlength="8" />
+        </label>
+        <p class="form-error" id="staffLoginError" hidden></p>
+        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+        <p class="hint muted small">
+          Default: <code>admin@bossb.com</code> / <code>admin1234</code>
+        </p>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       ADMIN PANEL  (full-screen overlay; visible only when
+       signed in as admin)
+       ========================================================== -->
+  <div class="admin-panel" id="adminPanel" hidden>
+    <header class="admin-topbar">
+      <div class="admin-brand">
+        <span class="brand-mark sm">BB</span>
+        <strong>Admin Panel</strong>
+      </div>
+      <div class="admin-topbar-right">
+        <span class="admin-user" id="adminUserName">Admin</span>
+        <button class="btn btn-ghost" id="exitAdminBtn">View as customer</button>
+        <button class="btn btn-danger" id="adminLogoutBtn">Sign out</button>
+      </div>
+    </header>
+
+    <nav class="admin-tabs">
+      <button class="admin-tab active" data-admin-tab="orders">Orders <span class="tab-badge" id="ordersBadge">0</span></button>
+      <button class="admin-tab" data-admin-tab="menu">Menu</button>
+      <button class="admin-tab" data-admin-tab="settings">Settings</button>
+    </nav>
+
+    <main class="admin-content">
+      <!-- ----- Orders ----- -->
+      <section class="admin-pane" data-admin-pane="orders">
+        <div class="pane-head">
+          <h2>Active Orders</h2>
+          <div class="row-gap">
+            <select id="orderFilter">
+              <option value="active">Active (pending + preparing)</option>
+              <option value="pending">Pending only</option>
+              <option value="preparing">Preparing only</option>
+              <option value="served">Served</option>
+              <option value="all">All</option>
+            </select>
+            <button class="btn btn-ghost" id="clearServedBtn">Clear served</button>
+          </div>
+        </div>
+        <div class="orders-list" id="ordersList">
+          <p class="empty-state">No orders yet.</p>
+        </div>
+      </section>
+
+      <!-- ----- Menu ----- -->
+      <section class="admin-pane" data-admin-pane="menu" hidden>
+        <div class="pane-head">
+          <h2>Menu</h2>
+          <button class="btn btn-primary" id="addMenuItemBtn">+ Add item</button>
+        </div>
+        <div class="toolbar">
+          <input type="search" id="menuSearch" placeholder="Search…" />
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th></th><th>Name</th><th>Category</th><th>Price</th><th>Tag</th><th class="right">Actions</th></tr>
+            </thead>
+            <tbody id="menuTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ----- Settings ----- -->
+      <section class="admin-pane" data-admin-pane="settings" hidden>
+        <div class="pane-head">
+          <h2>Shop Settings</h2>
+          <button class="btn btn-primary" id="saveSettingsBtn">Save</button>
+        </div>
+        <form class="settings-form" id="settingsForm">
+          <label>Shop name <input type="text" name="shopName" /></label>
+          <label>Tagline   <input type="text" name="tagline" /></label>
+          <label>Currency symbol <input type="text" name="currency" maxlength="3" /></label>
+          <label>Number of tables <input type="number" name="tables" min="1" max="999" /></label>
+        </form>
+
+        <div class="danger-card">
+          <h4>Reset menu to defaults</h4>
+          <p class="muted small">Erases custom menu changes.</p>
+          <button class="btn btn-danger" id="resetMenuBtn">Reset menu</button>
+        </div>
+        <div class="danger-card">
+          <h4>Factory reset</h4>
+          <p class="muted small">Wipes ALL local data (menu, orders, settings, sign-in). You'll be signed out.</p>
+          <button class="btn btn-danger" id="factoryResetBtn">Factory reset</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ==========================================================
+       ITEM EDIT MODAL  (admin)
+       ========================================================== -->
+  <div class="modal" id="itemModal" aria-hidden="true">
+    <div class="modal-card" role="dialog">
+      <header class="modal-head">
+        <h3 id="itemModalTitle">Edit item</h3>
+        <button class="icon-btn close-btn" id="closeItemModalBtn" aria-label="Close">✕</button>
+      </header>
+      <form id="itemForm" class="settings-form">
+        <div class="grid-2">
+          <label>ID <input type="text" name="id" required pattern="[a-z0-9_-]+" /></label>
+          <label>Name <input type="text" name="name" required /></label>
+        </div>
+        <div class="grid-2">
+          <label>Category
+            <select name="category" required>
+              <option value="coffee">Coffee</option>
+              <option value="tea">Tea</option>
+              <option value="cold">Cold</option>
+              <option value="pastry">Pastries</option>
+            </select>
+          </label>
+          <label>Price <input type="number" name="price" required min="0" step="1" /></label>
+        </div>
+        <div class="grid-2">
+          <label>Emoji <input type="text" name="emoji" maxlength="4" /></label>
+          <label>Tag (optional) <input type="text" name="tag" /></label>
+        </div>
+        <label>Description <textarea name="desc" rows="2" required></textarea></label>
+        <label>Image URL <input type="url" name="img" placeholder="https://…" /></label>
+        <fieldset>
+          <legend>Options the customer can choose</legend>
+          <div class="check-row">
+            <label><input type="checkbox" name="opt_size" /> Size</label>
+            <label><input type="checkbox" name="opt_temp" /> Hot/Iced</label>
+            <label><input type="checkbox" name="opt_milk" /> Milk</label>
+            <label><input type="checkbox" name="opt_sugar" /> Sugar</label>
+          </div>
+        </fieldset>
+        <p class="form-error" id="itemFormError" hidden></p>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" id="cancelItemBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save item</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast" aria-live="polite"></div>
+
+  <script src="store.js?v=1"></script>
+  <script src="script.js?v=1"></script>
+</body>
+</html>
