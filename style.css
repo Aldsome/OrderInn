@@ -896,6 +896,12 @@ select option,
 }
 .modal.open { display: flex; }
 
+/* The duplicate-table prompt is opened from within the table
+   modal flow; keep it above the standard .modal layer so it can
+   never be painted behind another open modal (defense-in-depth —
+   checkDuplicateTable also closes the table modal first). */
+#dupTableModal { z-index: 120; }
+
 .modal-card {
   background: var(--white);
   width: 100%;

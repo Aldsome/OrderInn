@@ -242,6 +242,7 @@ function checkDuplicateTable(label, onAccept) {
   }
   pendingTableLabel = label;
   pendingTableAccept = onAccept;
+  closeTableModal();            // ensure the dup prompt isn't painted behind the table modal
   openModal('#dupTableModal');
 }
 let pendingTableLabel  = null;
