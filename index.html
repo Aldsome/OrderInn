@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=10" />
+  <link rel="stylesheet" href="style.css?v=11" />
 
   <script>
     (function () {
@@ -412,7 +412,7 @@
             <strong id="dayActive">0</strong>
           </div>
         </div>
-        <div class="pane-head sticky">
+        <div class="pane-head">
           <h2>Active Orders</h2>
           <div class="row-gap">
             <select id="orderFilter">
@@ -422,6 +422,7 @@
               <option value="served">Served</option>
               <option value="all">All</option>
             </select>
+            <button class="btn btn-ghost" id="exportCsvBtn">Export today (.csv)</button>
             <button class="btn btn-ghost" id="clearServedBtn">Clear served</button>
           </div>
         </div>
@@ -456,10 +457,30 @@
           <button class="btn btn-primary" id="saveSettingsBtn">Save</button>
         </div>
         <form class="settings-form" id="settingsForm">
-          <label>Shop name <input type="text" name="shopName" /></label>
-          <label>Tagline   <input type="text" name="tagline" /></label>
-          <label>Currency symbol <input type="text" name="currency" maxlength="3" /></label>
-          <label>Number of tables <input type="number" name="tables" min="1" max="999" /></label>
+          <fieldset>
+            <legend>Storefront</legend>
+            <label>Shop name <input type="text" name="shopName" /></label>
+            <label>Tagline   <input type="text" name="tagline" /></label>
+            <label>Currency symbol <input type="text" name="currency" maxlength="3" /></label>
+            <label>Number of tables <input type="number" name="tables" min="1" max="999" /></label>
+          </fieldset>
+
+          <!-- Receipts + daily reports. Tax rate flows into both
+               the receipt modal and the CSV export columns. -->
+          <fieldset>
+            <legend>Receipts &amp; reports</legend>
+            <label>Business name <input type="text" name="businessName" /></label>
+            <label>Business address <input type="text" name="businessAddr" /></label>
+            <label>TIN (optional) <input type="text" name="businessTin" /></label>
+            <div class="grid-2">
+              <label>Tax rate (%) <input type="number" name="taxRate" min="0" max="50" step="0.01" /></label>
+              <label>Tax label <input type="text" name="taxLabel" maxlength="20" placeholder="VAT" /></label>
+            </div>
+            <label class="check-inline">
+              <input type="checkbox" name="taxInclusive" />
+              <span>Item prices already include tax (VAT-inclusive)</span>
+            </label>
+          </fieldset>
         </form>
 
         <div class="danger-card">
@@ -525,6 +546,29 @@
     </div>
   </div>
 
+  <!-- ==========================================================
+       RECEIPT MODAL  (admin)
+       Renders a printable receipt for one order. The "Send to
+       printer" button currently calls a stub — replace the body
+       of sendReceiptToPrinter() in script.js with a real
+       receipt-printer API call (ESC/POS, network endpoint,
+       Bluetooth, etc.) when the hardware is available.
+       ========================================================== -->
+  <div class="modal" id="receiptModal" aria-hidden="true">
+    <div class="modal-card receipt-card" role="dialog" aria-labelledby="receiptTitle">
+      <header class="modal-head">
+        <h3 id="receiptTitle">Receipt</h3>
+        <button class="icon-btn close-btn" id="closeReceiptBtn" aria-label="Close">✕</button>
+      </header>
+      <div class="receipt-preview" id="receiptPreview"></div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost"   id="downloadReceiptBtn">Download .txt</button>
+        <button type="button" class="btn btn-ghost"   id="printReceiptBtn">Browser print</button>
+        <button type="button" class="btn btn-primary" id="sendReceiptBtn">Send to printer (API)</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div class="toast" id="toast" aria-live="polite"></div>
 
@@ -532,7 +576,7 @@
        can include an Undo button — used for menu deletes. -->
   <div class="admin-toast-stack" id="adminToastStack" aria-live="polite"></div>
 
-  <script src="store.js?v=3"></script>
-  <script src="script.js?v=7"></script>
+  <script src="store.js?v=4"></script>
+  <script src="script.js?v=8"></script>
 </body>
 </html>

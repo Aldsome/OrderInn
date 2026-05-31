@@ -37,10 +37,20 @@ const CANCEL_WINDOW_MS = 60 * 1000;
    DEFAULTS
    ========================================================== */
 const DEFAULT_CONFIG = {
-  shopName: 'BossB Coffee Shop',
-  tagline:  'Freshly brewed, locally loved.',
-  currency: '₱',
-  tables:   12,
+  shopName:    'BossB Coffee Shop',
+  tagline:     'Freshly brewed, locally loved.',
+  currency:    '₱',
+  tables:      12,
+  /* Receipts + daily reports — admin-editable in Settings.
+     taxInclusive = true means item prices already include VAT
+     (typical PH retail behavior). When false, tax is added on
+     top at receipt/CSV time. */
+  taxRate:     12,             // percent
+  taxInclusive:true,
+  taxLabel:    'VAT',
+  businessName:'BossB Coffee Shop',
+  businessAddr:'123 Sample St, Quezon City',
+  businessTin: '',             // PH BIR Tax Identification Number
 };
 
 const img = (topic, lock, w = 600, h = 420) =>
@@ -282,6 +292,15 @@ const Store = {
       id = 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
       localStorage.setItem(STORE_KEYS.client, id);
     }
+    return id;
+  },
+  /* Mint a fresh clientId. Old orders stamped with the previous
+     id are still in the store (admin can see them) but they no
+     longer match Store.getMyOrders() for this browser — so the
+     next customer at this device gets a clean "My orders" list. */
+  resetClientId() {
+    const id = 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem(STORE_KEYS.client, id);
     return id;
   },
 

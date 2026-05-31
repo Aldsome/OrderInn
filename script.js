@@ -851,6 +851,13 @@ function resetForNextCustomer() {
   clearCart();
   closeMyOrders();
   dismissThanks();
+  // Mint a fresh clientId so the next customer at this device
+  // sees a clean "My orders" list — the previous customer's
+  // orders remain in the store (visible to admin) but stop
+  // matching this browser's Store.getMyOrders().
+  Store.resetClientId();
+  thanksShown = false;
+  refreshMyOrdersFab();
   // Force the customer back to the table prompt — they cannot
   // start ordering again without picking a table.
   openTableModal();
@@ -1088,6 +1095,7 @@ function renderOrders() {
           ${o.status === 'preparing'  ? `<button class="btn btn-serve"  data-act="served">Mark served</button>`        : ''}
           ${o.status !== 'served' && o.status !== 'cancelled'
             ? `<button class="btn btn-danger" data-act="cancelled">Cancel</button>` : ''}
+          <button class="btn btn-ghost" data-act="receipt">🧾 Receipt</button>
           <button class="btn btn-ghost" data-act="delete">Delete</button>
         </div>
       </article>
@@ -1112,6 +1120,10 @@ $('#ordersList').addEventListener('click', (e) => {
   const act = btn.dataset.act;
   const order = Store.getOrders().find(o => o.id === id);
   const label = order ? `#${order.number}` : 'Order';
+  if (act === 'receipt') {
+    if (order) openReceiptModal(order);
+    return;
+  }
   if (act === 'delete') {
     if (!confirm('Delete this order?')) return;
     Store.deleteOrder(id);
@@ -1294,15 +1306,22 @@ function loadSettingsForm() {
   const cfg = Store.getConfig();
   const f = $('#settingsForm');
   Object.entries(cfg).forEach(([k, v]) => {
-    if (f.elements[k]) f.elements[k].value = v;
+    const el = f.elements[k];
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = !!v;
+    else                        el.value   = v;
   });
 }
 $('#saveSettingsBtn').addEventListener('click', () => {
-  const fd = new FormData($('#settingsForm'));
+  const f = $('#settingsForm');
+  const fd = new FormData(f);
   const patch = {};
   for (const [k, v] of fd.entries()) {
-    patch[k] = (k === 'tables') ? Number(v) : v;
+    patch[k] = (k === 'tables' || k === 'taxRate') ? Number(v) : v;
   }
+  // Checkboxes only appear in FormData when checked, so we read
+  // them directly to capture the off state too.
+  patch.taxInclusive = f.elements.taxInclusive?.checked || false;
   Store.setConfig(patch);
   CONFIG = Store.getConfig();
   applyConfigToDOM();
@@ -1476,6 +1495,255 @@ setInterval(() => {
   if (adminPanel.hidden) return;
   refreshAdminActivity();
 }, 4000);
+
+/* ==========================================================
+   TAX MATH  (shared between receipts and the CSV exporter)
+   - taxInclusive: order.total already includes VAT. Tax is the
+     embedded portion; subtotal is total minus tax.
+   - taxExclusive: order.total is pre-tax. Tax is added on top,
+     reported grand total = order.total + tax.
+   ========================================================== */
+function taxBreakdown(orderTotal) {
+  const rate = Number(CONFIG.taxRate || 0) / 100;
+  if (CONFIG.taxInclusive) {
+    const subtotal = rate > 0 ? orderTotal / (1 + rate) : orderTotal;
+    const tax      = orderTotal - subtotal;
+    return { subtotal, tax, grand: orderTotal };
+  }
+  const tax   = orderTotal * rate;
+  const grand = orderTotal + tax;
+  return { subtotal: orderTotal, tax, grand };
+}
+
+/* ==========================================================
+   RECEIPT MODAL  (admin)
+   Renders a printable receipt preview. The "Send to printer
+   (API)" button is a stub — wire it to a real receipt printer
+   (ESC/POS over network/Bluetooth, vendor SDK, etc.).
+   ========================================================== */
+function openReceiptModal(order) {
+  const html = buildReceiptHtml(order);
+  $('#receiptPreview').innerHTML = html;
+  $('#sendReceiptBtn').dataset.orderId      = order.id;
+  $('#downloadReceiptBtn').dataset.orderId  = order.id;
+  $('#printReceiptBtn').dataset.orderId     = order.id;
+  openModal('#receiptModal');
+}
+function closeReceiptModal() { closeModal('#receiptModal'); }
+$('#closeReceiptBtn').addEventListener('click', closeReceiptModal);
+bindBackdropClose('#receiptModal', closeReceiptModal);
+
+function buildReceiptHtml(order) {
+  const { subtotal, tax, grand } = taxBreakdown(order.total);
+  const taxLabel = escapeHtml(CONFIG.taxLabel || 'Tax');
+  const taxRate  = Number(CONFIG.taxRate || 0);
+  const placed   = new Date(order.placedAt);
+  const served   = order.servedAt ? new Date(order.servedAt) : null;
+  const lines = order.items.map(i => `
+    <div class="rec-line">
+      <span class="rec-line-name">${i.qty} × ${escapeHtml(i.name)}${i.summary ? `<small>${escapeHtml(i.summary)}</small>` : ''}</span>
+      <span class="rec-line-price">${peso(i.unitPrice * i.qty)}</span>
+    </div>
+  `).join('');
+  return `
+    <div class="receipt" id="receiptPrintable">
+      <header>
+        <strong>${escapeHtml(CONFIG.businessName || CONFIG.shopName)}</strong>
+        <small>${escapeHtml(CONFIG.businessAddr || '')}</small>
+        ${CONFIG.businessTin ? `<small>TIN: ${escapeHtml(CONFIG.businessTin)}</small>` : ''}
+      </header>
+      <hr>
+      <div class="rec-row"><span>Order</span><strong>#${order.number}</strong></div>
+      <div class="rec-row"><span>Table</span><strong>${escapeHtml(String(order.tableNumber || '—'))}</strong></div>
+      <div class="rec-row"><span>Placed</span><strong>${placed.toLocaleString()}</strong></div>
+      ${served ? `<div class="rec-row"><span>Served</span><strong>${served.toLocaleString()}</strong></div>` : ''}
+      <hr>
+      ${lines}
+      <hr>
+      <div class="rec-row"><span>Subtotal</span><strong>${peso(subtotal)}</strong></div>
+      <div class="rec-row"><span>${taxLabel} (${taxRate}%${CONFIG.taxInclusive ? ', incl.' : ''})</span><strong>${peso(tax)}</strong></div>
+      <div class="rec-row total"><span>TOTAL</span><strong>${peso(grand)}</strong></div>
+      <hr>
+      <p class="rec-thanks">Thank you ☕</p>
+    </div>
+  `;
+}
+
+/* PLACEHOLDER — wire the actual receipt printer here. The
+   `order` arg has everything you need: order.id, order.number,
+   order.tableNumber, order.items (qty, name, unitPrice,
+   summary), order.total, plus the taxBreakdown() result. */
+async function sendReceiptToPrinter(order) {
+  // TODO(receipt-api): replace this stub with the real call.
+  // Example shape — adjust to whatever the printer expects:
+  //
+  //   await fetch('/api/printer/receipt', {
+  //     method: 'POST',
+  //     headers: { 'Content-Type': 'application/json' },
+  //     body: JSON.stringify({
+  //       order,
+  //       breakdown: taxBreakdown(order.total),
+  //       shop: { name: CONFIG.businessName, addr: CONFIG.businessAddr, tin: CONFIG.businessTin },
+  //     }),
+  //   });
+  console.warn('[receipt] no printer API wired — printing stub for order', order);
+  await new Promise(r => setTimeout(r, 300));
+}
+
+$('#sendReceiptBtn').addEventListener('click', async () => {
+  const id = $('#sendReceiptBtn').dataset.orderId;
+  const o  = Store.getOrders().find(x => x.id === id);
+  if (!o) return;
+  try {
+    await sendReceiptToPrinter(o);
+    showAdminToast({ title: `Receipt #${o.number} sent`, variant: 'success' });
+  } catch (err) {
+    showAdminToast({ title: `Printer error: ${err.message || err}`, variant: 'danger' });
+  }
+});
+
+$('#printReceiptBtn').addEventListener('click', () => {
+  const id = $('#printReceiptBtn').dataset.orderId;
+  const o  = Store.getOrders().find(x => x.id === id);
+  if (!o) return;
+  const win = window.open('', '_blank', 'width=380,height=600');
+  if (!win) { showAdminToast({ title: 'Pop-up blocked', variant: 'danger' }); return; }
+  win.document.write(`
+    <html><head><title>Receipt #${o.number}</title>
+    <style>
+      body { font-family: ui-monospace, Menlo, Consolas, monospace; max-width: 320px; margin: 12px auto; }
+      .receipt { font-size: 12px; line-height: 1.4; }
+      .rec-row { display: flex; justify-content: space-between; }
+      .rec-line { display: flex; justify-content: space-between; }
+      .rec-line small { display: block; opacity: .65; }
+      .total { font-size: 14px; font-weight: 700; }
+      hr { border: none; border-top: 1px dashed #999; margin: 6px 0; }
+      header { text-align: center; }
+      header strong { display: block; font-size: 14px; }
+      header small { display: block; opacity: .75; }
+      .rec-thanks { text-align: center; margin: 6px 0 0; }
+    </style></head><body>${buildReceiptHtml(o)}
+    <script>window.onload = () => { window.print(); };<\/script>
+    </body></html>
+  `);
+  win.document.close();
+});
+
+$('#downloadReceiptBtn').addEventListener('click', () => {
+  const id = $('#downloadReceiptBtn').dataset.orderId;
+  const o  = Store.getOrders().find(x => x.id === id);
+  if (!o) return;
+  const { subtotal, tax, grand } = taxBreakdown(o.total);
+  const lines = [
+    CONFIG.businessName || CONFIG.shopName,
+    CONFIG.businessAddr || '',
+    CONFIG.businessTin ? 'TIN: ' + CONFIG.businessTin : '',
+    '-------------------------------',
+    `Order #${o.number}`,
+    `Table:  ${o.tableNumber || '-'}`,
+    `Placed: ${new Date(o.placedAt).toLocaleString()}`,
+    o.servedAt ? `Served: ${new Date(o.servedAt).toLocaleString()}` : '',
+    '-------------------------------',
+    ...o.items.map(i =>
+      `${i.qty} x ${i.name}${i.summary ? ' — ' + i.summary : ''}  ${peso(i.unitPrice * i.qty)}`
+    ),
+    '-------------------------------',
+    `Subtotal:  ${peso(subtotal)}`,
+    `${CONFIG.taxLabel || 'Tax'} (${CONFIG.taxRate}%${CONFIG.taxInclusive ? ', incl.' : ''}):  ${peso(tax)}`,
+    `TOTAL:     ${peso(grand)}`,
+    '',
+    'Thank you!',
+  ].filter(Boolean).join('\n');
+  triggerDownload(`receipt-${o.number}.txt`, lines, 'text/plain');
+});
+
+/* ==========================================================
+   DAILY REPORT  (CSV exporter)
+   - One row per order placed today, with tax breakdown.
+   - Summary row at the bottom (gross / net / tax).
+   - "Today" = local-time calendar day.
+   ========================================================== */
+function buildDailyCsv() {
+  const orders = Store.getOrders();
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  const sameDay = (iso) => {
+    if (!iso) return false;
+    const t = new Date(iso);
+    return t.getFullYear() === y && t.getMonth() === m && t.getDate() === d;
+  };
+  const todays = orders.filter(o => sameDay(o.placedAt));
+
+  const headers = [
+    'Order #', 'Table', 'Placed', 'Served', 'Status',
+    'Items', 'Subtotal', `${CONFIG.taxLabel || 'Tax'} (${CONFIG.taxRate}%)`, 'Total',
+  ];
+  const rows = todays.map(o => {
+    const { subtotal, tax, grand } = taxBreakdown(o.total);
+    const itemsSummary = o.items
+      .map(i => `${i.qty}x ${i.name}${i.summary ? ' (' + i.summary + ')' : ''}`)
+      .join('; ');
+    return [
+      o.number,
+      o.tableNumber || '',
+      new Date(o.placedAt).toLocaleString(),
+      o.servedAt ? new Date(o.servedAt).toLocaleString() : '',
+      o.status,
+      itemsSummary,
+      subtotal.toFixed(2),
+      tax.toFixed(2),
+      grand.toFixed(2),
+    ];
+  });
+
+  // Totals across served orders only — cancelled/pending don't
+  // count toward "revenue collected today".
+  const served = todays.filter(o => o.status === 'served');
+  let sumSub = 0, sumTax = 0, sumGrand = 0;
+  served.forEach(o => {
+    const b = taxBreakdown(o.total);
+    sumSub += b.subtotal; sumTax += b.tax; sumGrand += b.grand;
+  });
+
+  const csvEscape = (v) => {
+    const s = String(v ?? '');
+    return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [];
+  lines.push(`# ${CONFIG.businessName || CONFIG.shopName} — Daily Report`);
+  lines.push(`# Generated: ${now.toLocaleString()}`);
+  lines.push(`# Currency: ${CONFIG.currency} · Tax: ${CONFIG.taxLabel} ${CONFIG.taxRate}% (${CONFIG.taxInclusive ? 'inclusive' : 'exclusive'})`);
+  lines.push('');
+  lines.push(headers.map(csvEscape).join(','));
+  rows.forEach(r => lines.push(r.map(csvEscape).join(',')));
+  lines.push('');
+  lines.push(['', '', '', '', 'SERVED TOTALS', `${served.length} orders`,
+              sumSub.toFixed(2), sumTax.toFixed(2), sumGrand.toFixed(2)].map(csvEscape).join(','));
+  return { csv: lines.join('\n'), todayCount: todays.length, servedCount: served.length };
+}
+
+function triggerDownload(filename, content, mime = 'text/plain') {
+  const blob = new Blob([content], { type: mime + ';charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+$('#exportCsvBtn').addEventListener('click', () => {
+  const { csv, todayCount, servedCount } = buildDailyCsv();
+  if (todayCount === 0) {
+    showAdminToast({ title: 'No orders placed today yet', variant: 'info' });
+    return;
+  }
+  const stamp = new Date().toISOString().slice(0, 10);
+  triggerDownload(`bossb-daily-${stamp}.csv`, csv, 'text/csv');
+  showAdminToast({
+    title: `Exported ${todayCount} order${todayCount === 1 ? '' : 's'} (${servedCount} served)`,
+    variant: 'success',
+  });
+});
 
 /* ==========================================================
    THEME TOGGLE

@@ -1125,6 +1125,10 @@ code {
   display: flex;
   flex-direction: column;
   animation: fadeIn .2s ease both;
+  /* Make the panel itself the only scroll container so the
+     fixed-on-top topbar+tabs reliably stay above the content
+     stacking context. */
+  overflow: hidden;
 }
 .admin-topbar {
   display: flex;
@@ -1135,6 +1139,10 @@ code {
   background: var(--white);
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
+  flex: none;
+  position: relative;
+  z-index: 8;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
 }
 .admin-brand {
   display: inline-flex;
@@ -1158,6 +1166,13 @@ code {
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
+  /* Pinned above the scrolling content so it never gets covered
+     even on long order lists. Outside the .admin-content scroll
+     box, so it never moves with content. */
+  flex: none;
+  position: relative;
+  z-index: 7;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
 }
 .admin-tabs::-webkit-scrollbar { display: none; }
 .admin-tab {
@@ -1463,22 +1478,15 @@ code {
 [data-theme="dark"] .toast.success { color: #0E1419; }
 
 /* ==========================================================
-   ADMIN — STICKY PANE HEAD + DAY STATS + FLASH
-   ========================================================== */
-/* Pane header (Active Orders + filter) sticks to the top of
-   the scrolling content so the filter stays reachable on long
-   order lists. The admin topbar + tabs are already always-on
-   via the panel's flex column layout. */
-.admin-tabs    { position: sticky; top: 0;  z-index: 6; }
-.pane-head.sticky {
-  position: sticky;
-  top: 0;
-  z-index: 4;
-  background: var(--cream);
-  padding: 10px 0;
-  margin: 0 0 12px;
-  border-bottom: 1px solid var(--line);
-}
+   ADMIN — DAY STATS + FLASH
+   The admin topbar and tabs are pinned above .admin-content via
+   the flex layout (they're siblings, not children of the
+   scroll box) so they're always visible. We removed the
+   previous `position: sticky` on the pane head because it was
+   landing inside the same stacking context as the cards and
+   occasionally bled over the tabs row when the content was
+   long. Day stats and pane head now flow normally with the
+   content — the tabs stay glued on top.  */
 
 .day-stats {
   display: grid;
@@ -1810,6 +1818,72 @@ code {
 .admin-toast-undo { font-weight: 600; }
 .admin-toast-undo:hover  { background: var(--brown-100); }
 .admin-toast-close { padding: 4px 8px; }
+
+/* ==========================================================
+   ADMIN — RECEIPT MODAL  (printable preview)
+   ========================================================== */
+.receipt-card { max-width: 380px; }
+.receipt-preview {
+  background: #FFFBF5;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+[data-theme="dark"] .receipt-preview { background: #1A140C; }
+.receipt {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: .82rem;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.receipt header { text-align: center; margin-bottom: 4px; }
+.receipt header strong { display: block; font-size: 1rem; }
+.receipt header small  { display: block; color: var(--ink-soft); }
+.receipt hr {
+  border: none;
+  border-top: 1px dashed var(--line-strong);
+  margin: 8px 0;
+}
+.rec-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rec-row.total { font-size: .95rem; font-weight: 700; padding-top: 4px; }
+.rec-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.rec-line-name { flex: 1; }
+.rec-line-name small { display: block; color: var(--ink-soft); font-style: italic; }
+.rec-line-price { white-space: nowrap; }
+.rec-thanks { text-align: center; margin: 8px 0 0; color: var(--ink-soft); }
+
+.settings-form .check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-direction: row;
+}
+.settings-form .check-inline input { width: 18px; height: 18px; }
+.settings-form fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  display: grid;
+  gap: 12px;
+}
+.settings-form fieldset legend {
+  padding: 0 6px;
+  font-weight: 600;
+  color: var(--primary-deep);
+}
 
 /* ==========================================================
    RESPONSIVE
