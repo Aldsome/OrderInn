@@ -1192,6 +1192,38 @@ body.admin-open { overflow: hidden; }
   color: var(--ink-soft);
 }
 
+/* Sync-status badge (admin topbar) */
+.sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: .76rem;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--white);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.sync-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #3A6E3B;          /* default green = synced */
+  flex: none;
+}
+.sync-badge[data-state="idle"]    .sync-dot { background: #3A6E3B; }
+.sync-badge[data-state="syncing"] .sync-dot { background: #C18F1E; animation: syncPulse 1s ease-in-out infinite; }
+.sync-badge[data-state="pending"] .sync-dot { background: #C18F1E; animation: syncPulse 1s ease-in-out infinite; }
+.sync-badge[data-state="offline"] .sync-dot { background: #9aa0a6; }
+.sync-badge[data-state="error"]   .sync-dot { background: var(--danger); animation: syncPulse 1s ease-in-out infinite; }
+.sync-badge[data-state="offline"],
+.sync-badge[data-state="error"]   { color: var(--danger); border-color: var(--danger); }
+@keyframes syncPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .35; }
+}
+
 .admin-tabs {
   display: flex;
   background: var(--white);

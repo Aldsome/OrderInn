@@ -27,6 +27,7 @@ const STORE_KEYS = {
   logSeen:        'bb_log_seen',        // last activity id the admin has seen
   sessionTable:   'bb_session_table',   // { name, ts, clientId } — 24h guest persistence
   activeSessions: 'bb_active_sessions', // { [clientId]: { name, lastActive } } — collision check
+  pendingWrites:  'bb_pending_writes',  // queue of remote writes that haven't been flushed yet
 };
 
 /* How long a guest's name/table choice survives a refresh. After
@@ -284,20 +285,127 @@ const LOG_TO_ROW = (e) => ({
   created_at: e.ts,
 });
 
-/* Fire-and-forget remote write. Errors are logged but never
-   propagate — the local cache is already updated optimistically,
-   so a network blip doesn't break the UI. */
-function remoteUpsert(table, row, mapFn) {
+/* ==========================================================
+   SYNC STATE  (sync-status badge + offline write queue)
+   - status: 'idle' | 'syncing' | 'offline' | 'error'
+   - listeners: UI subscribes via Store.onSyncChange()
+   - pendingCount: how many queued writes still need replay
+   ========================================================== */
+const syncState = { status: REMOTE_MODE ? 'idle' : 'idle', pendingCount: 0 };
+const syncListeners = new Set();
+function setSyncState(patch) {
+  Object.assign(syncState, patch);
+  syncListeners.forEach(fn => { try { fn(syncState); } catch {} });
+}
+function readPending() { return readJSON(STORE_KEYS.pendingWrites, []); }
+function writePending(list) { writeJSON(STORE_KEYS.pendingWrites, list); setSyncState({ pendingCount: list.length }); }
+
+/* Append a remote write to the pending queue so we can replay it
+   when the network comes back. Each entry is { id, table, op,
+   payload, ts } where op is 'upsert' | 'delete'. */
+function queuePending(entry) {
+  const list = readPending();
+  // Deduplicate orders by id+op so retries don't pile up multiple
+  // copies of the same row.
+  const dedupKey = `${entry.op}:${entry.table}:${entry.payload && (entry.payload.id || entry.payload._delId) || ''}`;
+  const filtered = list.filter(e => `${e.op}:${e.table}:${e.payload && (e.payload.id || e.payload._delId) || ''}` !== dedupKey);
+  filtered.push({ id: 'w_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), ts: Date.now(), ...entry });
+  writePending(filtered);
+}
+
+/* Replay all queued writes. Stops on the first failure so we
+   preserve order. Called on every successful remote write, on
+   the `online` browser event, and on a 20s timer. */
+let flushing = false;
+async function flushPending() {
+  if (!REMOTE_MODE || flushing) return;
+  if (!navigator.onLine) { setSyncState({ status: 'offline' }); return; }
+  flushing = true;
+  let list = readPending();
+  if (!list.length) { flushing = false; setSyncState({ status: 'idle' }); return; }
+  setSyncState({ status: 'syncing' });
+  for (const entry of list) {
+    try {
+      let result;
+      if (entry.op === 'upsert') {
+        result = await sb.from(entry.table).upsert(entry.payload);
+      } else if (entry.op === 'delete') {
+        const { _delCol, _delId } = entry.payload;
+        result = await sb.from(entry.table).delete().eq(_delCol, _delId);
+      }
+      if (result && result.error) throw result.error;
+      // Successful — remove from queue.
+      list = readPending().filter(e => e.id !== entry.id);
+      writePending(list);
+    } catch (e) {
+      console.warn('[Store] flush stalled, will retry later', e);
+      setSyncState({ status: 'error' });
+      flushing = false;
+      return;
+    }
+  }
+  flushing = false;
+  setSyncState({ status: 'idle' });
+}
+
+/* Wrapper: try the remote write; on ANY failure (network, RLS,
+   server) push it into the pending queue. The local cache was
+   already updated optimistically by the caller, so the UI is
+   unaffected — the queue ensures the write reaches Supabase
+   eventually. */
+function remoteUpsert(table, row) {
   if (!REMOTE_MODE) return Promise.resolve();
+  if (!navigator.onLine) {
+    queuePending({ table, op: 'upsert', payload: row });
+    setSyncState({ status: 'offline' });
+    return Promise.resolve();
+  }
   return sb.from(table).upsert(row).then(({ error }) => {
-    if (error) console.warn(`[Store] supabase upsert ${table} failed`, error);
+    if (error) {
+      console.warn(`[Store] supabase upsert ${table} failed — queued for retry`, error);
+      queuePending({ table, op: 'upsert', payload: row });
+      flushPending();
+    } else {
+      // Successful write is a good moment to drain anything that
+      // was previously stuck.
+      flushPending();
+    }
+  }).catch((e) => {
+    console.warn(`[Store] supabase upsert ${table} network err — queued for retry`, e);
+    queuePending({ table, op: 'upsert', payload: row });
   });
 }
 function remoteDelete(table, idCol, id) {
   if (!REMOTE_MODE) return Promise.resolve();
+  if (!navigator.onLine) {
+    queuePending({ table, op: 'delete', payload: { _delCol: idCol, _delId: id } });
+    setSyncState({ status: 'offline' });
+    return Promise.resolve();
+  }
   return sb.from(table).delete().eq(idCol, id).then(({ error }) => {
-    if (error) console.warn(`[Store] supabase delete ${table} failed`, error);
+    if (error) {
+      console.warn(`[Store] supabase delete ${table} failed — queued for retry`, error);
+      queuePending({ table, op: 'delete', payload: { _delCol: idCol, _delId: id } });
+      flushPending();
+    } else {
+      flushPending();
+    }
+  }).catch((e) => {
+    console.warn(`[Store] supabase delete ${table} network err — queued for retry`, e);
+    queuePending({ table, op: 'delete', payload: { _delCol: idCol, _delId: id } });
   });
+}
+
+/* The browser tells us when connectivity comes back; flush
+   immediately. Combined with the timer below this gives us
+   belt-and-braces recovery. */
+if (typeof window !== 'undefined') {
+  window.addEventListener('online',  () => { setSyncState({ status: 'idle' }); flushPending(); });
+  window.addEventListener('offline', () => { setSyncState({ status: 'offline' }); });
+  // Periodic safety net — catches cases where 'online' didn't fire.
+  setInterval(flushPending, 20 * 1000);
+  // Initialise the pending counter for the UI.
+  setSyncState({ pendingCount: readPending().length });
 }
 
 /* ==========================================================
@@ -344,11 +452,28 @@ const Store = {
   getOrders()      { return readJSON(STORE_KEYS.orders, []); },
   setOrders(o)     { return writeJSON(STORE_KEYS.orders, o); },
 
-  placeOrder({ tableNumber, items, notes }) {
-    const orders = Store.getOrders();
-    const number = orders.length === 0
-      ? 1
-      : Math.max(...orders.map(o => o.number)) + 1;
+  async placeOrder({ tableNumber, items, notes }) {
+    // S3 fix — server-aware order numbering. In remote mode we
+    // ALSO ask Supabase for the current max(number) so two
+    // devices placing simultaneously don't both pick the same N
+    // off their stale local caches. We take max(local, server) +
+    // 1 so a brief network blip can't produce a number lower
+    // than what we already have locally.
+    const localMax = Math.max(0, ...Store.getOrders().map(o => o.number || 0));
+    let serverMax = 0;
+    if (REMOTE_MODE && navigator.onLine) {
+      try {
+        const { data, error } = await sb
+          .from('bb_orders')
+          .select('number')
+          .order('number', { ascending: false })
+          .limit(1);
+        if (!error && data && data[0]) serverMax = Number(data[0].number) || 0;
+      } catch (e) {
+        // Offline / blocked — fall back to local-only numbering.
+      }
+    }
+    const number = Math.max(localMax, serverMax) + 1;
     const order = {
       id:          'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       number,
@@ -361,6 +486,7 @@ const Store = {
       placedAt:    new Date().toISOString(),
       servedAt:    null,
     };
+    const orders = Store.getOrders();
     orders.unshift(order);                    // newest first
     Store.setOrders(orders);
     remoteUpsert('bb_orders', ORDER_TO_ROW(order));
@@ -757,7 +883,21 @@ const Store = {
     if (!REMOTE_MODE || Store._realtimeWired) return;
     Store._realtimeWired = true;
 
-    const ordersChannel = sb.channel('bb_orders_changes')
+    /* Status callback: when ANY channel drops (CHANNEL_ERROR,
+       TIMED_OUT, CLOSED) we flag the UI as 'error' so the
+       sync-status badge turns red. The Supabase SDK auto-
+       reconnects under the hood; when it succeeds the channel
+       reports SUBSCRIBED and we flip back to 'idle'. The
+       anti-entropy poller below also catches anything missed
+       during the dropout. */
+    const onStatus = (status) => {
+      if (status === 'SUBSCRIBED')        setSyncState({ status: 'idle' });
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setSyncState({ status: 'error' });
+      }
+    };
+
+    sb.channel('bb_orders_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bb_orders' }, (payload) => {
         const orders = Store.getOrders();
         if (payload.eventType === 'DELETE') {
@@ -772,9 +912,9 @@ const Store = {
         }
         Store._dispatchSync('bb_orders');
       })
-      .subscribe();
+      .subscribe(onStatus);
 
-    const productsChannel = sb.channel('bb_products_changes')
+    sb.channel('bb_products_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bb_products' }, (payload) => {
         const menu = Store.getMenu();
         if (payload.eventType === 'DELETE') {
@@ -788,18 +928,18 @@ const Store = {
         }
         Store._dispatchSync('bb_menu');
       })
-      .subscribe();
+      .subscribe(onStatus);
 
-    const configChannel = sb.channel('bb_config_changes')
+    sb.channel('bb_config_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bb_config' }, (payload) => {
         if (payload.new && payload.new.data) {
           writeJSON(STORE_KEYS.config, { ...DEFAULT_CONFIG, ...payload.new.data });
           Store._dispatchSync('bb_config');
         }
       })
-      .subscribe();
+      .subscribe(onStatus);
 
-    const activityChannel = sb.channel('bb_activity_changes')
+    sb.channel('bb_activity_changes')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bb_activity' }, (payload) => {
         const entry = ROW_TO_LOG(payload.new);
         const log   = Store.getLog();
@@ -809,9 +949,42 @@ const Store = {
         Store.setLog(log);
         Store._dispatchSync('bb_activity_log');
       })
-      .subscribe();
+      .subscribe(onStatus);
 
     console.info('[Store] realtime channels subscribed');
+
+    /* S2 fix — anti-entropy poll. Every 30s while online,
+       re-pull the recent orders and reconcile against the local
+       cache. Catches anything that slipped through during a
+       websocket dropout (mobile network switch, laptop sleep,
+       etc.) without us having to detect the dropout itself. */
+    setInterval(async () => {
+      if (!navigator.onLine) return;
+      try {
+        const { data, error } = await sb
+          .from('bb_orders')
+          .select('*')
+          .order('placed_at', { ascending: false })
+          .limit(200);
+        if (error || !data) return;
+        const incoming = data.map(ROW_TO_ORDER);
+        const local    = Store.getOrders();
+        let changed = false;
+        // Patch in any rows we missed AND update statuses that
+        // drifted (a status change we missed mid-disconnect).
+        for (const inc of incoming) {
+          const existing = local.find(l => l.id === inc.id);
+          if (!existing) { local.unshift(inc); changed = true; }
+          else if (existing.status !== inc.status || existing.servedAt !== inc.servedAt) {
+            Object.assign(existing, inc); changed = true;
+          }
+        }
+        if (changed) {
+          Store.setOrders(local);
+          Store._dispatchSync('bb_orders');
+        }
+      } catch {}
+    }, 30 * 1000);
   },
 
   /* The browser's native `storage` event only fires in OTHER
@@ -869,20 +1042,27 @@ const Store = {
   },
 
   /* Staff invite code — single shared secret existing admins
-     give to new hires so they can self-register. Generated on
-     first read so a stock install has a code, and rotatable any
-     time via Settings. */
+     give to new hires so they can self-register. Stored inside
+     the shared Supabase config row so every device sees the
+     same code (was previously per-browser localStorage, which
+     let any visitor self-mint a "valid" code on their own
+     device). The local copy in bb_config still works as a cache
+     for sync reads. */
   getInviteCode() {
-    let code = localStorage.getItem('bb_invite_code');
-    if (!code) {
-      code = Store.rotateInviteCode();
-    }
-    return code;
+    // Read from the cached config (populated by bootSeed in
+    // remote mode, or set locally in local mode).
+    const cfg = Store.getConfig();
+    if (cfg && cfg.inviteCode) return cfg.inviteCode;
+    // First-ever read — generate AND persist so this is the
+    // last time we mint locally.
+    return Store.rotateInviteCode();
   },
   rotateInviteCode() {
     const chunk = () => Math.random().toString(36).slice(2, 6).toUpperCase();
     const code  = `BB-${chunk()}-${chunk()}-${chunk()}`;
-    localStorage.setItem('bb_invite_code', code);
+    // Persist via setConfig so the new code rides the same
+    // remote-mirror path as the rest of the shop settings.
+    Store.setConfig({ inviteCode: code });
     return code;
   },
 
@@ -892,6 +1072,9 @@ const Store = {
 };
 
 Store.isRemote = () => REMOTE_MODE;
+Store.getSyncState = () => ({ ...syncState });
+Store.onSyncChange = (fn) => { syncListeners.add(fn); fn(syncState); return () => syncListeners.delete(fn); };
+Store.flushPending = flushPending;
 window.Store = Store;
 window.DEFAULT_MENU = DEFAULT_MENU;
 window.DEFAULT_CONFIG = DEFAULT_CONFIG;

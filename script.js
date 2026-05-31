@@ -654,12 +654,16 @@ $('#closeCustomizerBtn').addEventListener('click', closeCustomizer);
 /* ==========================================================
    PLACE ORDER
    ========================================================== */
-$('#placeOrderBtn').addEventListener('click', () => {
+$('#placeOrderBtn').addEventListener('click', async () => {
   if (state.cart.length === 0) return;
   if (!state.tableNumber) {
     openTableModal();
     return;
   }
+  const btn = $('#placeOrderBtn');
+  if (btn.dataset.placing === '1') return;   // guard against double-tap
+  btn.dataset.placing = '1';
+  btn.disabled = true;
   const items = state.cart.map(line => {
     const item = MENU.find(m => m.id === line.id);
     return {
@@ -671,10 +675,21 @@ $('#placeOrderBtn').addEventListener('click', () => {
       summary:   configSummary(item, line.config),
     };
   });
-  const order = Store.placeOrder({
-    tableNumber: state.tableNumber,
-    items,
-  });
+  let order;
+  try {
+    // placeOrder is async in remote mode (it queries Supabase
+    // for the authoritative max order number to avoid collisions).
+    order = await Store.placeOrder({
+      tableNumber: state.tableNumber,
+      items,
+    });
+  } catch (e) {
+    showToast('Could not place order — please try again', 'error');
+    btn.dataset.placing = '0';
+    btn.disabled = false;
+    return;
+  }
+  btn.dataset.placing = '0';
   clearCart();
   closeCart();
 
@@ -1229,7 +1244,41 @@ $('#staffLoginForm').addEventListener('submit', async (e) => {
    ========================================================== */
 const adminPanel = $('#adminPanel');
 
+/* Sync-status badge — reflects Store's sync state so an admin
+   can tell at a glance whether orders are reaching the cloud.
+   Hidden entirely in local mode (no backend to be out of sync
+   with). */
+(function wireSyncBadge() {
+  const badge = $('#syncBadge');
+  const label = $('#syncLabel');
+  if (!badge || !Store.isRemote || !Store.isRemote()) return;
+  Store.onSyncChange((s) => {
+    badge.hidden = false;
+    badge.dataset.state = s.status;
+    if (s.status === 'offline')      label.textContent = 'Offline';
+    else if (s.status === 'error')   label.textContent = 'Reconnecting…';
+    else if (s.pendingCount > 0)     label.textContent = `Syncing ${s.pendingCount}…`;
+    else if (s.status === 'syncing') label.textContent = 'Syncing…';
+    else                             label.textContent = 'Synced';
+    // Amber when there's a backlog even if the transport is "idle".
+    if (s.pendingCount > 0 && s.status === 'idle') badge.dataset.state = 'pending';
+  });
+})();
+
 function enterAdminPanel(session) {
+  // Defense-in-depth: even if a caller passes a fabricated
+  // session object (e.g. via DevTools), re-verify against the
+  // store's persisted session before unhiding the panel. The
+  // panel is the surface for every destructive action; trusting
+  // the caller is not enough.
+  const verified = Store.getSession();
+  if (!verified || verified.role !== 'admin') {
+    console.warn('[admin] entry blocked — no valid admin session');
+    return false;
+  }
+  // Caller's session object might be stale; prefer the verified
+  // one for the displayed name.
+  session = verified;
   adminPanel.hidden = false;
   $('#adminUserName').textContent = session.name || session.email;
   switchAdminTab('orders');
@@ -1237,11 +1286,39 @@ function enterAdminPanel(session) {
   loadSettingsForm();
   refreshAdminHeaderBtn();
   refreshAdminActivity();
+  startAdminSessionWatcher();
   // Lock the page-level scroll so we only get the panel's
   // .admin-content scrollbar — not a second one from the
   // customer view underneath. Uses a class so the modal
   // open/close inline-style toggles don't clobber it.
   document.body.classList.add('admin-open');
+  return true;
+}
+
+/* L1 — Session expiry watcher. While the admin panel is open
+   we re-check Store.isAdmin() every 30 seconds. When the 8-hour
+   bb_session TTL elapses (or another tab signs out), this fires
+   and force-closes the panel with a notice. Without this, an
+   admin who walked away could leave the panel "open" for hours
+   past their session and any clicks would still go through the
+   open RLS policies. */
+let adminSessionWatchTimer = null;
+function startAdminSessionWatcher() {
+  if (adminSessionWatchTimer) return;
+  adminSessionWatchTimer = setInterval(() => {
+    if (adminPanel.hidden) {
+      clearInterval(adminSessionWatchTimer);
+      adminSessionWatchTimer = null;
+      return;
+    }
+    if (!Store.isAdmin()) {
+      clearInterval(adminSessionWatchTimer);
+      adminSessionWatchTimer = null;
+      exitAdminPanel();
+      refreshAdminHeaderBtn();
+      showToast('Your session expired — please sign in again', 'error');
+    }
+  }, 30 * 1000);
 }
 function exitAdminPanel()  {
   adminPanel.hidden = true;

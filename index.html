@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=18" />
 
   <script>
     (function () {
@@ -376,6 +376,13 @@
       <div class="admin-topbar-right">
         <span class="admin-user" id="adminUserName">Admin</span>
 
+        <!-- Live sync indicator: green=synced, amber=pending writes,
+             red=offline/error. Only meaningful in Supabase mode. -->
+        <span class="sync-badge" id="syncBadge" hidden title="Sync status">
+          <span class="sync-dot"></span>
+          <span class="sync-label" id="syncLabel">Synced</span>
+        </span>
+
         <!-- Theme toggle — same toggleTheme handler as the customer
              topbar button, lets admins flip dark mode without
              leaving the panel. -->
@@ -672,7 +679,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=10"></script>
-  <script src="script.js?v=20"></script>
+  <script src="store.js?v=11"></script>
+  <script src="script.js?v=21"></script>
 </body>
 </html>
