@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BossB Coffee Shop — Create Staff Account</title>
-  <meta name="description" content="Create a new staff account for the BossB Coffee Shop admin panel." />
+  <title>BossB Coffee Shop — Create Account</title>
+  <meta name="description" content="Save your spending history and earn rewards." />
   <meta name="theme-color" content="#A0855E" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -30,22 +30,19 @@
     <div class="register-card">
       <header class="register-head">
         <span class="brand-mark lg">BB</span>
-        <h1>Create staff account</h1>
-        <p class="muted small">For BossB Coffee Shop admins. Each account gets full Admin Panel access.</p>
+        <h1>Create your account</h1>
+        <p class="muted small">
+          Save your spending history across visits and earn rewards.
+          No invite code needed — anyone can sign up.
+        </p>
       </header>
 
-      <form id="registerForm" class="auth-form" novalidate>
-        <label>Staff invite code
-          <input type="text" name="inviteCode" required autocomplete="off"
-                 placeholder="BB-XXXX-XXXX-XXXX"
-                 spellcheck="false" />
-          <small class="hint muted">Ask an existing admin for the current code.</small>
-        </label>
+      <form id="signupForm" class="auth-form" novalidate>
         <label>Display name
-          <input type="text" name="name" required autocomplete="name" placeholder="Juan dela Cruz" />
+          <input type="text" name="name" required autocomplete="name" placeholder="What should we call you?" />
         </label>
         <label>Email
-          <input type="email" name="email" required autocomplete="email" placeholder="staff@bossb.com" />
+          <input type="email" name="email" required autocomplete="email" placeholder="you@example.com" />
         </label>
         <label>Password
           <input type="password" name="password" required minlength="8" autocomplete="new-password" />
@@ -55,17 +52,17 @@
           <input type="password" name="confirm" required minlength="8" autocomplete="new-password" />
         </label>
 
-        <p class="form-error" id="registerError" hidden></p>
-        <p class="form-success" id="registerSuccess" hidden></p>
+        <p class="form-error" id="signupError" hidden></p>
+        <p class="form-success" id="signupSuccess" hidden></p>
 
-        <button type="submit" class="btn btn-primary btn-block" id="registerSubmitBtn">
+        <button type="submit" class="btn btn-primary btn-block" id="signupSubmitBtn">
           Create account
         </button>
       </form>
 
       <footer class="register-foot">
         <a href="index.html" class="link-mini">← Back to ordering</a>
-        <a href="index.html?staff=1" class="link-mini">Already have an account? Sign in</a>
+        <a href="register.html" class="link-mini">Staff signup →</a>
       </footer>
     </div>
   </main>
@@ -74,18 +71,17 @@
 
   <script src="store.js?v=7"></script>
   <script>
-    // Standalone registration flow — shares Store with the main
-    // app via localStorage. On success, the new account is written
-    // to bb_users (the same key the login form reads).
+    // Customer signup — no invite code. role=customer skips the
+    // invite check inside Store.registerAccount. Future work:
+    // wire a customer login modal in index.html and persist
+    // order history against this account id instead of the
+    // anonymous clientId.
     const $ = (s) => document.querySelector(s);
-    const form    = $('#registerForm');
-    const errEl   = $('#registerError');
-    const okEl    = $('#registerSuccess');
-    const submit  = $('#registerSubmitBtn');
+    const form    = $('#signupForm');
+    const errEl   = $('#signupError');
+    const okEl    = $('#signupSuccess');
+    const submit  = $('#signupSubmitBtn');
 
-    // Make sure the default admin is present too — same boot
-    // sequence as the main app, so opening register.html cold
-    // still gives someone to sign in as.
     Store.bootSeed().catch(() => {});
 
     form.addEventListener('submit', async (e) => {
@@ -101,16 +97,15 @@
       submit.disabled = true; submit.textContent = 'Creating…';
       try {
         const account = await Store.registerAccount({
-          name:       fd.get('name'),
-          email:      fd.get('email'),
+          name:     fd.get('name'),
+          email:    fd.get('email'),
           password,
-          role:       'admin',
-          inviteCode: fd.get('inviteCode'),
+          role:     'customer',
         });
         okEl.textContent = `Welcome, ${account.name}! Redirecting…`;
         okEl.hidden = false;
         form.reset();
-        setTimeout(() => { location.href = 'index.html?staff=1'; }, 900);
+        setTimeout(() => { location.href = 'index.html'; }, 900);
       } catch (err) {
         errEl.textContent = err.message || String(err);
         errEl.hidden = false;

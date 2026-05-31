@@ -16,16 +16,28 @@
    ========================================================== */
 
 const STORE_KEYS = {
-  menu:     'bb_menu',
-  orders:   'bb_orders',
-  config:   'bb_config',
-  users:    'bb_users',
-  session:  'bb_session',
-  client:   'bb_client_id',     // per-browser anonymous id, lets us track
-                                 // "my orders" for the customer without accounts
-  log:      'bb_activity_log',  // admin-facing changelog (last 50 entries)
-  logSeen:  'bb_log_seen',      // last activity id the admin has seen
+  menu:           'bb_menu',
+  orders:         'bb_orders',
+  config:         'bb_config',
+  users:          'bb_users',
+  session:        'bb_session',
+  client:         'bb_client_id',       // per-browser anonymous id, lets us track
+                                          // "my orders" for the customer without accounts
+  log:            'bb_activity_log',    // admin-facing changelog (last 50 entries)
+  logSeen:        'bb_log_seen',        // last activity id the admin has seen
+  sessionTable:   'bb_session_table',   // { name, ts, clientId } — 24h guest persistence
+  activeSessions: 'bb_active_sessions', // { [clientId]: { name, lastActive } } — collision check
 };
+
+/* How long a guest's name/table choice survives a refresh. After
+   this window expires, the table prompt re-asks (so a different
+   person at the same device picks their own name). Inactivity
+   reset can also clear it earlier. */
+const SESSION_TABLE_TTL_MS = 24 * 60 * 60 * 1000;
+/* How recently another device must have been active for its name
+   to count as a "live conflict" — prevents two people typing the
+   same label at the same time, even before either has ordered. */
+const ACTIVE_SESSION_TTL_MS = 30 * 60 * 1000;
 
 /* Customer self-cancel grace window. During this period after
    placing, the customer sees a Cancel button in their orders
@@ -320,6 +332,80 @@ const Store = {
   },
 
   /* ==========================================================
+     SESSION TABLE  (24h guest label persistence)
+     - Survives page refresh: the visitor isn't re-asked just
+       because they reloaded.
+     - Expires after 24h, OR sooner if inactivity reset clears
+       it, so a different person at the same device the next
+       day gets a fresh prompt.
+     ========================================================== */
+  getSessionTable() {
+    const rec = readJSON(STORE_KEYS.sessionTable, null);
+    if (!rec) return null;
+    if (Date.now() - rec.ts > SESSION_TABLE_TTL_MS) {
+      localStorage.removeItem(STORE_KEYS.sessionTable);
+      return null;
+    }
+    return rec;
+  },
+  setSessionTable(name) {
+    if (!name) return;
+    writeJSON(STORE_KEYS.sessionTable, {
+      name,
+      ts:       Date.now(),
+      clientId: Store.getClientId(),
+    });
+  },
+  clearSessionTable() {
+    localStorage.removeItem(STORE_KEYS.sessionTable);
+  },
+
+  /* ==========================================================
+     ACTIVE SESSIONS REGISTRY  (live name-collision check)
+     - Every customer that has set a table label appears here
+       with their lastActive timestamp.
+     - Used to block two devices from holding the SAME name at
+       the SAME TIME, even if neither has placed an order yet.
+     - Self-pruning: entries older than 30 minutes are dropped
+       on every read so a dead session frees up the name.
+     ========================================================== */
+  _readSessions() {
+    const raw = readJSON(STORE_KEYS.activeSessions, {});
+    const now = Date.now();
+    let mutated = false;
+    for (const cid of Object.keys(raw)) {
+      if (now - (raw[cid].lastActive || 0) > ACTIVE_SESSION_TTL_MS) {
+        delete raw[cid]; mutated = true;
+      }
+    }
+    if (mutated) writeJSON(STORE_KEYS.activeSessions, raw);
+    return raw;
+  },
+  /* Returns the conflicting clientId, or null if the name is free. */
+  findActiveSessionByName(name) {
+    if (!name) return null;
+    const myId   = Store.getClientId();
+    const needle = String(name).trim().toLowerCase();
+    const all    = Store._readSessions();
+    for (const cid of Object.keys(all)) {
+      if (cid === myId) continue;
+      if ((all[cid].name || '').trim().toLowerCase() === needle) return cid;
+    }
+    return null;
+  },
+  bumpActiveSession(name) {
+    if (!name) { Store.dropActiveSession(); return; }
+    const all = Store._readSessions();
+    all[Store.getClientId()] = { name, lastActive: Date.now() };
+    writeJSON(STORE_KEYS.activeSessions, all);
+  },
+  dropActiveSession() {
+    const all = Store._readSessions();
+    delete all[Store.getClientId()];
+    writeJSON(STORE_KEYS.activeSessions, all);
+  },
+
+  /* ==========================================================
      ACTIVITY LOG  (admin notification feed)
      Capped at 50 entries. Each entry: { id, type, message, ts,
      status?, orderId?, undo? }. Undo payload is opaque to the
@@ -467,7 +553,11 @@ const Store = {
     if (!email || !name || !password) throw new Error('Missing field');
     if (password.length < 8)          throw new Error('Password must be at least 8 characters');
 
-    if (!skipInviteCheck) {
+    // Customer self-signup never needs the invite code — that's
+    // only there to gate ADMIN registration. Admins still need
+    // the code unless an existing admin is creating them
+    // (skipInviteCheck=true).
+    if (!skipInviteCheck && role === 'admin') {
       const expected = Store.getInviteCode();
       if (!inviteCode || String(inviteCode).trim() !== expected) {
         throw new Error('Invalid invite code. Ask an existing admin for the current code.');

@@ -142,11 +142,17 @@ function readTableFromURL() {
 function setTableLabel(label) {
   state.tableNumber = label;                 // kept as `tableNumber` for compat
   $('#tableNumberDisplay').textContent = label || '—';
+  if (label) {
+    Store.setSessionTable(label);
+    Store.bumpActiveSession(label);
+  } else {
+    Store.clearSessionTable();
+    Store.dropActiveSession();
+  }
 }
 function ensureTable() {
-  // Each page load starts fresh. URL ?table= (QR code) is the
-  // only persistent path — otherwise the customer is always
-  // asked to enter their table label or sign in as staff.
+  // QR-code path: URL ?table= overrides everything and always
+  // wins (it's how customers arrive at a specific table).
   const t = readTableFromURL();
   if (t) {
     setTableLabel(t);
@@ -160,16 +166,49 @@ function ensureTable() {
     setTableLabel(session.name || session.email);
     return;
   }
+  // Recent guest session (< 24h, same device) — reuse the
+  // previous label so a refresh doesn't kick the customer back
+  // to the prompt. Inactivity reset is what clears this, NOT
+  // page reload.
+  const recent = Store.getSessionTable();
+  if (recent && recent.name) {
+    // If a different live session has stolen the name in the
+    // meantime, treat it as expired and reprompt with prefill.
+    if (Store.findActiveSessionByName(recent.name)) {
+      openTableModalPrefilled(recent.name);
+      return;
+    }
+    setTableLabel(recent.name);
+    return;
+  }
+  openTableModal();
+}
+function openTableModalPrefilled(name) {
+  $('#tableInput').value = name || '';
   openTableModal();
 }
 function openTableModal()  { openModal('#tableModal'); }
 function closeTableModal() { closeModal('#tableModal'); }
 
-/* Look for an in-flight order at this label from a *different*
-   browser. If we find one, ask the customer to confirm before we
-   commit to this label — otherwise two devices both claim
-   "Window 2" and the staff get confused which order is whose. */
+/* Two layers of collision check before accepting a table label:
+   1. A *live* session on another device holding the same name —
+      this blocks BEFORE either device has even ordered. The
+      second person is told to pick a different label; no
+      "join this table" prompt because the issue is name reuse,
+      not legitimate table sharing.
+   2. Otherwise, an in-flight ORDER under this label on another
+      device — this is the legitimate "joining this table?" case
+      (one person paid, friends are adding more rounds). */
 function checkDuplicateTable(label, onAccept) {
+  // Layer 1 — live session collision.
+  const conflictId = Store.findActiveSessionByName(label);
+  if (conflictId) {
+    showToast(`"${label}" is already in use on another device. Please pick a different label.`, 'error');
+    $('#tableInput').focus();
+    $('#tableInput').select();
+    return;
+  }
+  // Layer 2 — order-based duplicate (legitimate table-sharing).
   const myId   = Store.getClientId();
   const others = Store.findActiveOrdersByTable(label).filter(o => o.clientId !== myId);
   if (others.length === 0) { onAccept(); return; }
@@ -218,6 +257,13 @@ $('#changeTableBtn').addEventListener('click', () => {
   $('#tableInput').value = state.tableNumber || '';
   openTableModal();
 });
+
+/* Keep the active-session registry's lastActive for THIS device
+   fresh while the customer is interacting. Lets other devices
+   reliably tell when a name is "abandoned" and free to reuse. */
+setInterval(() => {
+  if (state.tableNumber) Store.bumpActiveSession(state.tableNumber);
+}, 60 * 1000);
 
 /* ==========================================================
    MENU RENDERING
@@ -830,14 +876,34 @@ function renderMyOrdersList() {
     ? `${orders.length} total`
     : `${active} active · ${orders.length} total`;
 
+  // Today's spending strip — sum of *non-cancelled* order totals
+  // placed today. Cancelled orders shouldn't pad the customer's
+  // "you spent" feeling.
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  const todays = orders.filter(o => {
+    if (o.status === 'cancelled') return false;
+    const t = new Date(o.placedAt);
+    return t.getFullYear() === y && t.getMonth() === m && t.getDate() === d;
+  });
+  const todayTotal = todays.reduce((s, o) => s + (o.total || 0), 0);
+
+  const ctaHtml = `
+    <div class="myorders-cta" data-loggedin="false">
+      <strong>Today's spending: ${peso(todayTotal)}</strong>
+      <p>To save your spending history and earn rewards, sign in or create an account.</p>
+      <a href="signup.html" class="btn btn-primary btn-block">Create an account</a>
+    </div>
+  `;
+
   if (orders.length === 0) {
-    host.innerHTML = `<p class="empty-state">No orders yet.</p>`;
+    host.innerHTML = `<p class="empty-state">No orders yet.</p>` + ctaHtml;
     return;
   }
-  host.innerHTML = orders.map(o => {
+  const orderRows = orders.map(o => {
     const info  = STATUS_INFO[o.status] || STATUS_INFO.pending;
     const itemsHtml = o.items.map(i =>
-      `<li>${i.qty}× ${escapeHtml(i.name)}</li>`
+      `<li><span>${i.qty}× ${escapeHtml(i.name)}</span><span>${peso(i.unitPrice * i.qty)}</span></li>`
     ).join('');
     const cancellable = Store.isCancellableByCustomer(o);
     const secs = Math.ceil(Store.cancelWindowRemaining(o) / 1000);
@@ -851,6 +917,7 @@ function renderMyOrdersList() {
           <span class="status-pill status-${o.status}">${o.status}</span>
         </header>
         <ul>${itemsHtml}</ul>
+        <div class="myorder-total"><span>Total</span><strong>${peso(o.total)}</strong></div>
         <footer>
           <span class="myorder-status-icon" aria-hidden="true">${info.icon}</span>
           <span class="myorder-status-text">${info.text}</span>
@@ -863,6 +930,7 @@ function renderMyOrdersList() {
       </article>
     `;
   }).join('');
+  host.innerHTML = orderRows + ctaHtml;
 }
 
 $('#myOrdersList').addEventListener('click', (e) => {
@@ -923,6 +991,7 @@ function resetForNextCustomer() {
   // the store for the admin to clear/serve.
   clearActiveOrder();
   setTableLabel(null);
+  Store.clearSessionTable();        // forget the 24h guest persistence
   clearCart();
   closeMyOrders();
   dismissThanks();
