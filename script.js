@@ -209,6 +209,15 @@ function closeTableModal() { closeModal('#tableModal'); }
       device — this is the legitimate "joining this table?" case
       (one person paid, friends are adding more rounds). */
 async function checkDuplicateTable(label, onAccept) {
+  // Layer 0 — the customer re-entered the name/number they are
+  // ALREADY in. Nothing to join or validate: just acknowledge
+  // "you're already in this room" and let Continue drop them back
+  // on the page. Short-circuits before any collision/PIN logic.
+  if (state.tableNumber &&
+      String(label).trim().toLowerCase() === String(state.tableNumber).trim().toLowerCase()) {
+    showDupModal({ mode: 'sameRoom', label, onAccept });
+    return;
+  }
   // Layer 1 — any active order at this label, from any device
   // (including this one). Orders sync through Supabase, so this
   // works cross-device. An existing order is the LEGITIMATE
@@ -260,7 +269,9 @@ let pendingTableAccept = null;
 let pendingTablePin    = null;   // expected PIN for the share-join gate
 let pinAttempts        = 0;
 
-/* Configure + open the duplicate/collision modal. Three modes:
+/* Configure + open the duplicate/collision modal. Four modes:
+   - 'sameRoom'  : the customer re-entered the name they're already
+                   in — single Continue button returns to the page.
    - 'nameTaken' : another live device holds this exact name —
                    only option is to choose a different label.
    - 'ownOrder'  : this device already has an open order here —
@@ -274,14 +285,24 @@ function showDupModal({ mode, label, count = 1, onAccept = null, pin = null }) {
   const elseBtn = $('#dupTableElsewhereBtn');
   const pinRow  = $('#dupPinRow');
   $('#dupTableLabel').textContent = label;
-  // Reset PIN UI each time.
+  // Reset PIN UI + button visibility each time (modes below only
+  // override what they need to change).
   pendingTablePin = null;
   pinAttempts = 0;
   if (pinRow) pinRow.hidden = true;
   $('#dupPinError').hidden = true;
   $('#dupPinInput').value = '';
+  joinBtn.hidden = false;
+  elseBtn.hidden = false;
 
-  if (mode === 'nameTaken') {
+  if (mode === 'sameRoom') {
+    if (title) title.textContent = "You're already here";
+    joinBtn.textContent = 'Continue';
+    elseBtn.hidden = true;                        // only one action: go back
+    if (desc) desc.textContent =
+      `You're already in "${label}" — this is your current table and order list.`;
+    pendingTableAccept = onAccept;
+  } else if (mode === 'nameTaken') {
     if (title) title.textContent = 'That name is taken';
     if (desc) desc.textContent =
       `The name "${label}" is already in use on another device. Please choose a different name or number so staff don't mix up your orders.`;
@@ -1017,13 +1038,77 @@ function openMyOrders() {
   // Tick countdowns + auto-refresh items every 1s while open
   if (myOrdersTicker) clearInterval(myOrdersTicker);
   myOrdersTicker = setInterval(renderMyOrdersList, 1000);
+  // First-time-only: point out where the Table PIN lives so a
+  // newcomer knows what to share with their tablemates.
+  if (!pinHintSeen()) {
+    requestAnimationFrame(() => {
+      if (!sheet.hidden && sheet.querySelector('.myorders-pin')) playPinHint();
+    });
+  }
 }
 function closeMyOrders() {
   const sheet = $('#myOrdersSheet');
+  clearPinHint();                       // tidy up the hint if still showing
   sheet.classList.remove('open');
   sheet.setAttribute('aria-hidden', 'true');
   setTimeout(() => { sheet.hidden = true; }, 200);
   if (myOrdersTicker) { clearInterval(myOrdersTicker); myOrdersTicker = null; }
+}
+
+/* ---- First-time Table-PIN spotlight -------------------------
+   Glows the PIN banner and floats a pointer callout beneath it
+   so a first-time customer can find the code to share. The
+   callout lives on the sheet (not inside #myOrdersList) so the
+   1s re-render doesn't wipe it; the banner's `.hint` class is
+   re-applied by renderMyOrdersList while `pinHintActive`. */
+let pinHintActive = false;
+let pinHintTimer  = null;
+function pinHintSeen() {
+  try { return localStorage.getItem('bb_pin_hint_seen') === '1'; } catch (e) { return false; }
+}
+function playPinHint() {
+  if (pinHintActive) return;
+  const sheet  = $('#myOrdersSheet');
+  const banner = sheet.querySelector('.myorders-pin');
+  if (!banner) return;
+  pinHintActive = true;
+  banner.classList.add('hint');
+  banner.scrollIntoView({ block: 'nearest' });
+
+  const callout = document.createElement('div');
+  callout.className = 'pin-hint-callout';
+  callout.innerHTML =
+    `<span class="pin-hint-arrow" aria-hidden="true">👆</span>` +
+    `<span class="pin-hint-text">This is your <strong>Table PIN</strong> — share it so friends can join your order. Tap to dismiss.</span>`;
+  sheet.appendChild(callout);
+
+  const place = () => {
+    const sr = sheet.getBoundingClientRect();
+    const br = banner.getBoundingClientRect();
+    callout.style.top   = (br.bottom - sr.top + 8) + 'px';
+    callout.style.left  = (br.left   - sr.left)    + 'px';
+    callout.style.width = br.width + 'px';
+  };
+  place();
+  requestAnimationFrame(place);
+
+  callout.addEventListener('click', clearPinHint);
+  pinHintTimer = setTimeout(clearPinHint, 6500);
+}
+/* Dismiss the hint (timeout, tap, or sheet close) and remember it
+   so it never auto-shows again on this device. */
+function clearPinHint() {
+  if (pinHintTimer) { clearTimeout(pinHintTimer); pinHintTimer = null; }
+  if (!pinHintActive) return;
+  pinHintActive = false;
+  try { localStorage.setItem('bb_pin_hint_seen', '1'); } catch (e) {}
+  const sheet = $('#myOrdersSheet');
+  sheet.querySelector('.myorders-pin')?.classList.remove('hint');
+  const callout = sheet.querySelector('.pin-hint-callout');
+  if (callout) {
+    callout.classList.add('leaving');
+    setTimeout(() => callout.remove(), 360);
+  }
 }
 $('#fabMyOrdersBtn').addEventListener('click', openMyOrders);
 $('#closeMyOrdersBtn').addEventListener('click', closeMyOrders);
@@ -1077,7 +1162,7 @@ function renderMyOrdersList() {
     .filter(o => o.status === 'pending' || o.status === 'preparing')
     .map(o => o.joinPin).find(Boolean);
   const pinHtml = activePin
-    ? `<div class="myorders-pin">
+    ? `<div class="myorders-pin${pinHintActive ? ' hint' : ''}">
          <span>Table PIN</span>
          <strong>${escapeHtml(activePin)}</strong>
          <small>share with your table so they can add orders</small>
@@ -1579,6 +1664,10 @@ function renderOrders() {
   let orders = Store.getOrders();
   if (filter === 'active')     orders = orders.filter(o => o.status === 'pending' || o.status === 'preparing');
   else if (filter !== 'all')   orders = orders.filter(o => o.status === filter);
+  // Kitchen works first-come-first-served: oldest order on top,
+  // newest at the bottom (Store keeps them newest-first for the
+  // customer views, so reverse to a FIFO queue for staff).
+  orders = orders.slice().sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
 
   const host = $('#ordersList');
   if (orders.length === 0) {
@@ -2449,6 +2538,37 @@ $('#exportCsvBtn').addEventListener('click', () => {
      intervals (true cross-device would need a backend); the
      intervals are tightened below to make that feel snappier.
    ========================================================== */
+/* ---- Notification sound (sound/notif.wav) -------------------
+   Played on the admin side when a new order arrives, and on the
+   customer side when their order's status changes. Browsers block
+   audio until the user has interacted with the page, so the clip
+   is "unlocked" on the first pointer/key gesture and reused after
+   (one decoded element, replayed by resetting currentTime). */
+let notifAudio = null;
+let notifAudioUnlocked = false;
+function initNotifSound() {
+  try {
+    notifAudio = new Audio('sound/notif.wav');
+    notifAudio.preload = 'auto';
+  } catch (e) { return; }
+  const unlock = () => {
+    if (notifAudioUnlocked || !notifAudio) return;
+    notifAudio.play().then(() => {
+      notifAudio.pause();
+      notifAudio.currentTime = 0;
+      notifAudioUnlocked = true;
+    }).catch(() => {});
+    window.removeEventListener('pointerdown', unlock);
+    window.removeEventListener('keydown', unlock);
+  };
+  window.addEventListener('pointerdown', unlock);
+  window.addEventListener('keydown', unlock);
+}
+function playNotif() {
+  if (!notifAudio) return;
+  try { notifAudio.currentTime = 0; notifAudio.play().catch(() => {}); } catch (e) {}
+}
+
 const ORDER_STATUS_BY_ID = new Map();
 function snapshotOrderStatuses() {
   ORDER_STATUS_BY_ID.clear();
@@ -2471,6 +2591,7 @@ function reactToCustomerOrderChanges() {
       // behind the panel.
       if (!adminPanelOpenForToasts()) {
         showToast(`${info.icon} Order #${o.number} — ${info.text}`, 'success');
+        playNotif();
       }
     }
     ORDER_STATUS_BY_ID.set(o.id, o.status);
@@ -2490,12 +2611,17 @@ function reactToAdminOrderChanges() {
   // (Otherwise an admin testing the customer flow gets a
   // duplicate "new order!" toast for the order they just placed.)
   const myId = Store.getClientId();
+  let chimed = false;
   for (const o of newcomers) {
     if (o.clientId === myId) continue;
     showAdminToast({
       title:   `🧾 New order #${o.number} · ${o.tableNumber || '—'}`,
       variant: 'info',
     });
+    // One chime per batch, only when the admin panel is the active
+    // surface (so a staff member testing the customer flow in the
+    // same tab isn't double-pinged).
+    if (!chimed && adminPanelOpenForToasts()) { playNotif(); chimed = true; }
   }
   knownOrderIds = ids;
   if (!adminPanel.hidden && $('.admin-tab.active').dataset.adminTab === 'orders') {
@@ -2808,6 +2934,9 @@ async function boot() {
   updateCart();
   refreshOrdersBadge();
   refreshAdminHeaderBtn();
+
+  // Prepare the notification chime (unlocks on first gesture).
+  initNotifSound();
 
   // Seed realtime baselines so the first poll/storage tick
   // doesn't fire stale "new order!" or "status changed" toasts

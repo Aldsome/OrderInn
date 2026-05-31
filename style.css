@@ -434,9 +434,43 @@ select option,
 }
 .status-banner-btn:hover { transform: translateY(-1px); }
 .status-banner-btn .status-icon {
-  font-size: 1.5rem;
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 1.4rem;
   line-height: 1;
   flex-shrink: 0;
+}
+
+/* Live status animations on the always-visible customer banner,
+   mirroring the order-confirmation popup so the customer sees
+   movement while they wait (not only on the placed modal).
+   pending: gentle pulse · preparing: rotating yin-yang ring. */
+.status-banner-btn[data-status="pending"] .status-icon {
+  animation: tickPulse 1.6s ease-in-out infinite;
+}
+.status-banner-btn[data-status="preparing"] .status-icon {
+  box-shadow: 0 0 14px rgba(160, 133, 94, .35);
+}
+.status-banner-btn[data-status="preparing"] .status-icon::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    var(--primary) 0deg, var(--accent) 90deg,
+    var(--primary-deep) 180deg, var(--accent) 270deg, var(--primary) 360deg);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%);
+          mask: radial-gradient(circle, transparent 58%, #000 60%);
+  animation: yinyangSpin 2.4s linear infinite;
+  z-index: 0;
+}
+.status-banner-btn[data-status="served"] .status-icon {
+  animation: tickPop .5s cubic-bezier(.2, 1.3, .4, 1) both;
 }
 .status-banner-btn .status-text {
   flex: 1;
@@ -2025,6 +2059,54 @@ body.cart-open .fab-cart {
   color: var(--ink-soft);
   font-size: .74rem;
 }
+
+/* First-time Table-PIN spotlight: a static (flicker-free) glow on
+   the banner + an animated pointer callout below it. */
+.myorders-pin.hint {
+  border-style: solid;
+  border-color: var(--primary);
+  background: var(--brown-200);
+  box-shadow: 0 0 0 3px rgba(160, 133, 94, .28), 0 8px 22px rgba(160, 133, 94, .30);
+}
+.pin-hint-callout {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--primary-deep);
+  color: #fff;
+  font-size: .8rem;
+  line-height: 1.35;
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  animation: pinHintIn .35s ease both;
+}
+.pin-hint-callout::before {            /* little tab pointing up at the banner */
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 22px;
+  width: 13px;
+  height: 13px;
+  background: inherit;
+  border-radius: 3px;
+  transform: rotate(45deg);
+}
+.pin-hint-callout.leaving { animation: pinHintOut .32s ease forwards; }
+.pin-hint-callout strong { font-weight: 700; }
+.pin-hint-arrow {
+  font-size: 1.1rem;
+  line-height: 1;
+  animation: pinHintBounce 1s ease-in-out infinite;
+}
+.pin-hint-text { flex: 1; }
+@keyframes pinHintIn  { from { opacity: 0; transform: translateY(-6px) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes pinHintOut { to   { opacity: 0; transform: translateY(-6px) scale(.96); } }
+@keyframes pinHintBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 
 /* Join-gate PIN input inside the duplicate-table modal */
 .dup-pin-row { margin: 4px 0 2px; }
