@@ -1015,6 +1015,15 @@ $('#myOrdersList').addEventListener('click', (e) => {
    customer hits Dismiss). */
 let thanksShown = false;
 function maybeShowThanks() {
+  // Staff are exempt from the customer end-of-visit flow. The
+  // thanks overlay + auto table-reset exists to free a table for
+  // the next walk-in — it's meaningless for an admin, whose name
+  // is auto-stamped as their table label. Without this guard the
+  // overlay pops over the admin panel the moment the admin's own
+  // orders all reach "served" (the customer-side poll runs even
+  // while the panel is open). Admins can still order like a
+  // normal customer; they just never get the reset lifecycle.
+  if (Store.isAdmin()) return;
   const mine = Store.getMyOrders();
   if (mine.length === 0) return;
   const active = mine.filter(o => o.status === 'pending' || o.status === 'preparing').length;
