@@ -116,10 +116,19 @@ function toggleTheme() {
 const toastEl = $('#toast');
 let toastTimer;
 function showToast(msg, variant = '') {
+  // Customer-facing toast: suppress when the admin panel is
+  // open in this tab. An admin actively managing orders
+  // doesn't need a customer-context popup about "their" order
+  // (they're the same human, just in a different role).
+  if (adminPanelOpenForToasts()) return;
   toastEl.textContent = msg;
   toastEl.className   = 'toast show ' + variant;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+}
+function adminPanelOpenForToasts() {
+  const p = document.getElementById('adminPanel');
+  return !!p && !p.hidden;
 }
 
 /* ==========================================================
@@ -663,6 +672,15 @@ $('#placeOrderBtn').addEventListener('click', () => {
   // visit will retrigger it after all orders are served.
   thanksShown = false;
   refreshAdminActivity();
+  // Realtime: refresh the admin panel if it happens to be open
+  // in this same tab, and seed the new order into the local
+  // baseline so the cross-tab "new order!" toast doesn't
+  // double-fire when the storage event echoes the same write.
+  knownOrderIds.add(order.id);
+  ORDER_STATUS_BY_ID.set(order.id, order.status);
+  if (!adminPanel.hidden && $('.admin-tab.active').dataset.adminTab === 'orders') {
+    renderOrders();
+  }
 });
 
 $('#newOrderBtn').addEventListener('click', () => {
@@ -719,9 +737,12 @@ function refreshOrderStatusBanner() {
   const banner = $('#orderStatusBanner');
 
   // Whatever we do with the banner, the FAB count + thank-you
-  // logic always need a tick.
+  // logic always need a tick. Also surface any status changes
+  // since the last tick (same-tab admin updates, cross-tab
+  // sync, or cross-device polling — they all funnel here).
   refreshMyOrdersFab();
   maybeShowThanks();
+  reactToCustomerOrderChanges();
 
   if (!order) {
     banner.hidden = true;
@@ -1320,9 +1341,15 @@ $('#ordersList').addEventListener('click', (e) => {
   if (act === 'delete') {
     if (!confirm('Delete this order?')) return;
     Store.deleteOrder(id);
+    knownOrderIds.delete(id);
+    ORDER_STATUS_BY_ID.delete(id);
     showAdminToast({ title: `${label} deleted`, variant: 'danger' });
   } else {
     Store.updateOrderStatus(id, act);
+    // Seed the snapshot with the new status so this same tab's
+    // customer-side poll doesn't surface a status-change toast
+    // to the admin themselves for an action they just took.
+    ORDER_STATUS_BY_ID.set(id, act);
     showAdminToast({
       title: `${label} → ${act}`,
       variant: act === 'served' ? 'success' : act === 'cancelled' ? 'danger' : 'info',
@@ -1332,13 +1359,16 @@ $('#ordersList').addEventListener('click', (e) => {
   refreshAdminActivity();
 });
 
-/* Auto-refresh orders every 8s while the panel is open (so a
-   second device's orders show up without a full reload). */
+/* Auto-refresh orders every 3s while the admin panel is open
+   (drives the cross-DEVICE realtime feel — the same-browser
+   cross-tab case uses the storage event for instant updates).
+   Always runs reactToAdminOrderChanges() so a new order placed
+   on another device is announced via toast regardless of which
+   tab the admin is in. */
 setInterval(() => {
-  if (!adminPanel.hidden && $('.admin-tab.active').dataset.adminTab === 'orders') {
-    renderOrders();
-  }
-}, 8000);
+  if (adminPanel.hidden) return;
+  reactToAdminOrderChanges();
+}, 3000);
 
 /* Live-tick the cancellable countdown badges every second so
    admins see exactly when the customer's self-cancel window
@@ -2067,6 +2097,102 @@ $('#exportCsvBtn').addEventListener('click', () => {
 });
 
 /* ==========================================================
+   REALTIME SYNC
+   - The browser's `storage` event fires in OTHER tabs of the
+     same origin whenever localStorage is written. We use it
+     to make every tab feel live: a customer places an order
+     in one tab, the admin panel in another tab refreshes
+     immediately, no polling required.
+   - Same-tab updates already re-render explicitly after each
+     write; this layer is purely for cross-tab propagation.
+   - Cross-DEVICE updates still rely on the existing polling
+     intervals (true cross-device would need a backend); the
+     intervals are tightened below to make that feel snappier.
+   ========================================================== */
+const ORDER_STATUS_BY_ID = new Map();
+function snapshotOrderStatuses() {
+  ORDER_STATUS_BY_ID.clear();
+  for (const o of Store.getOrders()) ORDER_STATUS_BY_ID.set(o.id, o.status);
+}
+
+/* Detects status changes for THIS customer's orders since the
+   last snapshot and shows a friendly toast. Skipped silently
+   when the admin panel is open (per the requested rule). */
+function reactToCustomerOrderChanges() {
+  const fresh = Store.getMyOrders();
+  for (const o of fresh) {
+    const prev = ORDER_STATUS_BY_ID.get(o.id);
+    if (prev !== undefined && prev !== o.status) {
+      const info = STATUS_INFO[o.status] || STATUS_INFO.pending;
+      // Suppression hook: showToast already guards on admin
+      // panel state, but we also skip the inline status-banner
+      // animation noise so the admin view isn't visually
+      // disrupted by something happening in the customer view
+      // behind the panel.
+      if (!adminPanelOpenForToasts()) {
+        showToast(`${info.icon} Order #${o.number} — ${info.text}`, 'success');
+      }
+    }
+    ORDER_STATUS_BY_ID.set(o.id, o.status);
+  }
+}
+
+/* New-order detection for the admin side. Compares the current
+   order list against the previous snapshot and fires a toast +
+   subtle ping for any newcomers. Also re-renders the orders
+   list if the admin panel is visible. */
+let knownOrderIds = new Set();
+function reactToAdminOrderChanges() {
+  const all = Store.getOrders();
+  const ids = new Set(all.map(o => o.id));
+  const newcomers = all.filter(o => !knownOrderIds.has(o.id));
+  // Only chime for orders THIS device didn't place itself.
+  // (Otherwise an admin testing the customer flow gets a
+  // duplicate "new order!" toast for the order they just placed.)
+  const myId = Store.getClientId();
+  for (const o of newcomers) {
+    if (o.clientId === myId) continue;
+    showAdminToast({
+      title:   `🧾 New order #${o.number} · ${o.tableNumber || '—'}`,
+      variant: 'info',
+    });
+  }
+  knownOrderIds = ids;
+  if (!adminPanel.hidden && $('.admin-tab.active').dataset.adminTab === 'orders') {
+    renderOrders();
+  }
+  refreshAdminActivity();
+  refreshOrdersBadge();
+}
+
+/* Cross-tab fan-out via the storage event. Only fires in OTHER
+   tabs of the same origin, so it's the perfect signal that a
+   write happened elsewhere. We respond by refreshing whichever
+   surface (customer view, admin view, both) is currently shown
+   in this tab. */
+window.addEventListener('storage', (e) => {
+  if (!e.key) return;
+  if (e.key === 'bb_orders') {
+    refreshOrderStatusBanner();
+    refreshMyOrdersFab();
+    if (!$('#myOrdersSheet').hidden) renderMyOrdersList();
+    reactToCustomerOrderChanges();
+    reactToAdminOrderChanges();
+  } else if (e.key === 'bb_menu') {
+    MENU = Store.getMenu();
+    renderMenu();
+    if (!adminPanel.hidden && $('.admin-tab.active').dataset.adminTab === 'menu') {
+      renderMenuTable();
+    }
+  } else if (e.key === 'bb_config') {
+    CONFIG = Store.getConfig();
+    applyConfigToDOM();
+  } else if (e.key === 'bb_activity_log') {
+    refreshAdminActivity();
+  }
+});
+
+/* ==========================================================
    THEME TOGGLE  (customer + admin both wired to the same fn)
    ========================================================== */
 $('#themeToggleBtn').addEventListener('click', toggleTheme);
@@ -2122,11 +2248,21 @@ async function boot() {
   refreshOrdersBadge();
   refreshAdminHeaderBtn();
 
+  // Seed realtime baselines so the first poll/storage tick
+  // doesn't fire stale "new order!" or "status changed" toasts
+  // for orders that already existed when the tab opened.
+  snapshotOrderStatuses();
+  knownOrderIds = new Set(Store.getOrders().map(o => o.id));
+
   // Restore the customer's order state on reload — banner, FAB,
   // and polling all derive from the same client's orders.
   refreshOrderStatusBanner();
   refreshMyOrdersFab();
-  if (getMyActiveOrders().length > 0 && !statusPollTimer) {
+  // Always poll while the tab is open — even with zero orders
+  // RIGHT NOW, a new one can arrive from another device. Cheap
+  // (one localStorage read every 5s) and the storage event
+  // also covers same-browser cross-tab updates instantly.
+  if (!statusPollTimer) {
     statusPollTimer = setInterval(refreshOrderStatusBanner, 5000);
   }
 
