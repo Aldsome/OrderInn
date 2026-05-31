@@ -208,45 +208,71 @@ function closeTableModal() { closeModal('#tableModal'); }
    2. Otherwise, an in-flight ORDER under this label on another
       device — this is the legitimate "joining this table?" case
       (one person paid, friends are adding more rounds). */
-function checkDuplicateTable(label, onAccept) {
-  // Layer 1 — live session collision on ANOTHER device of the
-  // same browser (intra-browser only; cross-device collisions
-  // are caught by the orders check below since orders sync
-  // through Supabase).
-  const conflictId = Store.findActiveSessionByName(label);
+async function checkDuplicateTable(label, onAccept) {
+  // Layer 1 — live session collision. First the LOCAL registry
+  // (catches another tab of the same browser), then the REMOTE
+  // registry via Supabase (catches another DEVICE holding the
+  // same name before either has ordered — e.g. PC "art" + phone
+  // "art"). This is a hard block: there's no "join" option for a
+  // pure name clash, the second person must pick a different
+  // label.
+  let conflictId = Store.findActiveSessionByName(label);
+  if (!conflictId) conflictId = await Store.findActiveSessionByNameRemote(label);
   if (conflictId) {
-    showToast(`"${label}" is already in use on another device. Please pick a different label.`, 'error');
-    $('#tableInput').focus();
-    $('#tableInput').select();
+    showDupModal({ mode: 'nameTaken', label });
     return;
   }
   // Layer 2 — any active order at this label, from any device
-  // (including this one). Triggering on own-clientId too lets
-  // a customer who's reopening the page see "you already have
-  // an open order here — continue with it?" instead of silently
+  // (including this one). Orders sync through Supabase, so this
+  // already works cross-device. Triggering on own-clientId too
+  // lets a customer reopening the page see "you already have an
+  // open order here — continue with it?" instead of silently
   // re-using the label.
   const matches = Store.findActiveOrdersByTable(label);
   if (matches.length === 0) { onAccept(); return; }
 
   const myId  = Store.getClientId();
   const isOwn = matches.every(o => o.clientId === myId);
-  $('#dupTableLabel').textContent = label;
-  $('#dupTableCount').textContent = matches.length === 1 ? 'an' : `${matches.length}`;
-  // Re-label the prompt so the wording matches the situation —
-  // "your own open order" vs "someone else's at the same table".
-  const desc = $('#dupTableDesc');
-  if (desc) {
-    desc.textContent = isOwn
-      ? `You already have ${matches.length === 1 ? 'an' : matches.length} open order here. Continue with it, or sit somewhere else?`
-      : `Looks like ${label} already has ${matches.length === 1 ? 'an' : matches.length} open order on another device. Are you joining that table, or did you sit down somewhere else?`;
-  }
-  pendingTableLabel = label;
-  pendingTableAccept = onAccept;
-  closeTableModal();            // ensure the dup prompt isn't painted behind the table modal
-  openModal('#dupTableModal');
+  showDupModal({ mode: isOwn ? 'ownOrder' : 'share', label, count: matches.length, onAccept });
 }
 let pendingTableLabel  = null;
 let pendingTableAccept = null;
+
+/* Configure + open the duplicate/collision modal. Three modes:
+   - 'nameTaken' : another live device holds this exact name —
+                   only option is to choose a different label.
+   - 'ownOrder'  : this device already has an open order here —
+                   offer continue (join) or sit elsewhere.
+   - 'share'     : someone else has an open order at this label —
+                   offer join (table sharing) or sit elsewhere. */
+function showDupModal({ mode, label, count = 1, onAccept = null }) {
+  const desc    = $('#dupTableDesc');
+  const title   = $('#dupTableTitle');
+  const joinBtn = $('#dupTableJoinBtn');
+  const elseBtn = $('#dupTableElsewhereBtn');
+  $('#dupTableLabel').textContent = label;
+
+  if (mode === 'nameTaken') {
+    if (title) title.textContent = 'That name is taken';
+    if (desc) desc.textContent =
+      `The name "${label}" is already in use on another device. Please choose a different name or number so staff don't mix up your orders.`;
+    joinBtn.hidden = true;                       // no "join" for a name clash
+    elseBtn.textContent = 'Choose another name';
+    pendingTableAccept = null;                   // never auto-accept a clash
+  } else {
+    if (title) title.textContent = 'Already an open order here';
+    joinBtn.hidden = false;
+    joinBtn.textContent = mode === 'ownOrder' ? 'Continue with it' : 'Join this table';
+    elseBtn.textContent = "I'm somewhere else";
+    if (desc) desc.textContent = mode === 'ownOrder'
+      ? `You already have ${count === 1 ? 'an' : count} open order here. Continue with it, or sit somewhere else?`
+      : `Looks like ${label} already has ${count === 1 ? 'an' : count} open order on another device. Are you joining that table, or did you sit down somewhere else?`;
+    pendingTableAccept = onAccept;
+  }
+  pendingTableLabel = label;
+  closeTableModal();            // ensure the dup prompt isn't painted behind the table modal
+  openModal('#dupTableModal');
+}
 
 $('#dupTableJoinBtn').addEventListener('click', () => {
   const accept = pendingTableAccept;
@@ -261,7 +287,7 @@ $('#dupTableElsewhereBtn').addEventListener('click', () => {
   openTableModal();
 });
 
-$('#tableForm').addEventListener('submit', (e) => {
+$('#tableForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const input = $('#tableInput');
   const label = input.value.trim();
@@ -273,11 +299,18 @@ $('#tableForm').addEventListener('submit', (e) => {
     input.setCustomValidity('');
     return;
   }
-  checkDuplicateTable(label, () => {
-    setTableLabel(label);
-    closeTableModal();
-    bumpInactivity();
-  });
+  // Brief disable while the (async) remote collision check runs.
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    await checkDuplicateTable(label, () => {
+      setTableLabel(label);
+      closeTableModal();
+      bumpInactivity();
+    });
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
 });
 $('#changeTableBtn').addEventListener('click', () => {
   $('#tableInput').value = state.tableNumber || '';

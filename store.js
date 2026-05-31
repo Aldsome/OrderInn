@@ -658,7 +658,10 @@ const Store = {
     if (mutated) writeJSON(STORE_KEYS.activeSessions, raw);
     return raw;
   },
-  /* Returns the conflicting clientId, or null if the name is free. */
+  /* Returns the conflicting clientId, or null if the name is free.
+     LOCAL-only — catches collisions between tabs of the SAME
+     browser. Cross-device collisions need the async remote check
+     below (the local registry can't see another device). */
   findActiveSessionByName(name) {
     if (!name) return null;
     const myId   = Store.getClientId();
@@ -670,16 +673,58 @@ const Store = {
     }
     return null;
   },
+  /* Cross-device collision check via Supabase. Returns the
+     conflicting client_id, or null. Only meaningful in remote
+     mode; in local mode it resolves null (the local check above
+     is all we have). Filters out our own row and any session
+     that hasn't heartbeat-ed within the TTL. */
+  async findActiveSessionByNameRemote(name) {
+    if (!name || !REMOTE_MODE || !navigator.onLine) return null;
+    const needle  = String(name).trim().toLowerCase();
+    const myId    = Store.getClientId();
+    const cutoff  = new Date(Date.now() - ACTIVE_SESSION_TTL_MS).toISOString();
+    try {
+      const { data, error } = await sb
+        .from('bb_sessions')
+        .select('client_id, name, last_active')
+        .ilike('name', needle)
+        .gt('last_active', cutoff);
+      if (error || !data) return null;
+      const hit = data.find(r =>
+        r.client_id !== myId &&
+        String(r.name || '').trim().toLowerCase() === needle
+      );
+      return hit ? hit.client_id : null;
+    } catch (e) {
+      return null;   // network hiccup — fail open, don't block ordering
+    }
+  },
   bumpActiveSession(name) {
     if (!name) { Store.dropActiveSession(); return; }
     const all = Store._readSessions();
     all[Store.getClientId()] = { name, lastActive: Date.now() };
     writeJSON(STORE_KEYS.activeSessions, all);
+    // Mirror to Supabase so other devices can see this claim.
+    // Best-effort presence data — no retry queue (a missed
+    // heartbeat just makes the row look stale, which is fine).
+    if (REMOTE_MODE && navigator.onLine) {
+      sb.from('bb_sessions').upsert({
+        client_id:   Store.getClientId(),
+        name,
+        last_active: new Date().toISOString(),
+      }).then(({ error }) => {
+        if (error) console.warn('[Store] session upsert failed', error);
+      });
+    }
   },
   dropActiveSession() {
     const all = Store._readSessions();
     delete all[Store.getClientId()];
     writeJSON(STORE_KEYS.activeSessions, all);
+    if (REMOTE_MODE && navigator.onLine) {
+      sb.from('bb_sessions').delete().eq('client_id', Store.getClientId())
+        .then(({ error }) => { if (error) console.warn('[Store] session delete failed', error); });
+    }
   },
 
   /* ==========================================================
