@@ -532,7 +532,14 @@ document.addEventListener('keydown', (e) => {
 const staffLoginModal = $('#staffLoginModal');
 function openStaffLogin()  { openModal('#staffLoginModal'); }
 function closeStaffLogin() { closeModal('#staffLoginModal'); $('#staffLoginError').hidden = true; }
-$('#openStaffLoginBtn').addEventListener('click', openStaffLogin);
+$('#openStaffLoginBtn').addEventListener('click', () => {
+  // If a valid admin session is still cached, skip the login
+  // form and drop them straight into the panel. Otherwise
+  // show the login form.
+  const session = Store.getSession();
+  if (session && session.role === 'admin') enterAdminPanel(session);
+  else                                      openStaffLogin();
+});
 $('#closeStaffLoginBtn').addEventListener('click', closeStaffLogin);
 
 $('#staffLoginForm').addEventListener('submit', async (e) => {
@@ -850,12 +857,11 @@ async function boot() {
   applyConfigToDOM();
   await Store.seedIfEmpty();
 
-  // If admin is already signed in from a previous session, drop
-  // them straight into the panel.
-  const session = Store.getSession();
-  if (session && session.role === 'admin') {
-    enterAdminPanel(session);
-  }
+  // Always boot into the customer view. Admins click Staff
+  // Login to enter the panel — they're never auto-redirected
+  // on page load. Their session is still remembered so they
+  // skip the form if they reopen the panel within the 8-hour
+  // session window (handled in the Staff Login click handler).
 
   ensureTable();
   renderMenu();
