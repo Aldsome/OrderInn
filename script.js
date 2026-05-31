@@ -132,23 +132,23 @@ function applyConfigToDOM() {
 }
 
 /* ==========================================================
-   TABLE NUMBER
+   TABLE LABEL  (free-text — "Window seat", "Booth A", "5")
    ========================================================== */
 function readTableFromURL() {
   const params = new URLSearchParams(location.search);
   const t = params.get('table');
-  return t ? parseInt(t, 10) || null : null;
+  return t ? t.trim() : null;
 }
-function setTableNumber(n) {
-  state.tableNumber = n;
-  $('#tableNumberDisplay').textContent = n != null ? String(n) : '—';
+function setTableLabel(label) {
+  state.tableNumber = label;                 // kept as `tableNumber` for compat
+  $('#tableNumberDisplay').textContent = label || '—';
 }
 function ensureTable() {
   let t = readTableFromURL();
-  if (!t) t = parseInt(localStorage.getItem('bossb_table') || '0', 10) || null;
+  if (!t) t = (localStorage.getItem('bossb_table') || '').trim() || null;
   if (t) {
-    setTableNumber(t);
-    localStorage.setItem('bossb_table', String(t));
+    setTableLabel(t);
+    localStorage.setItem('bossb_table', t);
   } else {
     openTableModal();
   }
@@ -157,10 +157,10 @@ function openTableModal()  { openModal('#tableModal'); }
 function closeTableModal() { closeModal('#tableModal'); }
 $('#tableForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  const n = parseInt($('#tableInput').value, 10);
-  if (!n || n < 1) return;
-  setTableNumber(n);
-  localStorage.setItem('bossb_table', String(n));
+  const label = $('#tableInput').value.trim();
+  if (!label) return;
+  setTableLabel(label);
+  localStorage.setItem('bossb_table', label);
   closeTableModal();
 });
 $('#changeTableBtn').addEventListener('click', () => {
@@ -462,7 +462,6 @@ $('#placeOrderBtn').addEventListener('click', () => {
     openTableModal();
     return;
   }
-  // Build immutable line snapshot for the order record
   const items = state.cart.map(line => {
     const item = MENU.find(m => m.id === line.id);
     return {
@@ -480,14 +479,99 @@ $('#placeOrderBtn').addEventListener('click', () => {
   });
   clearCart();
   closeCart();
-  // Show confirmation
-  $('#placedOrderNumber').textContent = order.number;
-  $('#placedTable').textContent       = `Table ${state.tableNumber}`;
-  openModal('#orderPlacedModal');
+
+  // Remember this customer's active order so the status banner
+  // and the modal can poll for live updates from the admin.
+  setActiveOrder(order.id);
+  openOrderPlacedModal(order);
   refreshOrdersBadge();
 });
 
-$('#newOrderBtn').addEventListener('click', () => closeModal('#orderPlacedModal'));
+$('#newOrderBtn').addEventListener('click', () => {
+  closeModal('#orderPlacedModal');
+  // "Start new order" = the customer is done with the last
+  // order; clear it so the banner goes away.
+  clearActiveOrder();
+});
+$('#closePlacedBtn').addEventListener('click', () => closeModal('#orderPlacedModal'));
+
+/* ==========================================================
+   CUSTOMER ORDER STATUS BANNER
+   - Polls every 5s when an active order exists.
+   - Banner click → re-opens the order-placed modal with the
+     latest status reflected.
+   ========================================================== */
+const STATUS_INFO = {
+  pending:   { icon: '⏳', text: 'Sent to the kitchen',  modalTitle: 'Order placed!',     modalSubtitle: 'Show this number to your server.' },
+  preparing: { icon: '☕', text: 'Your order is being prepared', modalTitle: 'Being prepared', modalSubtitle: 'Our barista is on it. Hang tight.' },
+  served:    { icon: '✓',  text: 'Ready / served',     modalTitle: 'Enjoy!',           modalSubtitle: 'Your order has been served. Don\'t forget to pay at the counter.' },
+  cancelled: { icon: '✕',  text: 'Order cancelled',    modalTitle: 'Order cancelled',  modalSubtitle: 'Please ask staff if this was a mistake.' },
+};
+
+let statusPollTimer = null;
+
+function setActiveOrder(orderId) {
+  localStorage.setItem('bossb_active_order', orderId);
+  refreshOrderStatusBanner();
+  if (statusPollTimer) clearInterval(statusPollTimer);
+  statusPollTimer = setInterval(refreshOrderStatusBanner, 5000);
+}
+function clearActiveOrder() {
+  localStorage.removeItem('bossb_active_order');
+  $('#orderStatusBanner').hidden = true;
+  if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
+}
+function getActiveOrder() {
+  const id = localStorage.getItem('bossb_active_order');
+  if (!id) return null;
+  return Store.getOrders().find(o => o.id === id) || null;
+}
+
+function refreshOrderStatusBanner() {
+  const order = getActiveOrder();
+  const banner = $('#orderStatusBanner');
+  if (!order) {
+    banner.hidden = true;
+    if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
+    return;
+  }
+  const info = STATUS_INFO[order.status] || STATUS_INFO.pending;
+  banner.hidden = false;
+  $('#orderStatusBtn').dataset.status = order.status;
+  $('#bannerOrderNumber').textContent = order.number;
+  $('#bannerStatusText').textContent  = info.text;
+  $('#bannerStatusIcon').textContent  = info.icon;
+
+  // If the placed modal is currently visible, sync its status too.
+  if ($('#orderPlacedModal').classList.contains('open')) {
+    updatePlacedModalForOrder(order);
+  }
+}
+
+function openOrderPlacedModal(order) {
+  updatePlacedModalForOrder(order);
+  openModal('#orderPlacedModal');
+}
+
+function updatePlacedModalForOrder(order) {
+  const info = STATUS_INFO[order.status] || STATUS_INFO.pending;
+  $('#placedOrderNumber').textContent = order.number;
+  $('#placedTable').textContent       = `Table ${order.tableNumber ?? '—'}`;
+  $('#placedTitle').textContent       = info.modalTitle;
+  $('#placedSubtitle').textContent    = info.modalSubtitle;
+  $('#placedTickIcon').textContent    = info.icon;
+  const pill = $('#placedStatusPill');
+  pill.textContent = order.status;
+  pill.className   = 'status-pill status-' + order.status;
+  $('#newOrderBtn').textContent = (order.status === 'served' || order.status === 'cancelled')
+    ? 'Start new order'
+    : 'Place another order';
+}
+
+$('#orderStatusBtn').addEventListener('click', () => {
+  const order = getActiveOrder();
+  if (order) openOrderPlacedModal(order);
+});
 
 /* ==========================================================
    MODAL HELPERS
@@ -867,6 +951,16 @@ async function boot() {
   renderMenu();
   updateCart();
   refreshOrdersBadge();
+
+  // Restore the customer's active order banner if they reload
+  // mid-order. Polling resumes automatically.
+  if (localStorage.getItem('bossb_active_order')) {
+    refreshOrderStatusBanner();
+    if (!statusPollTimer) {
+      statusPollTimer = setInterval(refreshOrderStatusBanner, 5000);
+    }
+  }
+
   $('#year').textContent = new Date().getFullYear();
 }
 

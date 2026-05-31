@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="style.css?v=6" />
 
   <script>
     (function () {
@@ -63,11 +63,23 @@
         </div>
       </div>
 
-      <!-- Table strip — shows the table number (from ?table= URL) -->
+      <!-- Table strip — shows the table name (from ?table= URL) -->
       <div class="table-strip container">
         <span>Table</span>
         <strong id="tableNumberDisplay">—</strong>
         <button class="link-mini" id="changeTableBtn">change</button>
+      </div>
+
+      <!-- Customer's active-order status banner (poll-driven) -->
+      <div class="order-status-banner container" id="orderStatusBanner" hidden>
+        <button type="button" class="status-banner-btn" id="orderStatusBtn">
+          <span class="status-icon" id="bannerStatusIcon">⏳</span>
+          <div class="status-text">
+            <strong>Order #<span id="bannerOrderNumber">—</span></strong>
+            <small id="bannerStatusText">Sent to kitchen</small>
+          </div>
+          <span class="status-arrow">›</span>
+        </button>
       </div>
     </header>
 
@@ -192,30 +204,45 @@
   </div>
 
   <!-- ==========================================================
-       ORDER PLACED MODAL  (customer confirmation)
+       ORDER PLACED / STATUS MODAL  (customer confirmation,
+       also shows live status when reopened from the banner)
        ========================================================== -->
   <div class="modal" id="orderPlacedModal" aria-hidden="true">
     <div class="modal-card placed-card" role="dialog">
-      <div class="placed-tick" aria-hidden="true">✓</div>
-      <h3>Order placed!</h3>
-      <p class="muted">Show this number to your server.</p>
+      <div class="placed-tick" id="placedTickIcon" aria-hidden="true">✓</div>
+      <h3 id="placedTitle">Order placed!</h3>
+      <p class="muted" id="placedSubtitle">Show this number to your server.</p>
       <div class="order-number">#<span id="placedOrderNumber">—</span></div>
       <p class="muted small" id="placedTable">Table —</p>
+
+      <!-- Live status pill -->
+      <div class="placed-status">
+        <span class="status-pill" id="placedStatusPill">pending</span>
+      </div>
+
       <p class="pay-note">💵 Pay at the counter when your order is ready.</p>
       <button class="btn btn-primary btn-block" id="newOrderBtn">Start new order</button>
+      <button class="btn btn-ghost btn-block" id="closePlacedBtn">Close</button>
     </div>
   </div>
 
   <!-- ==========================================================
-       TABLE NUMBER MODAL  (if URL has no ?table=)
+       TABLE MODAL  (if URL has no ?table=)
+       - Free-text name so staff can use any naming scheme:
+         "Window 2", "Booth A", "Patio", "Table 5", etc.
        ========================================================== -->
   <div class="modal" id="tableModal" aria-hidden="true">
     <div class="modal-card small-card" role="dialog">
-      <h3>Which table are you at?</h3>
-      <p class="muted small">Helps our staff find you when your order is ready.</p>
+      <header class="modal-head">
+        <h3>Where are you sitting?</h3>
+      </header>
       <form id="tableForm">
-        <label>Table number
-          <input type="number" id="tableInput" min="1" max="999" required placeholder="e.g. 7" />
+        <p class="muted small" style="margin: 0;">
+          Helps our staff find you when your order is ready.
+        </p>
+        <label>Table name or number
+          <input type="text" id="tableInput" maxlength="40" required
+                 placeholder="e.g. Window 2, Booth A, Table 7" />
         </label>
         <button type="submit" class="btn btn-primary btn-block">Continue</button>
       </form>
@@ -391,6 +418,6 @@
   <div class="toast" id="toast" aria-live="polite"></div>
 
   <script src="store.js?v=1"></script>
-  <script src="script.js?v=2"></script>
+  <script src="script.js?v=3"></script>
 </body>
 </html>

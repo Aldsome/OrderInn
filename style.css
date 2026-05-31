@@ -300,21 +300,102 @@ select option,
 .table-strip {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding-block: 8px 12px;
   font-size: .88rem;
   color: var(--ink-soft);
 }
 .table-strip strong {
-  display: inline-grid;
-  place-items: center;
-  min-width: 36px;
-  padding: 2px 10px;
+  /* No fixed min-width: free-text names like "Window seat"
+     or "Booth A" need to fit naturally. */
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 14px;
   border-radius: 999px;
   background: var(--brown-100);
   color: var(--primary-deep);
   font-weight: 700;
+  letter-spacing: .01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+/* ==========================================================
+   CUSTOMER ORDER-STATUS BANNER  (under the topbar)
+   - Appears after the customer places an order. Updates by
+     polling Store.getOrders() every few seconds, so admin
+     status changes show up live for the customer.
+   ========================================================== */
+.order-status-banner {
+  padding-block: 0 12px;
+}
+.status-banner-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--yellow-100);
+  border: 1px solid var(--yellow-200);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: .9rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, transform .12s;
+}
+.status-banner-btn:hover { transform: translateY(-1px); }
+.status-banner-btn .status-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.status-banner-btn .status-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.status-banner-btn .status-text strong { color: var(--primary-deep); font-size: .95rem; }
+.status-banner-btn .status-text small  { color: var(--ink-soft); font-size: .78rem; }
+.status-banner-btn .status-arrow {
+  font-size: 1.4rem;
+  color: var(--ink-soft);
+  font-weight: 300;
+  flex-shrink: 0;
+}
+
+/* Color by status */
+.status-banner-btn[data-status="pending"]    { background: var(--yellow-100); border-color: var(--yellow-200); }
+.status-banner-btn[data-status="preparing"]  { background: var(--brown-100); border-color: var(--brown-200); }
+.status-banner-btn[data-status="preparing"] .status-text strong { color: var(--brown-700); }
+.status-banner-btn[data-status="served"]     { background: #DDF0D5; border-color: #B5DAB0; }
+.status-banner-btn[data-status="served"] .status-text strong { color: #3A6E3B; }
+.status-banner-btn[data-status="cancelled"]  { background: rgba(220, 53, 69, 0.10); border-color: rgba(220, 53, 69, 0.25); }
+.status-banner-btn[data-status="cancelled"] .status-text strong { color: var(--danger); }
+[data-theme="dark"] .status-banner-btn[data-status="served"]    { background: rgba(126, 183, 138, 0.18); border-color: rgba(126, 183, 138, 0.3); }
+[data-theme="dark"] .status-banner-btn[data-status="served"] .status-text strong { color: #B5DAB0; }
+[data-theme="dark"] .status-banner-btn[data-status="cancelled"] .status-text strong { color: #F26A78; }
+
+/* Status pill inside the order-placed modal */
+.placed-status { margin: 10px 0 4px; }
+.status-pill {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.status-pill.status-pending   { background: var(--yellow-100); color: var(--yellow-700); }
+.status-pill.status-preparing { background: var(--brown-100); color: var(--brown-700); }
+.status-pill.status-served    { background: #DDF0D5; color: #3A6E3B; }
+.status-pill.status-cancelled { background: rgba(220, 53, 69, 0.15); color: var(--danger); }
 
 /* ==========================================================
    CATEGORY CHIPS
