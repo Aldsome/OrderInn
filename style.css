@@ -746,6 +746,132 @@ select option,
   flex-direction: column;
 }
 .cart-drawer.open { transform: translateY(0); }
+
+/* ==========================================================
+   CHAT — FAB, drawer, bubbles, composer
+   ========================================================== */
+.fab-chat {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  z-index: 80;
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  border: 1px solid var(--brown-200);
+  background: var(--white);
+  color: var(--primary-deep);
+  font-size: 1.4rem;
+  cursor: pointer;
+  box-shadow: var(--shadow-lg);
+  display: grid;
+  place-items: center;
+  transition: transform .12s;
+}
+.fab-chat:hover { transform: translateY(-2px); }
+.fab-chat-dot {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--danger);
+  border: 2px solid var(--white);
+}
+body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
+
+.chat-drawer {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  max-height: 85dvh;
+  height: 70dvh;
+  background: var(--white);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(100%);
+  transition: transform .3s cubic-bezier(.4, .2, .2, 1);
+  z-index: 96;                 /* above admin panel so staff can chat */
+  display: flex;
+  flex-direction: column;
+}
+.chat-drawer.open { transform: translateY(0); }
+@media (min-width: 800px) {
+  .chat-drawer {
+    top: 0; bottom: 0; left: 0; right: auto;
+    width: 400px; height: 100dvh; max-height: none;
+    border-radius: 0;
+    transform: translateX(-100%);
+  }
+  .chat-drawer.open { transform: translateX(0); }
+}
+.chat-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--cream);
+}
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 78%;
+}
+.chat-msg.mine   { align-self: flex-end; align-items: flex-end; }
+.chat-msg.theirs { align-self: flex-start; align-items: flex-start; }
+.chat-who  { color: var(--ink-soft); font-size: .72rem; margin-bottom: 2px; }
+.chat-time { color: var(--ink-soft); font-size: .66rem; margin-top: 2px; }
+.chat-bubble {
+  padding: 9px 13px;
+  border-radius: 16px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  font-size: .9rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.chat-msg.mine .chat-bubble {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+[data-theme="dark"] .chat-msg.mine .chat-bubble { color: #0E1419; }
+.chat-bubble.chat-image, .chat-bubble.chat-audio { padding: 5px; }
+.chat-img   { display: block; max-width: 220px; border-radius: 11px; }
+.chat-audio { display: block; width: 230px; max-width: 60vw; }
+
+.chat-composer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--white);
+}
+.chat-composer #chatInput { flex: 1; }
+.chat-composer .icon-btn { font-size: 1.15rem; }
+.chat-send { background: var(--primary); color: #fff; border-color: var(--primary); }
+[data-theme="dark"] .chat-send { color: #0E1419; }
+
+.chat-recording {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--white);
+  font-size: .85rem;
+  color: var(--ink-soft);
+}
+.chat-recording .rec-dot {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--danger);
+  animation: recPulse 1s infinite;
+}
+.chat-recording .btn { margin-left: auto; padding: 6px 12px; font-size: .82rem; }
+.chat-recording #chatRecCancel { margin-left: auto; }
+@keyframes recPulse { 0%,100%{opacity:1;} 50%{opacity:.3;} }
+
 @media (min-width: 800px) {
   .cart-drawer {
     top: 0;
@@ -1114,6 +1240,7 @@ html[data-theme="dark"] textarea::placeholder {
   max-width: 420px;
 }
 .placed-tick {
+  position: relative;
   width: 64px; height: 64px;
   border-radius: 50%;
   background: var(--brown-100);
@@ -1123,6 +1250,55 @@ html[data-theme="dark"] textarea::placeholder {
   font-size: 2rem;
   font-weight: 700;
   margin: 0 auto 14px;
+}
+
+/* ----- Order status animations on the placed/status modal -----
+   pending  : gentle "sent to kitchen" pulse
+   preparing: rotating yin-yang outer glow ring
+   served   : a quick celebratory pop */
+.placed-card[data-status="pending"] .placed-tick {
+  animation: tickPulse 1.6s ease-in-out infinite;
+}
+@keyframes tickPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(192,143,30,.0); transform: translateY(0); }
+  50%      { box-shadow: 0 0 0 10px rgba(192,143,30,.18); transform: translateY(-2px); }
+}
+
+/* Preparing: a conic-gradient ring rotating around the icon —
+   the "yin-yang outer glow moving" effect. */
+.placed-card[data-status="preparing"] .placed-tick::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    var(--primary) 0deg, var(--accent) 90deg,
+    var(--primary-deep) 180deg, var(--accent) 270deg, var(--primary) 360deg);
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 62%);
+          mask: radial-gradient(circle, transparent 60%, #000 62%);
+  animation: yinyangSpin 2.4s linear infinite;
+  z-index: 0;
+}
+.placed-card[data-status="preparing"] .placed-tick {
+  background: var(--brown-100);
+  box-shadow: 0 0 18px rgba(160,133,94,.35);
+}
+@keyframes yinyangSpin { to { transform: rotate(360deg); } }
+
+.placed-card[data-status="served"] .placed-tick {
+  background: #DDF0D5;
+  color: #3A6E3B;
+  animation: tickPop .5s cubic-bezier(.2,1.3,.4,1) both;
+}
+@keyframes tickPop {
+  0%   { transform: scale(.4); opacity: 0; }
+  60%  { transform: scale(1.18); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.placed-card[data-status="cancelled"] .placed-tick {
+  background: rgba(220,53,69,.14);
+  color: var(--danger);
 }
 .order-number {
   font-family: var(--font-display);
@@ -1758,9 +1934,66 @@ body.cart-open .fab-cart {
 .myorder-item ul { margin: 0; }
 .myorder-item li {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
+/* Small food thumbnail per line item */
+.myo-thumb {
+  position: relative;
+  flex: none;
+  width: 34px; height: 34px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--brown-100);
+  display: grid;
+  place-items: center;
+}
+.myo-thumb img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+.myo-thumb-ph { font-size: 1rem; }
+.myo-name  { flex: 1; }
+.myo-price { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* "you" / "tablemate" tag */
+.myorder-who {
+  font-size: .64rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--ink-soft);
+  margin-left: 6px;
+}
+.myorder-who.mine { background: var(--brown-100); color: var(--primary-deep); }
+
+/* People-at-this-table row */
+.myorders-people {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border-radius: var(--radius);
+  background: var(--white);
+  border: 1px solid var(--line);
+}
+.people-icons { display: inline-flex; }
+.people-icons .person {
+  font-size: 1rem;
+  margin-left: -4px;
+}
+.people-icons .person:first-child { margin-left: 0; }
+.people-icons .person.plus {
+  color: var(--primary-deep);
+  font-weight: 700;
+}
+.people-label { font-size: .82rem; color: var(--ink-soft); }
 
 /* Table PIN banner at the top of My Orders */
 .myorders-pin {
@@ -1872,7 +2105,30 @@ body.cart-open .fab-cart {
   transition: opacity .25s;
 }
 .thanks-overlay.open { opacity: 1; }
+
+/* Confetti layer fills the overlay; bits fall from the top. */
+.confetti-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti-bit {
+  position: absolute;
+  top: -12px;
+  width: 9px; height: 14px;
+  opacity: 0;
+  animation-name: confettiFall;
+  animation-timing-function: cubic-bezier(.3,.6,.5,1);
+  animation-fill-mode: forwards;
+}
+@keyframes confettiFall {
+  0%   { opacity: 1; transform: translateY(-10px) rotate(0deg); }
+  100% { opacity: 0; transform: translateY(105vh) rotate(540deg); }
+}
+
 .thanks-card {
+  position: relative;
   background: var(--white);
   border-radius: var(--radius-lg);
   padding: 28px 32px;

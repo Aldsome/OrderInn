@@ -46,6 +46,12 @@ const ACTIVE_SESSION_TTL_MS = 30 * 60 * 1000;
    only staff can cancel. */
 const CANCEL_WINDOW_MS = 60 * 1000;
 
+/* Combined cap for chat media (images + voice notes) stored
+   inline in bb_messages. ~10% of the Supabase free DB (500 MB).
+   When exceeded, the OLDEST media messages are deleted until
+   back under the cap. */
+const MEDIA_CAP_BYTES = 50 * 1024 * 1024;
+
 /* ==========================================================
    DEFAULTS
    ========================================================== */
@@ -266,6 +272,28 @@ const USER_TO_ROW = (u) => ({
   role:          u.role,
   password_hash: u.passwordHash,
   created_at:    u.createdAt,
+});
+const ROW_TO_MSG = (r) => r && ({
+  id:         r.id,
+  thread:     r.table_label,
+  sender:     r.sender,
+  senderName: r.sender_name,
+  role:       r.role,
+  kind:       r.kind,
+  body:       r.body,
+  sizeBytes:  r.size_bytes || 0,
+  ts:         r.created_at,
+});
+const MSG_TO_ROW = (m) => ({
+  id:          m.id,
+  table_label: m.thread || null,
+  sender:      m.sender,
+  sender_name: m.senderName || null,
+  role:        m.role,
+  kind:        m.kind,
+  body:        m.body || '',
+  size_bytes:  m.sizeBytes || 0,
+  created_at:  m.ts,
 });
 const ROW_TO_LOG = (r) => r && ({
   id:      r.id,
@@ -571,6 +599,17 @@ const Store = {
     return Store.getOrders().filter(o => o.clientId === cid);
   },
 
+  /* All orders at a table label, from EVERY device — this is the
+     combined view a joined customer sees ("our table's orders"),
+     not just what this device placed. Newest first. */
+  getTableOrders(label) {
+    if (!label) return Store.getMyOrders();
+    const needle = String(label).trim().toLowerCase();
+    return Store.getOrders().filter(o =>
+      String(o.tableNumber || '').trim().toLowerCase() === needle
+    );
+  },
+
   /* Orders at a given table label that are still active (pending
      or preparing). Used to detect duplicate-table conflicts when
      a different device claims the same label. */
@@ -738,6 +777,92 @@ const Store = {
       sb.from('bb_sessions').delete().eq('client_id', Store.getClientId())
         .then(({ error }) => { if (error) console.warn('[Store] session delete failed', error); });
     }
+  },
+
+  /* ==========================================================
+     CHAT  (customer ↔ staff, per-table thread)
+     Remote-first: in Supabase mode messages live in bb_messages
+     and arrive live via realtime. In local mode they fall back
+     to a capped localStorage array (single-device, dev only).
+     Media is base64 inline; pruneMedia trims the oldest when the
+     combined media footprint exceeds MEDIA_CAP_BYTES.
+     ========================================================== */
+  async listMessages(thread) {
+    if (REMOTE_MODE && navigator.onLine) {
+      try {
+        const { data, error } = await sb.from('bb_messages')
+          .select('*').eq('table_label', thread)
+          .order('created_at', { ascending: true }).limit(300);
+        if (!error && data) return data.map(ROW_TO_MSG);
+      } catch (e) {}
+      return [];
+    }
+    return readJSON('bb_chat_local', []).filter(m => m.thread === thread);
+  },
+  async sendMessage({ thread, role, senderName, kind, body }) {
+    const msg = {
+      id:        'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      thread:    thread || null,
+      sender:    role === 'admin' ? 'admin' : Store.getClientId(),
+      senderName: senderName || (role === 'admin' ? 'Staff' : 'Guest'),
+      role,
+      kind,
+      body:      body || '',
+      sizeBytes: kind === 'text' ? 0 : (body ? body.length : 0),
+      ts:        new Date().toISOString(),
+    };
+    if (REMOTE_MODE && navigator.onLine) {
+      const { error } = await sb.from('bb_messages').insert(MSG_TO_ROW(msg));
+      if (error) { console.warn('[Store] message insert failed', error); throw error; }
+      if (kind !== 'text') Store.pruneMedia();   // keep media under cap
+    } else {
+      const all = readJSON('bb_chat_local', []);
+      all.push(msg);
+      Store._pruneLocalChat(all);
+      writeJSON('bb_chat_local', all);
+      // Same-tab + cross-tab notification (no realtime locally).
+      window.dispatchEvent(new CustomEvent('bb-chat', { detail: { message: msg } }));
+    }
+    return msg;
+  },
+  /* Delete oldest media messages until combined media size is
+     back under the cap. Text messages are untouched. */
+  async pruneMedia() {
+    if (!REMOTE_MODE || !navigator.onLine) return;
+    try {
+      const { data, error } = await sb.from('bb_messages')
+        .select('id, size_bytes, created_at')
+        .in('kind', ['image', 'audio'])
+        .order('created_at', { ascending: true });
+      if (error || !data) return;
+      let total = data.reduce((s, r) => s + (r.size_bytes || 0), 0);
+      const doomed = [];
+      for (const r of data) {
+        if (total <= MEDIA_CAP_BYTES) break;
+        doomed.push(r.id);
+        total -= (r.size_bytes || 0);
+      }
+      if (doomed.length) {
+        await sb.from('bb_messages').delete().in('id', doomed);
+        console.info(`[Store] pruned ${doomed.length} old media message(s) to stay under cap`);
+      }
+    } catch (e) {}
+  },
+  /* Local-mode cap: keep the localStorage chat blob small so it
+     can't blow the ~5 MB quota. Drops oldest media first, then
+     oldest messages, until under ~3 MB. */
+  _pruneLocalChat(all) {
+    const LOCAL_CAP = 3 * 1024 * 1024;
+    const size = (arr) => arr.reduce((s, m) => s + (m.sizeBytes || (m.body ? m.body.length : 0)), 0);
+    // Drop oldest media first.
+    while (size(all) > LOCAL_CAP) {
+      const idx = all.findIndex(m => m.kind !== 'text');
+      if (idx === -1) break;
+      all.splice(idx, 1);
+    }
+    // Still over? Drop oldest messages outright.
+    while (size(all) > LOCAL_CAP && all.length) all.shift();
+    return all;
   },
 
   /* ==========================================================
@@ -1006,6 +1131,18 @@ const Store = {
         if (log.length > 50) log.length = 50;
         Store.setLog(log);
         Store._dispatchSync('bb_activity_log');
+      })
+      .subscribe(onStatus);
+
+    // Chat: surface new/removed messages to the UI via a custom
+    // event (chat doesn't use the localStorage cache, so it
+    // doesn't go through _dispatchSync).
+    sb.channel('bb_messages_changes')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bb_messages' }, (payload) => {
+        window.dispatchEvent(new CustomEvent('bb-chat', { detail: { message: ROW_TO_MSG(payload.new) } }));
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'bb_messages' }, (payload) => {
+        window.dispatchEvent(new CustomEvent('bb-chat-delete', { detail: { id: payload.old.id } }));
       })
       .subscribe(onStatus);
 

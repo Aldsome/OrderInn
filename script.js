@@ -900,6 +900,10 @@ function updatePlacedModalForOrder(order) {
   $('#placedTitle').textContent       = info.modalTitle;
   $('#placedSubtitle').textContent    = info.modalSubtitle;
   $('#placedTickIcon').textContent    = info.icon;
+  // Drive the status animation (pending pulse / preparing yin-yang
+  // glow / served pop) off the card's data-status.
+  const card = $('#placedTickIcon').closest('.placed-card');
+  if (card) card.dataset.status = order.status;
   const pill = $('#placedStatusPill');
   pill.textContent = order.status;
   pill.className   = 'status-pill status-' + order.status;
@@ -1017,19 +1021,27 @@ $('#fabMyOrdersBtn').addEventListener('click', openMyOrders);
 $('#closeMyOrdersBtn').addEventListener('click', closeMyOrders);
 
 function renderMyOrdersList() {
-  const orders = Store.getMyOrders();
+  const myId = Store.getClientId();
+  // Combined view: when the customer is on a table, show the
+  // whole table's orders across all devices (so joined tablemates
+  // see each other's rounds). Falls back to own orders if no
+  // table label is set.
+  const orders = state.tableNumber
+    ? Store.getTableOrders(state.tableNumber)
+    : Store.getMyOrders();
   const host   = $('#myOrdersList');
   const active = orders.filter(o => o.status === 'pending' || o.status === 'preparing').length;
   $('#myOrdersSummary').textContent = active === 0
     ? `${orders.length} total`
     : `${active} active · ${orders.length} total`;
 
-  // Today's spending strip — sum of *non-cancelled* order totals
-  // placed today. Cancelled orders shouldn't pad the customer's
-  // "you spent" feeling.
+  // Today's spending strip — the customer's OWN non-cancelled
+  // orders placed today (don't count tablemates' spending as
+  // theirs).
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
   const todays = orders.filter(o => {
+    if (o.clientId !== myId) return false;
     if (o.status === 'cancelled') return false;
     const t = new Date(o.placedAt);
     return t.getFullYear() === y && t.getMonth() === m && t.getDate() === d;
@@ -1064,18 +1076,37 @@ function renderMyOrdersList() {
        </div>`
     : '';
 
+  // People at this table = distinct devices with a non-cancelled
+  // order. Shows up to 5 person icons, then a "+" if more.
+  const peopleIds = new Set(orders.filter(o => o.status !== 'cancelled').map(o => o.clientId));
+  const headcount = peopleIds.size;
+  const peopleHtml = headcount > 0
+    ? `<div class="myorders-people">
+         <span class="people-icons">${'<span class="person">👤</span>'.repeat(Math.min(headcount, 5))}${headcount > 5 ? '<span class="person plus">＋</span>' : ''}</span>
+         <span class="people-label">${headcount} ${headcount === 1 ? 'person' : 'people'} at this table</span>
+       </div>`
+    : '';
+
   const orderRows = orders.map(o => {
     const info  = STATUS_INFO[o.status] || STATUS_INFO.pending;
-    const itemsHtml = o.items.map(i =>
-      `<li><span>${i.qty}× ${escapeHtml(i.name)}</span><span>${peso(i.unitPrice * i.qty)}</span></li>`
-    ).join('');
-    const cancellable = Store.isCancellableByCustomer(o);
+    const isMine = o.clientId === myId;
+    const itemsHtml = o.items.map(i => {
+      const menuItem = MENU.find(m => m.id === i.itemId);
+      const img   = menuItem && menuItem.img;
+      const emoji = (menuItem && menuItem.emoji) || '☕';
+      const thumb = `<span class="myo-thumb">${img ? `<img src="${img}" alt="" loading="lazy" onerror="this.style.display='none'">` : ''}<span class="myo-thumb-ph">${emoji}</span></span>`;
+      return `<li>${thumb}<span class="myo-name">${i.qty}× ${escapeHtml(i.name)}</span><span class="myo-price">${peso(i.unitPrice * i.qty)}</span></li>`;
+    }).join('');
+    // Only the customer who placed an order can cancel it — a
+    // tablemate's order is read-only in your view.
+    const cancellable = isMine && Store.isCancellableByCustomer(o);
     const secs = Math.ceil(Store.cancelWindowRemaining(o) / 1000);
     return `
       <article class="myorder-item" data-id="${o.id}" data-status="${o.status}">
         <header>
           <div>
             <strong>Order #${o.number}</strong>
+            <span class="myorder-who ${isMine ? 'mine' : ''}">${isMine ? 'you' : 'tablemate'}</span>
             <small class="muted"> · ${timeAgo(new Date(o.placedAt))}</small>
           </div>
           <span class="status-pill status-${o.status}">${o.status}</span>
@@ -1094,7 +1125,7 @@ function renderMyOrdersList() {
       </article>
     `;
   }).join('');
-  host.innerHTML = pinHtml + orderRows + ctaHtml;
+  host.innerHTML = peopleHtml + pinHtml + orderRows + ctaHtml;
 }
 
 $('#myOrdersList').addEventListener('click', (e) => {
@@ -1152,11 +1183,36 @@ function showThanksOverlay() {
   ov.hidden = false;
   ov.setAttribute('aria-hidden', 'false');
   requestAnimationFrame(() => ov.classList.add('open'));
+  launchConfetti();
   // 30-second safety auto-reset for the case where the customer
   // just walks away from the device. Both action buttons cancel
   // it explicitly.
   if (thanksAutoResetTimer) clearTimeout(thanksAutoResetTimer);
   thanksAutoResetTimer = setTimeout(resetForNextCustomer, 30000);
+}
+
+/* Lightweight confetti — spawns ~50 colored bits inside the
+   thank-you card that fall + fade, then clean themselves up.
+   Pure CSS animation, no library. */
+function launchConfetti() {
+  const host = $('#confettiLayer');
+  if (!host) return;
+  host.innerHTML = '';
+  const colors = ['#C18F1E', '#A0855E', '#3A6E3B', '#E8B84B', '#6F5A3E', '#DDC9A8'];
+  const N = 50;
+  for (let i = 0; i < N; i++) {
+    const bit = document.createElement('span');
+    bit.className = 'confetti-bit';
+    bit.style.left = Math.random() * 100 + '%';
+    bit.style.background = colors[i % colors.length];
+    bit.style.animationDelay = (Math.random() * 0.25) + 's';
+    bit.style.animationDuration = (1 + Math.random() * 0.9) + 's';
+    bit.style.transform = `rotate(${Math.random() * 360}deg)`;
+    if (i % 3 === 0) bit.style.borderRadius = '50%';
+    host.appendChild(bit);
+  }
+  // Remove after the longest possible run so they don't linger.
+  setTimeout(() => { host.innerHTML = ''; }, 2400);
 }
 function dismissThanks() {
   const ov = $('#thanksOverlay');
@@ -1564,6 +1620,7 @@ function renderOrders() {
           ${o.status === 'preparing'  ? `<button class="btn btn-serve"  data-act="served">Mark served</button>`        : ''}
           ${o.status !== 'served' && o.status !== 'cancelled'
             ? `<button class="btn btn-danger" data-act="cancelled">Cancel</button>` : ''}
+          <button class="btn btn-ghost" data-act="chat">💬 Chat</button>
           <button class="btn btn-ghost" data-act="receipt">🧾 Receipt</button>
           <button class="btn btn-ghost" data-act="delete">Delete</button>
         </div>
@@ -1589,6 +1646,10 @@ $('#ordersList').addEventListener('click', (e) => {
   const act = btn.dataset.act;
   const order = Store.getOrders().find(o => o.id === id);
   const label = order ? `#${order.number}` : 'Order';
+  if (act === 'chat') {
+    if (order) openChat(order.tableNumber, 'admin');
+    return;
+  }
   if (act === 'receipt') {
     if (order) openReceiptModal(order);
     return;
@@ -2462,6 +2523,227 @@ window.addEventListener('storage', (e) => {
     refreshAdminActivity();
   }
 });
+
+/* ==========================================================
+   CHAT  (customer ↔ staff, per-table thread)
+   ========================================================== */
+const chatDrawer = $('#chatDrawer');
+let chatThread = null;       // table label this drawer is showing
+let chatRole   = 'customer'; // 'customer' | 'admin'
+let chatMessages = [];
+
+const CHAT_SEEN_KEY = 'bb_chat_seen';   // { [thread]: lastSeenTs }
+function chatSeenMap() { try { return JSON.parse(localStorage.getItem(CHAT_SEEN_KEY) || '{}'); } catch { return {}; } }
+function markChatSeen(thread) {
+  const map = chatSeenMap();
+  map[thread] = Date.now();
+  localStorage.setItem(CHAT_SEEN_KEY, JSON.stringify(map));
+}
+
+async function openChat(thread, role = 'customer') {
+  if (!thread) {                       // customer with no table yet
+    showToast('Set your table first to chat', 'error');
+    openTableModal();
+    return;
+  }
+  chatThread = thread;
+  chatRole   = role;
+  $('#chatTitle').textContent    = role === 'admin' ? `Table ${thread}` : 'Chat with staff';
+  $('#chatSubtitle').textContent = role === 'admin' ? 'reply to this table' : 'ask about your order';
+  chatDrawer.classList.add('open');
+  chatDrawer.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('chat-open');
+  $('#chatBody').innerHTML = `<p class="empty-state">Loading…</p>`;
+  chatMessages = await Store.listMessages(thread);
+  renderChatMessages();
+  markChatSeen(thread);
+  refreshChatDot();
+}
+function closeChat() {
+  chatDrawer.classList.remove('open');
+  chatDrawer.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('chat-open');
+  if (chatThread) markChatSeen(chatThread);
+  refreshChatDot();
+}
+$('#closeChatBtn').addEventListener('click', closeChat);
+$('#fabChatBtn').addEventListener('click', () => openChat(state.tableNumber, 'customer'));
+
+function renderChatMessages() {
+  const body = $('#chatBody');
+  if (!chatMessages.length) {
+    body.innerHTML = `<p class="empty-state">No messages yet. Say hi 👋</p>`;
+    return;
+  }
+  body.innerHTML = chatMessages.map(m => {
+    const mine = (chatRole === 'admin') ? (m.role === 'admin') : (m.role === 'customer' && m.sender === Store.getClientId());
+    let inner;
+    if (m.kind === 'image')      inner = `<img class="chat-img" src="${m.body}" alt="photo" />`;
+    else if (m.kind === 'audio') inner = `<audio class="chat-audio" controls src="${m.body}"></audio>`;
+    else                         inner = `<span>${escapeHtml(m.body)}</span>`;
+    return `
+      <div class="chat-msg ${mine ? 'mine' : 'theirs'}">
+        ${(!mine) ? `<small class="chat-who">${escapeHtml(m.senderName || (m.role === 'admin' ? 'Staff' : 'Guest'))}</small>` : ''}
+        <div class="chat-bubble chat-${m.kind}">${inner}</div>
+        <small class="chat-time">${timeAgo(new Date(m.ts))}</small>
+      </div>`;
+  }).join('');
+  body.scrollTop = body.scrollHeight;
+}
+
+async function sendChat(kind, body) {
+  if (!chatThread) return;
+  const text = (kind === 'text') ? (body || '').trim() : body;
+  if (!text) return;
+  try {
+    await Store.sendMessage({
+      thread: chatThread, role: chatRole, kind, body: text,
+      senderName: chatRole === 'admin'
+        ? (Store.getSession()?.name || 'Staff')
+        : (state.tableNumber || 'Guest'),
+    });
+    // Optimistic local echo for remote mode (realtime will also
+    // fire, but de-duped by id in the handler).
+  } catch (e) {
+    showToast('Message failed to send', 'error');
+  }
+}
+
+$('#chatSendBtn').addEventListener('click', () => {
+  const inp = $('#chatInput');
+  const v = inp.value.trim();
+  if (!v) return;
+  sendChat('text', v);
+  inp.value = '';
+  inp.focus();
+});
+$('#chatInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); $('#chatSendBtn').click(); }
+});
+
+/* ----- Image: pick, compress, send ----- */
+$('#chatImageBtn').addEventListener('click', () => $('#chatImageInput').click());
+$('#chatImageInput').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const dataUrl = await compressImage(file, 1280, 0.7);
+    // ~1.3x base64 overhead; cap a single image at ~1.5 MB encoded.
+    if (dataUrl.length > 1.5 * 1024 * 1024) {
+      showToast('Photo too large even after compression', 'error');
+      return;
+    }
+    sendChat('image', dataUrl);
+  } catch {
+    showToast('Could not process that image', 'error');
+  }
+});
+function compressImage(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > height && width > maxDim)      { height = Math.round(height * maxDim / width); width = maxDim; }
+      else if (height > maxDim)                  { width = Math.round(width * maxDim / height); height = maxDim; }
+      const c = document.createElement('canvas');
+      c.width = width; c.height = height;
+      c.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    const r = new FileReader();
+    r.onload = () => { img.src = r.result; };
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+/* ----- Voice note: MediaRecorder ----- */
+let mediaRecorder = null, recChunks = [], recTimer = null, recStart = 0;
+$('#chatMicBtn').addEventListener('click', startRecording);
+$('#chatRecStop').addEventListener('click', () => stopRecording(true));
+$('#chatRecCancel').addEventListener('click', () => stopRecording(false));
+
+async function startRecording() {
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    showToast('Voice notes not supported on this device', 'error');
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    recChunks = [];
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (!recordingKept) { recChunks = []; return; }
+      const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      const r = new FileReader();
+      r.onload = () => {
+        if (r.result.length > 3 * 1024 * 1024) { showToast('Voice note too long', 'error'); return; }
+        sendChat('audio', r.result);
+      };
+      r.readAsDataURL(blob);
+    };
+    mediaRecorder.start();
+    recStart = Date.now();
+    $('#chatComposer').hidden = true;
+    $('#chatRecording').hidden = false;
+    recTimer = setInterval(() => {
+      const s = Math.floor((Date.now() - recStart) / 1000);
+      $('#chatRecTime').textContent = `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+      if (s >= 60) stopRecording(true);   // hard cap 60s
+    }, 250);
+  } catch {
+    showToast('Microphone permission denied', 'error');
+  }
+}
+let recordingKept = false;
+function stopRecording(keep) {
+  recordingKept = keep;
+  if (recTimer) { clearInterval(recTimer); recTimer = null; }
+  $('#chatRecording').hidden = true;
+  $('#chatComposer').hidden = false;
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+}
+
+/* ----- Realtime / cross-tab message arrival ----- */
+window.addEventListener('bb-chat', (e) => {
+  const msg = e.detail && e.detail.message;
+  if (!msg) return;
+  if (chatThread && msg.thread === chatThread && chatDrawer.classList.contains('open')) {
+    if (!chatMessages.some(m => m.id === msg.id)) {
+      chatMessages.push(msg);
+      renderChatMessages();
+      markChatSeen(chatThread);
+    }
+  } else {
+    // Message for a thread we're not actively viewing → unread.
+    refreshChatDot(msg);
+  }
+});
+window.addEventListener('bb-chat-delete', (e) => {
+  const id = e.detail && e.detail.id;
+  if (!id) return;
+  const before = chatMessages.length;
+  chatMessages = chatMessages.filter(m => m.id !== id);
+  if (chatMessages.length !== before) renderChatMessages();
+});
+
+/* Customer chat dot: lit when staff have sent a message to this
+   table since the customer last opened the chat. */
+function refreshChatDot(incoming) {
+  const dot = $('#fabChatDot');
+  if (!dot) return;
+  if (chatRole === 'admin') { dot.hidden = true; return; }   // dot is customer-only
+  const thread = state.tableNumber;
+  if (!thread) { dot.hidden = true; return; }
+  if (incoming && incoming.thread === thread && incoming.role === 'admin'
+      && !(chatDrawer.classList.contains('open') && chatThread === thread)) {
+    dot.hidden = false;
+  }
+}
 
 /* ==========================================================
    THEME TOGGLE  (customer + admin both wired to the same fn)

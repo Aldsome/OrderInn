@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=21" />
+  <link rel="stylesheet" href="style.css?v=22" />
 
   <script>
     (function () {
@@ -112,6 +112,13 @@
       <span class="fab-myorders-badge" id="fabMyOrdersBadge">0</span>
     </button>
 
+    <!-- Floating chat button — opens the customer↔staff thread
+         for this table. Dot shows when staff have replied. -->
+    <button class="fab-chat" id="fabChatBtn" aria-label="Chat with staff">
+      <span aria-hidden="true">💬</span>
+      <span class="fab-chat-dot" id="fabChatDot" hidden></span>
+    </button>
+
     <!-- Floating cart button -->
     <button class="fab-cart" id="fabCartBtn" aria-label="Open cart">
       <span class="fab-cart-text">
@@ -133,6 +140,36 @@
       <button class="staff-login-link" id="openStaffLoginBtn">Staff Login</button>
     </footer>
   </div>
+
+  <!-- ==========================================================
+       CHAT DRAWER  (shared: customer uses their table thread,
+       admin opens it per-order). Voice + image + text.
+       ========================================================== -->
+  <aside class="chat-drawer" id="chatDrawer" aria-hidden="true">
+    <header class="drawer-head">
+      <div>
+        <h3 id="chatTitle">Chat</h3>
+        <small class="muted" id="chatSubtitle">with staff</small>
+      </div>
+      <button class="icon-btn close-btn" id="closeChatBtn" aria-label="Close chat">✕</button>
+    </header>
+    <div class="chat-body" id="chatBody">
+      <p class="empty-state">Say hi 👋</p>
+    </div>
+    <div class="chat-recording" id="chatRecording" hidden>
+      <span class="rec-dot" aria-hidden="true"></span>
+      Recording… <span id="chatRecTime">0:00</span>
+      <button class="btn btn-ghost" id="chatRecCancel">Cancel</button>
+      <button class="btn btn-primary" id="chatRecStop">Send</button>
+    </div>
+    <footer class="chat-composer" id="chatComposer">
+      <button class="icon-btn" id="chatImageBtn" aria-label="Send photo" title="Photo">🖼️</button>
+      <button class="icon-btn" id="chatMicBtn" aria-label="Record voice" title="Voice note">🎤</button>
+      <input type="text" id="chatInput" placeholder="Type a message…" autocomplete="off" />
+      <button class="icon-btn chat-send" id="chatSendBtn" aria-label="Send">➤</button>
+      <input type="file" id="chatImageInput" accept="image/*" hidden />
+    </footer>
+  </aside>
 
   <!-- ==========================================================
        CART DRAWER
@@ -271,6 +308,7 @@
        last order is served — auto-clears the table after 8s)
        ========================================================== -->
   <div class="thanks-overlay" id="thanksOverlay" hidden aria-hidden="true">
+    <div class="confetti-layer" id="confettiLayer" aria-hidden="true"></div>
     <div class="thanks-card">
       <div class="thanks-emoji" aria-hidden="true">☕</div>
       <h3>Thanks for visiting!</h3>
@@ -689,7 +727,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=13"></script>
-  <script src="script.js?v=28"></script>
+  <script src="store.js?v=14"></script>
+  <script src="script.js?v=29"></script>
 </body>
 </html>
