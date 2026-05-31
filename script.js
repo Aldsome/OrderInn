@@ -1080,6 +1080,11 @@ function bumpInactivity() { inactivityDeadline = Date.now() + INACTIVITY_MS; }
 );
 setInterval(() => {
   if (Date.now() < inactivityDeadline) return;
+  // Signed-in admins are never timed out — they're staff, not
+  // walk-in customers. Their session expiry is handled by the
+  // 8-hour bb_session TTL in store.js instead.
+  const session = Store.getSession();
+  if (session && session.role === 'admin') { bumpInactivity(); return; }
   // Don't disturb customers who have orders in flight — they're
   // still on the premises waiting for food.
   if (getMyActiveOrders().length > 0) { bumpInactivity(); return; }
