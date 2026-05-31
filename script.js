@@ -209,43 +209,51 @@ function closeTableModal() { closeModal('#tableModal'); }
       device — this is the legitimate "joining this table?" case
       (one person paid, friends are adding more rounds). */
 async function checkDuplicateTable(label, onAccept) {
-  // Layer 1 — live session collision. First the LOCAL registry
-  // (catches another tab of the same browser), then the REMOTE
-  // registry via Supabase (catches another DEVICE holding the
-  // same name before either has ordered — e.g. PC "art" + phone
-  // "art"). This is a hard block: there's no "join" option for a
-  // pure name clash, the second person must pick a different
-  // label.
+  // Layer 1 — any active order at this label, from any device
+  // (including this one). Orders sync through Supabase, so this
+  // works cross-device. An existing order is the LEGITIMATE
+  // group-room / table-sharing case and takes precedence over the
+  // name-collision block below: a friend joining a table that
+  // already has an order must always get the join/PIN flow, never
+  // the hard "name is taken" wall (the table owner's open page is
+  // itself holding a live session for this name, which would
+  // otherwise trip Layer 2 and make joining impossible).
+  const matches = Store.findActiveOrdersByTable(label);
+  if (matches.length > 0) {
+    const myId = Store.getClientId();
+    // "Member" = this device already has an active order at this
+    // label (the table owner, or someone who joined earlier on
+    // this device). Members continue freely. Everyone else is a
+    // would-be joiner and must pass the table PIN.
+    const isMember = matches.some(o => o.clientId === myId);
+    if (isMember) {
+      showDupModal({ mode: 'ownOrder', label, count: matches.length, onAccept });
+    } else {
+      // The table's join PIN lives on its active orders (minted by
+      // the first order). null = legacy orders placed before the
+      // PIN feature existed → no gate (graceful degradation).
+      const pin = matches.map(o => o.joinPin).find(Boolean) || null;
+      showDupModal({ mode: 'share', label, count: matches.length, onAccept, pin });
+    }
+    return;
+  }
+
+  // Layer 2 — no order at this label yet, but another live device
+  // is already holding this exact name. First the LOCAL registry
+  // (another tab of the same browser), then the REMOTE registry
+  // via Supabase (another DEVICE holding the same name before
+  // either has ordered — e.g. PC "art" + phone "art"). Hard block:
+  // there's nothing to join yet, so two strangers shouldn't both
+  // sit as the same name (staff would mix up orders). The second
+  // person picks a different label.
   let conflictId = Store.findActiveSessionByName(label);
   if (!conflictId) conflictId = await Store.findActiveSessionByNameRemote(label);
   if (conflictId) {
     showDupModal({ mode: 'nameTaken', label });
     return;
   }
-  // Layer 2 — any active order at this label, from any device
-  // (including this one). Orders sync through Supabase, so this
-  // already works cross-device. Triggering on own-clientId too
-  // lets a customer reopening the page see "you already have an
-  // open order here — continue with it?" instead of silently
-  // re-using the label.
-  const matches = Store.findActiveOrdersByTable(label);
-  if (matches.length === 0) { onAccept(); return; }
 
-  const myId = Store.getClientId();
-  // "Member" = this device already has an active order at this
-  // label (the table owner, or someone who joined earlier on
-  // this device). Members continue freely. Everyone else is a
-  // would-be joiner and must pass the table PIN.
-  const isMember = matches.some(o => o.clientId === myId);
-  if (isMember) {
-    showDupModal({ mode: 'ownOrder', label, count: matches.length, onAccept });
-  } else {
-    // The table's join PIN lives on its active orders (minted by
-    // the first order). null = legacy orders placed before the
-    // PIN feature existed → no gate (graceful degradation).
-    const pin = matches.map(o => o.joinPin).find(Boolean) || null;
-    showDupModal({ mode: 'share', label, count: matches.length, onAccept, pin });
-  }
+  onAccept();
 }
 let pendingTableLabel  = null;
 let pendingTableAccept = null;
