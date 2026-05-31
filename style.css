@@ -1762,6 +1762,52 @@ body.cart-open .fab-cart {
   gap: 8px;
 }
 
+/* Table PIN banner at the top of My Orders */
+.myorders-pin {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  border-radius: var(--radius);
+  background: var(--brown-100);
+  border: 1px dashed var(--brown-200);
+}
+.myorders-pin > span {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.myorders-pin strong {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  letter-spacing: .12em;
+  color: var(--primary-deep);
+}
+.myorders-pin small {
+  flex-basis: 100%;
+  color: var(--ink-soft);
+  font-size: .74rem;
+}
+
+/* Join-gate PIN input inside the duplicate-table modal */
+.dup-pin-row { margin: 4px 0 2px; }
+.dup-pin-row label {
+  display: block;
+  font-size: .82rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.dup-pin-row input {
+  margin-top: 6px;
+  letter-spacing: .3em;
+  font-size: 1.1rem;
+  text-align: center;
+}
+
 .myorders-cta {
   margin-top: 12px;
   padding: 14px 14px;

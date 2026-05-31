@@ -211,6 +211,7 @@ const ROW_TO_ORDER = (r) => r && ({
   servedAt:    r.served_at,
   cancelledAt: r.cancelled_at,
   cancelledBy: r.cancelled_by,
+  joinPin:     r.join_pin || null,
 });
 const ORDER_TO_ROW = (o) => ({
   id:           o.id,
@@ -225,6 +226,7 @@ const ORDER_TO_ROW = (o) => ({
   served_at:    o.servedAt,
   cancelled_at: o.cancelledAt || null,
   cancelled_by: o.cancelledBy || null,
+  join_pin:     o.joinPin || null,
 });
 const ROW_TO_PRODUCT = (r) => r && ({
   id:       r.id,
@@ -474,6 +476,16 @@ const Store = {
       }
     }
     const number = Math.max(localMax, serverMax) + 1;
+    // Table join PIN — minted by the FIRST order at a table label,
+    // then inherited by every later order at the same table (the
+    // owner's repeats and anyone who joined via the PIN gate). This
+    // is what the "Join this table" gate checks against. When the
+    // table's orders are all served/cleared, the next first order
+    // mints a fresh PIN, so a freed table can't be joined with a
+    // stale code.
+    const activeAtTable = Store.findActiveOrdersByTable(tableNumber);
+    const existingPin   = activeAtTable.map(o => o.joinPin).find(Boolean);
+    const joinPin       = existingPin || String(Math.floor(1000 + Math.random() * 9000));
     const order = {
       id:          'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       number,
@@ -485,6 +497,7 @@ const Store = {
       status:      'pending',
       placedAt:    new Date().toISOString(),
       servedAt:    null,
+      joinPin,                                // table-join PIN (see above)
     };
     const orders = Store.getOrders();
     orders.unshift(order);                    // newest first

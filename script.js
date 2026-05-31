@@ -231,12 +231,26 @@ async function checkDuplicateTable(label, onAccept) {
   const matches = Store.findActiveOrdersByTable(label);
   if (matches.length === 0) { onAccept(); return; }
 
-  const myId  = Store.getClientId();
-  const isOwn = matches.every(o => o.clientId === myId);
-  showDupModal({ mode: isOwn ? 'ownOrder' : 'share', label, count: matches.length, onAccept });
+  const myId = Store.getClientId();
+  // "Member" = this device already has an active order at this
+  // label (the table owner, or someone who joined earlier on
+  // this device). Members continue freely. Everyone else is a
+  // would-be joiner and must pass the table PIN.
+  const isMember = matches.some(o => o.clientId === myId);
+  if (isMember) {
+    showDupModal({ mode: 'ownOrder', label, count: matches.length, onAccept });
+  } else {
+    // The table's join PIN lives on its active orders (minted by
+    // the first order). null = legacy orders placed before the
+    // PIN feature existed → no gate (graceful degradation).
+    const pin = matches.map(o => o.joinPin).find(Boolean) || null;
+    showDupModal({ mode: 'share', label, count: matches.length, onAccept, pin });
+  }
 }
 let pendingTableLabel  = null;
 let pendingTableAccept = null;
+let pendingTablePin    = null;   // expected PIN for the share-join gate
+let pinAttempts        = 0;
 
 /* Configure + open the duplicate/collision modal. Three modes:
    - 'nameTaken' : another live device holds this exact name —
@@ -245,12 +259,19 @@ let pendingTableAccept = null;
                    offer continue (join) or sit elsewhere.
    - 'share'     : someone else has an open order at this label —
                    offer join (table sharing) or sit elsewhere. */
-function showDupModal({ mode, label, count = 1, onAccept = null }) {
+function showDupModal({ mode, label, count = 1, onAccept = null, pin = null }) {
   const desc    = $('#dupTableDesc');
   const title   = $('#dupTableTitle');
   const joinBtn = $('#dupTableJoinBtn');
   const elseBtn = $('#dupTableElsewhereBtn');
+  const pinRow  = $('#dupPinRow');
   $('#dupTableLabel').textContent = label;
+  // Reset PIN UI each time.
+  pendingTablePin = null;
+  pinAttempts = 0;
+  if (pinRow) pinRow.hidden = true;
+  $('#dupPinError').hidden = true;
+  $('#dupPinInput').value = '';
 
   if (mode === 'nameTaken') {
     if (title) title.textContent = 'That name is taken';
@@ -259,30 +280,61 @@ function showDupModal({ mode, label, count = 1, onAccept = null }) {
     joinBtn.hidden = true;                       // no "join" for a name clash
     elseBtn.textContent = 'Choose another name';
     pendingTableAccept = null;                   // never auto-accept a clash
-  } else {
+  } else if (mode === 'ownOrder') {
     if (title) title.textContent = 'Already an open order here';
     joinBtn.hidden = false;
-    joinBtn.textContent = mode === 'ownOrder' ? 'Continue with it' : 'Join this table';
+    joinBtn.textContent = 'Continue with it';
     elseBtn.textContent = "I'm somewhere else";
-    if (desc) desc.textContent = mode === 'ownOrder'
-      ? `You already have ${count === 1 ? 'an' : count} open order here. Continue with it, or sit somewhere else?`
-      : `Looks like ${label} already has ${count === 1 ? 'an' : count} open order on another device. Are you joining that table, or did you sit down somewhere else?`;
+    if (desc) desc.textContent =
+      `You already have ${count === 1 ? 'an' : count} open order here. Continue with it, or sit somewhere else?`;
     pendingTableAccept = onAccept;
+  } else {   // 'share' — a would-be joiner; gate behind the table PIN
+    if (title) title.textContent = 'Join this table?';
+    joinBtn.hidden = false;
+    joinBtn.textContent = 'Join this table';
+    elseBtn.textContent = "I'm somewhere else";
+    if (desc) desc.textContent =
+      `"${label}" already has an open order. To add to this table, enter the table's PIN — ask the person who started it.`;
+    pendingTableAccept = onAccept;
+    // Only show the PIN gate when the table actually has a PIN.
+    if (pin) {
+      pendingTablePin = pin;
+      if (pinRow) pinRow.hidden = false;
+    }
   }
   pendingTableLabel = label;
   closeTableModal();            // ensure the dup prompt isn't painted behind the table modal
   openModal('#dupTableModal');
+  if (mode === 'share' && pin) setTimeout(() => $('#dupPinInput').focus(), 50);
 }
 
 $('#dupTableJoinBtn').addEventListener('click', () => {
+  // Share-join gate: if a PIN is expected, validate it first.
+  if (pendingTablePin) {
+    const entered = ($('#dupPinInput').value || '').trim();
+    if (entered !== pendingTablePin) {
+      pinAttempts++;
+      const err = $('#dupPinError');
+      err.textContent = pinAttempts >= 5
+        ? 'Too many attempts. Please ask staff for help.'
+        : 'Incorrect PIN. Ask the person who started this table.';
+      err.hidden = false;
+      const inp = $('#dupPinInput');
+      inp.focus(); inp.select();
+      if (pinAttempts >= 5) $('#dupTableJoinBtn').disabled = true;
+      return;
+    }
+  }
   const accept = pendingTableAccept;
   closeModal('#dupTableModal');
-  pendingTableLabel = null; pendingTableAccept = null;
+  pendingTableLabel = null; pendingTableAccept = null; pendingTablePin = null; pinAttempts = 0;
+  $('#dupTableJoinBtn').disabled = false;
   if (accept) accept();
 });
 $('#dupTableElsewhereBtn').addEventListener('click', () => {
   closeModal('#dupTableModal');
-  pendingTableLabel = null; pendingTableAccept = null;
+  pendingTableLabel = null; pendingTableAccept = null; pendingTablePin = null; pinAttempts = 0;
+  $('#dupTableJoinBtn').disabled = false;
   $('#tableInput').value = '';
   openTableModal();
 });
@@ -996,6 +1048,22 @@ function renderMyOrdersList() {
     host.innerHTML = `<p class="empty-state">No orders yet.</p>` + ctaHtml;
     return;
   }
+
+  // Table PIN banner — the join code for this table, taken from
+  // the customer's own active orders. Shown so they can share it
+  // with real tablemates; anyone without it can't pile orders
+  // onto this table.
+  const activePin = orders
+    .filter(o => o.status === 'pending' || o.status === 'preparing')
+    .map(o => o.joinPin).find(Boolean);
+  const pinHtml = activePin
+    ? `<div class="myorders-pin">
+         <span>Table PIN</span>
+         <strong>${escapeHtml(activePin)}</strong>
+         <small>share with your table so they can add orders</small>
+       </div>`
+    : '';
+
   const orderRows = orders.map(o => {
     const info  = STATUS_INFO[o.status] || STATUS_INFO.pending;
     const itemsHtml = o.items.map(i =>
@@ -1026,7 +1094,7 @@ function renderMyOrdersList() {
       </article>
     `;
   }).join('');
-  host.innerHTML = orderRows + ctaHtml;
+  host.innerHTML = pinHtml + orderRows + ctaHtml;
 }
 
 $('#myOrdersList').addEventListener('click', (e) => {

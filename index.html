@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=20" />
+  <link rel="stylesheet" href="style.css?v=21" />
 
   <script>
     (function () {
@@ -300,6 +300,16 @@
         <span id="dupTableCount">an</span> open order on another device.
         Are you joining that table, or did you sit down somewhere else?
       </p>
+      <!-- Join gate: shown only when an existing table has a PIN.
+           Stops a random person piling orders onto someone else's
+           table. The owner finds this PIN in their My Orders panel. -->
+      <div class="dup-pin-row" id="dupPinRow" hidden>
+        <label>Enter the table's PIN to join
+          <input type="text" inputmode="numeric" autocomplete="off"
+                 maxlength="4" id="dupPinInput" placeholder="4-digit PIN" />
+        </label>
+        <p class="form-error" id="dupPinError" hidden></p>
+      </div>
       <div class="form-actions">
         <button class="btn btn-ghost"   id="dupTableElsewhereBtn">I'm somewhere else</button>
         <button class="btn btn-primary" id="dupTableJoinBtn">Join this table</button>
@@ -679,7 +689,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=12"></script>
-  <script src="script.js?v=27"></script>
+  <script src="store.js?v=13"></script>
+  <script src="script.js?v=28"></script>
 </body>
 </html>
