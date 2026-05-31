@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=9" />
 
   <script>
     (function () {
@@ -102,6 +102,15 @@
     <main class="menu container" id="menuGrid">
       <!-- cards injected via script.js -->
     </main>
+
+    <!-- Floating "My orders" pill — appears when this customer
+         has any orders in flight. Tapping it opens a scrollable
+         popup with per-order status + cancel buttons. -->
+    <button class="fab-myorders" id="fabMyOrdersBtn" hidden aria-label="My orders">
+      <span class="fab-myorders-icon" aria-hidden="true">☕</span>
+      <span class="fab-myorders-text">My orders</span>
+      <span class="fab-myorders-badge" id="fabMyOrdersBadge">0</span>
+    </button>
 
     <!-- Floating cart button -->
     <button class="fab-cart" id="fabCartBtn" aria-label="Open cart">
@@ -226,9 +235,68 @@
         <span class="status-pill" id="placedStatusPill">pending</span>
       </div>
 
+      <!-- 60-second self-cancel — visible only while the just-placed
+           order is still pending and within the grace window. -->
+      <button class="btn btn-cancel-grace btn-block" id="placedCancelBtn" hidden>
+        <span>Cancel order</span>
+        <span class="cancel-countdown" id="placedCancelCountdown">60s</span>
+      </button>
+
       <p class="pay-note">💵 Pay at the counter when your order is ready.</p>
       <button class="btn btn-primary btn-block" id="newOrderBtn">Start new order</button>
       <button class="btn btn-ghost btn-block" id="closePlacedBtn">Close</button>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       MY ORDERS POPUP  (customer-side, scrollable, bottom-right)
+       Anchored bottom-right on desktop; full sheet on mobile.
+       Shows all orders this device has placed with cancel/restore.
+       ========================================================== -->
+  <div class="myorders-sheet" id="myOrdersSheet" hidden aria-hidden="true">
+    <header class="myorders-head">
+      <div>
+        <strong>My orders</strong>
+        <small class="muted" id="myOrdersSummary">0 active</small>
+      </div>
+      <button class="icon-btn close-btn" id="closeMyOrdersBtn" aria-label="Close">✕</button>
+    </header>
+    <div class="myorders-body" id="myOrdersList">
+      <p class="empty-state">No orders yet.</p>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       THANK-YOU TOAST  (full-screen takeover after the customer's
+       last order is served — auto-clears the table after 8s)
+       ========================================================== -->
+  <div class="thanks-overlay" id="thanksOverlay" hidden aria-hidden="true">
+    <div class="thanks-card">
+      <div class="thanks-emoji" aria-hidden="true">☕</div>
+      <h3>Thanks for visiting!</h3>
+      <p class="muted">Your table will reset in a moment. Come back soon.</p>
+      <button class="btn btn-primary" id="thanksDismissBtn">Start a new order</button>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       DUPLICATE TABLE PROMPT  (shown when the entered table
+       label already has an active order from another device)
+       ========================================================== -->
+  <div class="modal" id="dupTableModal" aria-hidden="true">
+    <div class="modal-card small-card" role="dialog">
+      <header class="modal-head">
+        <h3>Already an open order here</h3>
+      </header>
+      <p>
+        Looks like <strong id="dupTableLabel">—</strong> already has
+        <span id="dupTableCount">an</span> open order on another device.
+        Are you joining that table, or did you sit down somewhere else?
+      </p>
+      <div class="form-actions">
+        <button class="btn btn-ghost"   id="dupTableElsewhereBtn">I'm somewhere else</button>
+        <button class="btn btn-primary" id="dupTableJoinBtn">Join this table</button>
+      </div>
     </div>
   </div>
 
@@ -293,6 +361,28 @@
       </div>
       <div class="admin-topbar-right">
         <span class="admin-user" id="adminUserName">Admin</span>
+
+        <!-- Activity bell — opens a dropdown of recent admin actions
+             (orders placed, status changes, menu edits, deletions).
+             Badge shows unseen count. -->
+        <div class="bell-wrap">
+          <button class="icon-btn bell-btn" id="bellBtn" aria-label="Activity log">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path fill="currentColor" d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6V11a6 6 0 0 0-5-5.91V4a1 1 0 1 0-2 0v1.09A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2z"/>
+            </svg>
+            <span class="bell-badge" id="bellBadge" hidden>0</span>
+          </button>
+          <div class="bell-dropdown" id="bellDropdown" hidden>
+            <header class="bell-dropdown-head">
+              <strong>Activity</strong>
+              <button class="link-mini" id="clearLogBtn">Clear</button>
+            </header>
+            <div class="bell-dropdown-body" id="bellList">
+              <p class="empty-state">No activity yet.</p>
+            </div>
+          </div>
+        </div>
+
         <button class="btn btn-ghost" id="exitAdminBtn">View as customer</button>
         <button class="btn btn-danger" id="adminLogoutBtn">Sign out</button>
       </div>
@@ -423,7 +513,11 @@
   <!-- Toast -->
   <div class="toast" id="toast" aria-live="polite"></div>
 
-  <script src="store.js?v=1"></script>
-  <script src="script.js?v=5"></script>
+  <!-- Admin slide-in notification stack (bottom-right). Each toast
+       can include an Undo button — used for menu deletes. -->
+  <div class="admin-toast-stack" id="adminToastStack" aria-live="polite"></div>
+
+  <script src="store.js?v=2"></script>
+  <script src="script.js?v=6"></script>
 </body>
 </html>

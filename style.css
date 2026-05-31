@@ -1463,10 +1463,312 @@ code {
 [data-theme="dark"] .toast.success { color: #0E1419; }
 
 /* ==========================================================
+   CUSTOMER — MY ORDERS FAB + SHEET
+   ========================================================== */
+.fab-myorders {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;             /* cart FAB is bottom-center, so no overlap */
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 10px 14px;
+  border: 1px solid var(--brown-200);
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--primary-deep);
+  font-family: inherit;
+  font-weight: 600;
+  font-size: .9rem;
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  transition: transform .12s, box-shadow .12s;
+}
+.fab-myorders:hover { transform: translateY(-1px); }
+.fab-myorders-icon { font-size: 1.1rem; }
+.fab-myorders-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--yellow-700);
+  color: #2A1E07;
+  font-size: .78rem;
+  font-weight: 700;
+}
+
+.myorders-sheet {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  width: min(380px, calc(100vw - 36px));
+  max-height: min(640px, calc(100vh - 36px));
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  z-index: 95;
+  opacity: 0;
+  transform: translateY(16px);
+  transition: transform .22s ease, opacity .18s ease;
+}
+.myorders-sheet.open { opacity: 1; transform: translateY(0); }
+.myorders-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.myorders-head small { display: block; }
+.myorders-body {
+  overflow-y: auto;
+  padding: 10px 14px 14px;
+  display: grid;
+  gap: 10px;
+}
+.myorder-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--white);
+  display: grid;
+  gap: 6px;
+}
+.myorder-item header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.myorder-item ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font-size: .86rem;
+}
+.myorder-item footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-top: 1px dashed var(--line);
+  padding-top: 6px;
+}
+.myorder-status-icon { font-size: 1rem; }
+.myorder-status-text { flex: 1; color: var(--ink-soft); font-size: .82rem; }
+.myorder-item[data-status="served"]    { background: #F4FAF1; }
+.myorder-item[data-status="cancelled"] { background: #FBF1F2; opacity: .8; }
+[data-theme="dark"] .myorder-item[data-status="served"]    { background: #1F2A1B; }
+[data-theme="dark"] .myorder-item[data-status="cancelled"] { background: #2B1A1C; }
+
+/* ==========================================================
+   CUSTOMER — SELF-CANCEL BUTTON  (placed modal + my orders)
+   ========================================================== */
+.btn-cancel-grace {
+  background: var(--danger);
+  color: var(--white);
+  border-color: var(--danger);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn-cancel-grace:hover { background: var(--danger-deep); }
+.cancel-countdown {
+  display: inline-block;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================
+   CUSTOMER — THANK-YOU OVERLAY
+   ========================================================== */
+.thanks-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 130;
+  opacity: 0;
+  transition: opacity .25s;
+}
+.thanks-overlay.open { opacity: 1; }
+.thanks-card {
+  background: var(--white);
+  border-radius: var(--radius-lg);
+  padding: 28px 32px;
+  text-align: center;
+  max-width: 360px;
+  width: calc(100% - 32px);
+  box-shadow: var(--shadow-lg);
+  animation: thanksPop .35s ease;
+}
+.thanks-emoji { font-size: 3rem; line-height: 1; margin-bottom: 6px; }
+@keyframes thanksPop {
+  from { transform: scale(.9); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+/* ==========================================================
+   ADMIN — CANCELLABLE COUNTDOWN BADGE  (on order cards)
+   ========================================================== */
+.cancellable-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(220, 53, 69, 0.10);
+  color: var(--danger);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================
+   ADMIN — BELL + ACTIVITY DROPDOWN
+   ========================================================== */
+.bell-wrap { position: relative; }
+.bell-btn  { position: relative; }
+.bell-badge {
+  position: absolute;
+  top: -4px; right: -4px;
+  min-width: 18px; height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #FFFFFF;
+  font-size: .68rem;
+  font-weight: 700;
+  display: inline-grid;
+  place-items: center;
+  border: 2px solid var(--white);
+}
+.bell-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(360px, calc(100vw - 24px));
+  max-height: 60vh;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+.bell-dropdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.bell-dropdown-body {
+  overflow-y: auto;
+  padding: 6px 0;
+}
+.bell-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.bell-row:last-child { border-bottom: none; }
+.bell-row-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 26px; height: 26px;
+  flex: none;
+  border-radius: 8px;
+  background: var(--brown-100);
+  color: var(--primary-deep);
+  font-size: .9rem;
+}
+.bell-row[data-type="order_placed"] .bell-row-icon { background: var(--yellow-100); color: var(--yellow-700); }
+.bell-row[data-type="order_delete"] .bell-row-icon,
+.bell-row[data-type="menu_delete"]  .bell-row-icon { background: rgba(220, 53, 69, 0.14); color: var(--danger); }
+.bell-row-body { flex: 1; font-size: .86rem; line-height: 1.35; }
+
+/* ==========================================================
+   ADMIN — SLIDE-IN TOAST STACK
+   ========================================================== */
+.admin-toast-stack {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 140;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 36px));
+}
+.admin-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--white);
+  border-left: 4px solid var(--primary);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(120%);
+  opacity: 0;
+  transition: transform .22s cubic-bezier(.2, .8, .2, 1), opacity .15s;
+}
+.admin-toast.show { transform: translateX(0); opacity: 1; }
+.admin-toast.variant-success { border-left-color: #3A6E3B; }
+.admin-toast.variant-danger  { border-left-color: var(--danger); }
+.admin-toast.variant-info    { border-left-color: var(--primary); }
+.admin-toast-body  { flex: 1; font-size: .88rem; }
+.admin-toast-actions { display: inline-flex; gap: 4px; align-items: center; }
+.admin-toast-undo,
+.admin-toast-close {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: .8rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+.admin-toast-undo { font-weight: 600; }
+.admin-toast-undo:hover  { background: var(--brown-100); }
+.admin-toast-close { padding: 4px 8px; }
+
+/* ==========================================================
    RESPONSIVE
    ========================================================== */
 @media (max-width: 540px) {
   .brand-tagline { display: none; }
   .order-card .order-actions { flex-direction: column; align-items: stretch; }
   .order-card .order-actions .btn { width: 100%; }
+  .myorders-sheet {
+    right: 8px; left: 8px;
+    width: auto;
+    bottom: 8px;
+    max-height: 70vh;
+  }
+  .fab-myorders { right: 12px; bottom: 76px; padding: 9px 14px; font-size: .85rem; }
+  .bell-dropdown { right: -8px; }
+  .admin-toast-stack { right: 8px; bottom: 8px; left: 8px; max-width: none; }
 }

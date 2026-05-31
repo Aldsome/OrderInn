@@ -155,13 +155,47 @@ function ensureTable() {
 }
 function openTableModal()  { openModal('#tableModal'); }
 function closeTableModal() { closeModal('#tableModal'); }
+
+/* Look for an in-flight order at this label from a *different*
+   browser. If we find one, ask the customer to confirm before we
+   commit to this label — otherwise two devices both claim
+   "Window 2" and the staff get confused which order is whose. */
+function checkDuplicateTable(label, onAccept) {
+  const myId   = Store.getClientId();
+  const others = Store.findActiveOrdersByTable(label).filter(o => o.clientId !== myId);
+  if (others.length === 0) { onAccept(); return; }
+
+  $('#dupTableLabel').textContent = label;
+  $('#dupTableCount').textContent = others.length === 1 ? 'an' : `${others.length}`;
+  pendingTableLabel = label;
+  pendingTableAccept = onAccept;
+  openModal('#dupTableModal');
+}
+let pendingTableLabel  = null;
+let pendingTableAccept = null;
+
+$('#dupTableJoinBtn').addEventListener('click', () => {
+  const accept = pendingTableAccept;
+  closeModal('#dupTableModal');
+  pendingTableLabel = null; pendingTableAccept = null;
+  if (accept) accept();
+});
+$('#dupTableElsewhereBtn').addEventListener('click', () => {
+  closeModal('#dupTableModal');
+  pendingTableLabel = null; pendingTableAccept = null;
+  $('#tableInput').value = '';
+  openTableModal();
+});
+
 $('#tableForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const label = $('#tableInput').value.trim();
   if (!label) return;
-  setTableLabel(label);
-  localStorage.setItem('bossb_table', label);
-  closeTableModal();
+  checkDuplicateTable(label, () => {
+    setTableLabel(label);
+    localStorage.setItem('bossb_table', label);
+    closeTableModal();
+  });
 });
 $('#changeTableBtn').addEventListener('click', () => {
   $('#tableInput').value = state.tableNumber || '';
@@ -485,6 +519,11 @@ $('#placeOrderBtn').addEventListener('click', () => {
   setActiveOrder(order.id);
   openOrderPlacedModal(order);
   refreshOrdersBadge();
+  refreshMyOrdersFab();
+  // A new order resets the "show thanks" lockout so a second
+  // visit will retrigger it after all orders are served.
+  thanksShown = false;
+  refreshAdminActivity();
 });
 
 $('#newOrderBtn').addEventListener('click', () => {
@@ -522,17 +561,31 @@ function clearActiveOrder() {
   if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
 }
 function getActiveOrder() {
+  // Prefer the explicitly-stored last-placed order so the banner
+  // keeps tracking the same one until the customer dismisses it
+  // (so "served" shows up briefly to remind them to pay). When
+  // that one is gone, fall back to the most recent in-flight
+  // order for this device.
   const id = localStorage.getItem('bossb_active_order');
-  if (!id) return null;
-  return Store.getOrders().find(o => o.id === id) || null;
+  if (id) {
+    const stored = Store.getOrders().find(o => o.id === id);
+    if (stored) return stored;
+  }
+  const fallback = getMyActiveOrders();
+  return fallback[0] || null;
 }
 
 function refreshOrderStatusBanner() {
   const order = getActiveOrder();
   const banner = $('#orderStatusBanner');
+
+  // Whatever we do with the banner, the FAB count + thank-you
+  // logic always need a tick.
+  refreshMyOrdersFab();
+  maybeShowThanks();
+
   if (!order) {
     banner.hidden = true;
-    if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
     return;
   }
   const info = STATUS_INFO[order.status] || STATUS_INFO.pending;
@@ -566,12 +619,224 @@ function updatePlacedModalForOrder(order) {
   $('#newOrderBtn').textContent = (order.status === 'served' || order.status === 'cancelled')
     ? 'Start new order'
     : 'Place another order';
+
+  // Track the order on the cancel button so the click handler
+  // knows which one to act on.
+  $('#placedCancelBtn').dataset.orderId = order.id;
+  refreshPlacedCancelBtn(order);
 }
 
-$('#orderStatusBtn').addEventListener('click', () => {
-  const order = getActiveOrder();
-  if (order) openOrderPlacedModal(order);
+/* Toggle and label the customer's self-cancel button. Visible
+   only while the order is still pending AND within the grace
+   window. The countdown ticks down via a 1s interval that runs
+   only while the modal is open with a pending order. */
+let placedCancelTicker = null;
+function refreshPlacedCancelBtn(order) {
+  const btn = $('#placedCancelBtn');
+  if (!order || !Store.isCancellableByCustomer(order)) {
+    btn.hidden = true;
+    if (placedCancelTicker) { clearInterval(placedCancelTicker); placedCancelTicker = null; }
+    return;
+  }
+  const tick = () => {
+    const fresh = Store.getOrders().find(o => o.id === order.id);
+    if (!fresh || !Store.isCancellableByCustomer(fresh)) {
+      btn.hidden = true;
+      if (placedCancelTicker) { clearInterval(placedCancelTicker); placedCancelTicker = null; }
+      return;
+    }
+    const secs = Math.ceil(Store.cancelWindowRemaining(fresh) / 1000);
+    $('#placedCancelCountdown').textContent = secs + 's';
+  };
+  btn.hidden = false;
+  tick();
+  if (placedCancelTicker) clearInterval(placedCancelTicker);
+  placedCancelTicker = setInterval(tick, 1000);
+}
+
+$('#placedCancelBtn').addEventListener('click', () => {
+  const orderId = $('#placedCancelBtn').dataset.orderId;
+  if (!orderId) return;
+  if (!confirm('Cancel this order? You can re-order any time.')) return;
+  const result = Store.customerCancelOrder(orderId);
+  if (!result.ok) {
+    if (result.reason === 'already_started') {
+      showToast('Already being prepared — please ask staff.', 'error');
+    } else if (result.reason === 'window_expired') {
+      showToast('Cancel window expired — please ask staff.', 'error');
+    } else {
+      showToast('Could not cancel.', 'error');
+    }
+    refreshOrderStatusBanner();
+    renderMyOrdersList();
+    return;
+  }
+  showToast('Order cancelled', 'success');
+  refreshOrderStatusBanner();
+  renderMyOrdersList();
+  refreshMyOrdersFab();
+  // Refresh the modal to reflect the cancelled state
+  const fresh = Store.getOrders().find(o => o.id === orderId);
+  if (fresh) updatePlacedModalForOrder(fresh);
 });
+
+$('#orderStatusBtn').addEventListener('click', () => {
+  // Banner now opens the multi-order popup, not the single-order
+  // modal — most customers end up placing 2+ orders so the popup
+  // is the more useful default destination.
+  openMyOrders();
+});
+
+/* ==========================================================
+   MY ORDERS  (multi-order popup + FAB + thank-you reset)
+   - FAB shows live count of THIS device's pending/preparing.
+   - Popup is scrollable, shows every order this device placed,
+     and exposes the customer self-cancel button per order while
+     the grace window is open.
+   - When every order is served and there's nothing pending,
+     show the thank-you overlay and clear the table.
+   ========================================================== */
+let myOrdersTicker = null;
+
+function getMyActiveOrders() {
+  return Store.getMyOrders().filter(o => o.status === 'pending' || o.status === 'preparing');
+}
+
+function refreshMyOrdersFab() {
+  const active = getMyActiveOrders().length;
+  const fab = $('#fabMyOrdersBtn');
+  fab.hidden = (active === 0);
+  $('#fabMyOrdersBadge').textContent = active;
+}
+
+function openMyOrders() {
+  const sheet = $('#myOrdersSheet');
+  sheet.hidden = false;
+  sheet.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => sheet.classList.add('open'));
+  renderMyOrdersList();
+  // Tick countdowns + auto-refresh items every 1s while open
+  if (myOrdersTicker) clearInterval(myOrdersTicker);
+  myOrdersTicker = setInterval(renderMyOrdersList, 1000);
+}
+function closeMyOrders() {
+  const sheet = $('#myOrdersSheet');
+  sheet.classList.remove('open');
+  sheet.setAttribute('aria-hidden', 'true');
+  setTimeout(() => { sheet.hidden = true; }, 200);
+  if (myOrdersTicker) { clearInterval(myOrdersTicker); myOrdersTicker = null; }
+}
+$('#fabMyOrdersBtn').addEventListener('click', openMyOrders);
+$('#closeMyOrdersBtn').addEventListener('click', closeMyOrders);
+
+function renderMyOrdersList() {
+  const orders = Store.getMyOrders();
+  const host   = $('#myOrdersList');
+  const active = orders.filter(o => o.status === 'pending' || o.status === 'preparing').length;
+  $('#myOrdersSummary').textContent = active === 0
+    ? `${orders.length} total`
+    : `${active} active · ${orders.length} total`;
+
+  if (orders.length === 0) {
+    host.innerHTML = `<p class="empty-state">No orders yet.</p>`;
+    return;
+  }
+  host.innerHTML = orders.map(o => {
+    const info  = STATUS_INFO[o.status] || STATUS_INFO.pending;
+    const itemsHtml = o.items.map(i =>
+      `<li>${i.qty}× ${escapeHtml(i.name)}</li>`
+    ).join('');
+    const cancellable = Store.isCancellableByCustomer(o);
+    const secs = Math.ceil(Store.cancelWindowRemaining(o) / 1000);
+    return `
+      <article class="myorder-item" data-id="${o.id}" data-status="${o.status}">
+        <header>
+          <div>
+            <strong>Order #${o.number}</strong>
+            <small class="muted"> · ${timeAgo(new Date(o.placedAt))}</small>
+          </div>
+          <span class="status-pill status-${o.status}">${o.status}</span>
+        </header>
+        <ul>${itemsHtml}</ul>
+        <footer>
+          <span class="myorder-status-icon" aria-hidden="true">${info.icon}</span>
+          <span class="myorder-status-text">${info.text}</span>
+          ${cancellable
+            ? `<button class="btn btn-cancel-grace" data-act="cancel">
+                 Cancel <span class="cancel-countdown">${secs}s</span>
+               </button>`
+            : ''}
+        </footer>
+      </article>
+    `;
+  }).join('');
+}
+
+$('#myOrdersList').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const card = btn.closest('.myorder-item');
+  const id   = card.dataset.id;
+  if (btn.dataset.act !== 'cancel') return;
+  if (!confirm('Cancel this order?')) return;
+  const result = Store.customerCancelOrder(id);
+  if (!result.ok) {
+    showToast(
+      result.reason === 'already_started' ? 'Already being prepared — ask staff.' :
+      result.reason === 'window_expired'  ? 'Cancel window expired — ask staff.'  :
+      'Could not cancel.',
+      'error'
+    );
+  } else {
+    showToast('Order cancelled', 'success');
+  }
+  renderMyOrdersList();
+  refreshMyOrdersFab();
+  refreshOrderStatusBanner();
+});
+
+/* Thank-you flow — runs whenever the customer has at least one
+   order in their history but zero are active. Triggers once per
+   "round" (uses a flag in state so we don't re-show it after the
+   customer hits Dismiss). */
+let thanksShown = false;
+function maybeShowThanks() {
+  const mine = Store.getMyOrders();
+  if (mine.length === 0) return;
+  const active = mine.filter(o => o.status === 'pending' || o.status === 'preparing').length;
+  const anyServed = mine.some(o => o.status === 'served');
+  if (active === 0 && anyServed && !thanksShown) {
+    thanksShown = true;
+    showThanksOverlay();
+  }
+}
+function showThanksOverlay() {
+  const ov = $('#thanksOverlay');
+  ov.hidden = false;
+  ov.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => ov.classList.add('open'));
+  // Auto-reset table after 8s (customer can also dismiss to reset now)
+  setTimeout(resetForNextCustomer, 8000);
+}
+function dismissThanks() {
+  const ov = $('#thanksOverlay');
+  ov.classList.remove('open');
+  ov.setAttribute('aria-hidden', 'true');
+  setTimeout(() => { ov.hidden = true; }, 250);
+}
+function resetForNextCustomer() {
+  // Forget this device's order history scope by clearing the
+  // active-order pointer and the table label. Orders remain in
+  // the store for the admin to clear/serve.
+  clearActiveOrder();
+  localStorage.removeItem('bossb_table');
+  setTableLabel(null);
+  closeMyOrders();
+  dismissThanks();
+  // Next interaction will re-prompt for a table (handled by
+  // the Place Order flow / ensureTable).
+}
+$('#thanksDismissBtn').addEventListener('click', resetForNextCustomer);
 
 /* ==========================================================
    MODAL HELPERS
@@ -606,7 +871,9 @@ document.addEventListener('keydown', (e) => {
   if ($('#customizerModal').classList.contains('open'))    return closeCustomizer();
   if ($('#staffLoginModal').classList.contains('open'))    return closeStaffLogin();
   if ($('#itemModal').classList.contains('open'))          return closeItemModal();
+  if ($('#dupTableModal').classList.contains('open'))      return; // force a choice
   if ($('#orderPlacedModal').classList.contains('open'))   return closeModal('#orderPlacedModal');
+  if (!$('#myOrdersSheet').hidden)                         return closeMyOrders();
   if (cartDrawer.classList.contains('open'))               return closeCart();
 });
 
@@ -671,6 +938,7 @@ function enterAdminPanel(session) {
   renderOrders();
   loadSettingsForm();
   refreshAdminHeaderBtn();
+  refreshAdminActivity();
 }
 function exitAdminPanel()  {
   adminPanel.hidden = true;
@@ -722,6 +990,8 @@ function renderOrders() {
       </li>
     `).join('');
     const tableLabel = o.tableNumber ? escapeHtml(String(o.tableNumber)) : '—';
+    const cancellable = Store.isCancellableByCustomer(o);
+    const secs = Math.ceil(Store.cancelWindowRemaining(o) / 1000);
     return `
       <article class="order-card" data-id="${o.id}" data-status="${o.status}">
         <header class="order-head">
@@ -731,6 +1001,11 @@ function renderOrders() {
             <strong>${tableLabel}</strong>
           </span>
           <span class="status-pill status-${o.status}">${o.status}</span>
+          ${cancellable
+            ? `<span class="cancellable-badge" title="Customer can still cancel">
+                 ⏱ cancellable <span data-cancel-countdown="${o.id}">${secs}s</span>
+               </span>`
+            : ''}
         </header>
         <div class="order-meta">placed ${placedAgo}</div>
         <ul>${itemsHtml}</ul>
@@ -764,13 +1039,21 @@ $('#ordersList').addEventListener('click', (e) => {
   const card = btn.closest('.order-card');
   const id = card.dataset.id;
   const act = btn.dataset.act;
+  const order = Store.getOrders().find(o => o.id === id);
+  const label = order ? `#${order.number}` : 'Order';
   if (act === 'delete') {
     if (!confirm('Delete this order?')) return;
     Store.deleteOrder(id);
+    showAdminToast({ title: `${label} deleted`, variant: 'danger' });
   } else {
     Store.updateOrderStatus(id, act);
+    showAdminToast({
+      title: `${label} → ${act}`,
+      variant: act === 'served' ? 'success' : act === 'cancelled' ? 'danger' : 'info',
+    });
   }
   renderOrders();
+  refreshAdminActivity();
 });
 
 /* Auto-refresh orders every 8s while the panel is open (so a
@@ -780,6 +1063,26 @@ setInterval(() => {
     renderOrders();
   }
 }, 8000);
+
+/* Live-tick the cancellable countdown badges every second so
+   admins see exactly when the customer's self-cancel window
+   closes. Cheaper than re-rendering — we only update the span
+   text. Skips work entirely when the panel isn't visible. */
+setInterval(() => {
+  if (adminPanel.hidden) return;
+  if ($('.admin-tab.active').dataset.adminTab !== 'orders') return;
+  let needsRerender = false;
+  $$('[data-cancel-countdown]').forEach(el => {
+    const id    = el.dataset.cancelCountdown;
+    const order = Store.getOrders().find(o => o.id === id);
+    if (!order || !Store.isCancellableByCustomer(order)) {
+      needsRerender = true;
+      return;
+    }
+    el.textContent = Math.ceil(Store.cancelWindowRemaining(order) / 1000) + 's';
+  });
+  if (needsRerender) renderOrders();
+}, 1000);
 
 /* ----- Menu admin table ----- */
 function renderMenuTable() {
@@ -818,11 +1121,27 @@ $('#menuTableBody').addEventListener('click', (e) => {
     if (it) openItemModal(it);
   }
   if (btn.dataset.act === 'delete') {
-    if (!confirm(`Delete "${id}"?`)) return;
-    Store.deleteMenuItem(id);
+    const item = Store.getMenu().find(m => m.id === id);
+    if (!item) return;
+    if (!confirm(`Delete "${item.name}"?`)) return;
+    Store.deleteMenuItemLogged(id);
     MENU = Store.getMenu();
     renderMenuTable();
     renderMenu();
+    // Undo path: restores the deleted item exactly as it was.
+    showAdminToast({
+      title:   `Deleted "${item.name}"`,
+      variant: 'danger',
+      undo:    () => {
+        Store.upsertMenuItemLogged(item);
+        MENU = Store.getMenu();
+        renderMenuTable();
+        renderMenu();
+        showAdminToast({ title: `Restored "${item.name}"`, variant: 'success' });
+        refreshAdminActivity();
+      },
+    });
+    refreshAdminActivity();
   }
 });
 $('#addMenuItemBtn').addEventListener('click', () => openItemModal(null));
@@ -886,12 +1205,17 @@ $('#itemForm').addEventListener('submit', (e) => {
       sugar: f.opt_sugar.checked,
     },
   };
-  Store.upsertMenuItem(item);
+  const wasEdit = !!editingItemId;
+  Store.upsertMenuItemLogged(item);
   MENU = Store.getMenu();
   closeItemModal();
   renderMenuTable();
   renderMenu();
-  showToast(editingItemId ? 'Item updated' : 'Item added', 'success');
+  showAdminToast({
+    title:   wasEdit ? `Saved "${item.name}"` : `Added "${item.name}"`,
+    variant: 'success',
+  });
+  refreshAdminActivity();
 });
 
 /* ----- Settings panel ----- */
@@ -911,7 +1235,9 @@ $('#saveSettingsBtn').addEventListener('click', () => {
   Store.setConfig(patch);
   CONFIG = Store.getConfig();
   applyConfigToDOM();
-  showToast('Settings saved', 'success');
+  Store.pushLog({ type: 'menu_save', message: 'Shop settings updated' });
+  showAdminToast({ title: 'Settings saved', variant: 'success' });
+  refreshAdminActivity();
 });
 
 $('#resetMenuBtn').addEventListener('click', () => {
@@ -928,6 +1254,131 @@ $('#factoryResetBtn').addEventListener('click', () => {
   showToast('Reset complete');
   setTimeout(() => location.reload(), 600);
 });
+
+/* ==========================================================
+   ADMIN SLIDE-IN TOASTS  (separate stack from the customer
+   #toast so admins see action confirmations bottom-right and
+   customers see info-toasts bottom-center; never collide).
+   Each toast: title, optional variant, optional Undo button.
+   Auto-dismiss after 6s unless Undo is clicked.
+   ========================================================== */
+function showAdminToast({ title, variant = 'info', undo = null, ttl = 6000 }) {
+  if (adminPanel.hidden) return;          // don't show admin toasts to customers
+  const stack = $('#adminToastStack');
+  const el = document.createElement('div');
+  el.className = `admin-toast variant-${variant}`;
+  el.innerHTML = `
+    <div class="admin-toast-body">${escapeHtml(title)}</div>
+    <div class="admin-toast-actions"></div>
+  `;
+  const actions = el.querySelector('.admin-toast-actions');
+  if (undo) {
+    const undoBtn = document.createElement('button');
+    undoBtn.className = 'admin-toast-undo';
+    undoBtn.textContent = 'Undo';
+    undoBtn.addEventListener('click', () => {
+      try { undo(); } finally { dismiss(); }
+    });
+    actions.appendChild(undoBtn);
+  }
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'admin-toast-close';
+  closeBtn.setAttribute('aria-label', 'Dismiss');
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', () => dismiss());
+  actions.appendChild(closeBtn);
+
+  stack.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  const timer = setTimeout(dismiss, ttl);
+  function dismiss() {
+    clearTimeout(timer);
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 220);
+  }
+}
+
+/* ==========================================================
+   ADMIN ACTIVITY BELL  (dropdown + unseen badge)
+   The badge counts entries newer than the last id the admin
+   has acknowledged by opening the dropdown.
+   ========================================================== */
+const LOG_ICON = {
+  order_placed:  '🧾',
+  order_status:  '↻',
+  order_delete:  '🗑',
+  menu_add:      '➕',
+  menu_save:     '✎',
+  menu_delete:   '🗑',
+};
+
+function refreshAdminActivity() {
+  // Bell badge
+  const unseen = Store.getUnseenLogCount();
+  const badge  = $('#bellBadge');
+  badge.hidden = unseen === 0;
+  badge.textContent = unseen > 99 ? '99+' : unseen;
+
+  // If the dropdown is open, re-render its body too so new
+  // entries appear live.
+  if (!$('#bellDropdown').hidden) renderBellList();
+}
+
+function renderBellList() {
+  const log  = Store.getLog();
+  const host = $('#bellList');
+  if (log.length === 0) {
+    host.innerHTML = `<p class="empty-state">No activity yet.</p>`;
+    return;
+  }
+  host.innerHTML = log.map(e => `
+    <div class="bell-row" data-type="${e.type}">
+      <span class="bell-row-icon" aria-hidden="true">${LOG_ICON[e.type] || '•'}</span>
+      <div class="bell-row-body">
+        <div>${escapeHtml(e.message)}</div>
+        <small class="muted">${timeAgo(new Date(e.ts))}</small>
+      </div>
+    </div>
+  `).join('');
+}
+
+function toggleBellDropdown() {
+  const dd = $('#bellDropdown');
+  const willOpen = dd.hidden;
+  dd.hidden = !willOpen;
+  if (willOpen) {
+    renderBellList();
+    const log = Store.getLog();
+    if (log[0]) Store.markLogSeen(log[0].id);
+    refreshAdminActivity();
+  }
+}
+$('#bellBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  toggleBellDropdown();
+});
+$('#clearLogBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!confirm('Clear activity log?')) return;
+  Store.clearLog();
+  refreshAdminActivity();
+  renderBellList();
+});
+/* Click anywhere outside the bell to close it. */
+document.addEventListener('click', (e) => {
+  const dd = $('#bellDropdown');
+  if (dd.hidden) return;
+  if (e.target.closest('.bell-wrap')) return;
+  dd.hidden = true;
+});
+
+/* Background sync — pick up new activity entries from order
+   placements happening in other tabs / customer devices. Only
+   runs while admin panel is open. */
+setInterval(() => {
+  if (adminPanel.hidden) return;
+  refreshAdminActivity();
+}, 4000);
 
 /* ==========================================================
    THEME TOGGLE
@@ -973,13 +1424,12 @@ async function boot() {
   refreshOrdersBadge();
   refreshAdminHeaderBtn();
 
-  // Restore the customer's active order banner if they reload
-  // mid-order. Polling resumes automatically.
-  if (localStorage.getItem('bossb_active_order')) {
-    refreshOrderStatusBanner();
-    if (!statusPollTimer) {
-      statusPollTimer = setInterval(refreshOrderStatusBanner, 5000);
-    }
+  // Restore the customer's order state on reload — banner, FAB,
+  // and polling all derive from the same client's orders.
+  refreshOrderStatusBanner();
+  refreshMyOrdersFab();
+  if (getMyActiveOrders().length > 0 && !statusPollTimer) {
+    statusPollTimer = setInterval(refreshOrderStatusBanner, 5000);
   }
 
   $('#year').textContent = new Date().getFullYear();

@@ -175,6 +175,7 @@ const Store = {
       id:          'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       number,
       tableNumber: tableNumber || null,
+      clientId:    Store.getClientId(),       // ties this order to the browser that placed it
       items,                                  // each: { itemId, name, qty, unitPrice, config }
       total:       items.reduce((s, i) => s + i.unitPrice * i.qty, 0),
       notes:       notes || '',
@@ -184,6 +185,11 @@ const Store = {
     };
     orders.unshift(order);                    // newest first
     Store.setOrders(orders);
+    Store.pushLog({
+      type:    'order_placed',
+      message: `Order #${order.number} placed at ${order.tableNumber || '—'}`,
+      orderId: order.id,
+    });
     return order;
   },
 
@@ -191,17 +197,154 @@ const Store = {
     const orders = Store.getOrders();
     const o = orders.find(x => x.id === orderId);
     if (!o) return false;
+    const prev = o.status;
     o.status = status;
     if (status === 'served') o.servedAt = new Date().toISOString();
-    return Store.setOrders(orders);
+    Store.setOrders(orders);
+    Store.pushLog({
+      type:    'order_status',
+      status,
+      message: `Order #${o.number} (${o.tableNumber || '—'}): ${prev} → ${status}`,
+      orderId: o.id,
+    });
+    return true;
+  },
+
+  /* Customer-initiated cancel. Only succeeds while the order is
+     still pending AND within the grace window. Returns the order
+     so the caller can restore the items into the cart. */
+  customerCancelOrder(orderId) {
+    const orders = Store.getOrders();
+    const o = orders.find(x => x.id === orderId);
+    if (!o)                       return { ok: false, reason: 'not_found' };
+    if (o.status !== 'pending')   return { ok: false, reason: 'already_started' };
+    if (!Store.isCancellableByCustomer(o)) return { ok: false, reason: 'window_expired' };
+    o.status = 'cancelled';
+    o.cancelledBy = 'customer';
+    o.cancelledAt = new Date().toISOString();
+    Store.setOrders(orders);
+    Store.pushLog({
+      type:    'order_status',
+      status:  'cancelled',
+      message: `Order #${o.number} cancelled by customer (within grace window)`,
+      orderId: o.id,
+    });
+    return { ok: true, order: o };
+  },
+
+  isCancellableByCustomer(order) {
+    if (!order || order.status !== 'pending') return false;
+    const placed = new Date(order.placedAt).getTime();
+    return (Date.now() - placed) < CANCEL_WINDOW_MS;
+  },
+
+  /* Milliseconds remaining until the grace window expires, or 0
+     if it already has / the order isn't pending. */
+  cancelWindowRemaining(order) {
+    if (!order || order.status !== 'pending') return 0;
+    const placed = new Date(order.placedAt).getTime();
+    return Math.max(0, CANCEL_WINDOW_MS - (Date.now() - placed));
+  },
+
+  /* All orders this browser has placed that haven't been
+     "dismissed" by the customer (served+acknowledged or deleted).
+     Used to drive the customer's "My orders" popup. */
+  getMyOrders() {
+    const cid = Store.getClientId();
+    return Store.getOrders().filter(o => o.clientId === cid);
+  },
+
+  /* Orders at a given table label that are still active (pending
+     or preparing). Used to detect duplicate-table conflicts when
+     a different device claims the same label. */
+  findActiveOrdersByTable(tableLabel) {
+    if (!tableLabel) return [];
+    const needle = String(tableLabel).trim().toLowerCase();
+    return Store.getOrders().filter(o =>
+      (o.status === 'pending' || o.status === 'preparing') &&
+      String(o.tableNumber || '').trim().toLowerCase() === needle
+    );
   },
 
   deleteOrder(orderId) {
-    return Store.setOrders(Store.getOrders().filter(o => o.id !== orderId));
+    const o = Store.getOrders().find(x => x.id === orderId);
+    const ok = Store.setOrders(Store.getOrders().filter(x => x.id !== orderId));
+    if (o) Store.pushLog({
+      type:    'order_delete',
+      message: `Order #${o.number} (${o.tableNumber || '—'}) deleted`,
+      orderId: o.id,
+    });
+    return ok;
   },
 
   clearServedOrders() {
-    return Store.setOrders(Store.getOrders().filter(o => o.status !== 'served'));
+    const n = Store.getOrders().filter(o => o.status === 'served').length;
+    const ok = Store.setOrders(Store.getOrders().filter(o => o.status !== 'served'));
+    if (n > 0) Store.pushLog({
+      type:    'order_delete',
+      message: `Cleared ${n} served order${n === 1 ? '' : 's'}`,
+    });
+    return ok;
+  },
+
+  /* Per-browser anonymous id. Generated on first call and
+     persisted. Used to scope "My orders" to this device and to
+     detect duplicate-table conflicts across devices. */
+  getClientId() {
+    let id = localStorage.getItem(STORE_KEYS.client);
+    if (!id) {
+      id = 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(STORE_KEYS.client, id);
+    }
+    return id;
+  },
+
+  /* ==========================================================
+     ACTIVITY LOG  (admin notification feed)
+     Capped at 50 entries. Each entry: { id, type, message, ts,
+     status?, orderId?, undo? }. Undo payload is opaque to the
+     store — the script.js layer interprets it.
+     ========================================================== */
+  getLog()  { return readJSON(STORE_KEYS.log, []); },
+  setLog(l) { return writeJSON(STORE_KEYS.log, l); },
+  pushLog(entry) {
+    const log = Store.getLog();
+    const id  = 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    log.unshift({ id, ts: new Date().toISOString(), ...entry });
+    if (log.length > 50) log.length = 50;
+    Store.setLog(log);
+    return id;
+  },
+  clearLog() { localStorage.removeItem(STORE_KEYS.log); },
+  markLogSeen(latestId) {
+    if (latestId) localStorage.setItem(STORE_KEYS.logSeen, latestId);
+  },
+  getUnseenLogCount() {
+    const seen = localStorage.getItem(STORE_KEYS.logSeen);
+    const log  = Store.getLog();
+    if (!seen) return log.length;
+    const idx  = log.findIndex(e => e.id === seen);
+    return idx === -1 ? log.length : idx;
+  },
+
+  /* Menu upsert/delete with log entries so the admin can see
+     "Saved 'Latte'" / "Deleted 'Cookie'" in their feed. */
+  upsertMenuItemLogged(item) {
+    const existing = Store.getMenu().find(m => m.id === item.id);
+    Store.upsertMenuItem(item);
+    Store.pushLog({
+      type:    existing ? 'menu_save' : 'menu_add',
+      message: `${existing ? 'Updated' : 'Added'} menu item "${item.name}"`,
+    });
+  },
+  deleteMenuItemLogged(id) {
+    const existing = Store.getMenu().find(m => m.id === id);
+    Store.deleteMenuItem(id);
+    if (existing) Store.pushLog({
+      type:    'menu_delete',
+      message: `Deleted menu item "${existing.name}"`,
+      undo:    { kind: 'menu_item', item: existing },
+    });
   },
 
   /* ==========================================================
@@ -281,3 +424,4 @@ const Store = {
 window.Store = Store;
 window.DEFAULT_MENU = DEFAULT_MENU;
 window.DEFAULT_CONFIG = DEFAULT_CONFIG;
+window.CANCEL_WINDOW_MS = CANCEL_WINDOW_MS;
