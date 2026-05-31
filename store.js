@@ -16,12 +16,22 @@
    ========================================================== */
 
 const STORE_KEYS = {
-  menu:    'bb_menu',
-  orders:  'bb_orders',
-  config:  'bb_config',
-  users:   'bb_users',
-  session: 'bb_session',
+  menu:     'bb_menu',
+  orders:   'bb_orders',
+  config:   'bb_config',
+  users:    'bb_users',
+  session:  'bb_session',
+  client:   'bb_client_id',     // per-browser anonymous id, lets us track
+                                 // "my orders" for the customer without accounts
+  log:      'bb_activity_log',  // admin-facing changelog (last 50 entries)
+  logSeen:  'bb_log_seen',      // last activity id the admin has seen
 };
+
+/* Customer self-cancel grace window. During this period after
+   placing, the customer sees a Cancel button in their orders
+   popup — no admin involvement required. After it expires,
+   only staff can cancel. */
+const CANCEL_WINDOW_MS = 60 * 1000;
 
 /* ==========================================================
    DEFAULTS
