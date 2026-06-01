@@ -926,6 +926,57 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
 .chat-img   { display: block; max-width: 220px; border-radius: 11px; }
 .chat-audio { display: block; width: 230px; max-width: 60vw; }
 
+/* Gestures: let the browser scroll vertically; we handle horizontal
+   swipe-to-reply ourselves. */
+.chat-msg { touch-action: pan-y; }
+.chat-msg.has-react { margin-bottom: 10px; }
+.chat-bubble { position: relative; }
+.chat-msg.swiping-reply .chat-bubble { box-shadow: 0 0 0 2px var(--primary); }
+
+/* Single ❤️ reaction badge, nestled at the bubble's bottom edge. */
+.chat-react {
+  position: absolute;
+  bottom: -11px;
+  right: 8px;
+  font-size: .8rem;
+  line-height: 1;
+  padding: 2px 4px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .18);
+}
+.chat-msg.theirs .chat-react { right: auto; left: 8px; }
+@keyframes reactPop { 0% { transform: scale(0); } 60% { transform: scale(1.3); } 100% { transform: scale(1); } }
+.chat-react.pop { animation: reactPop .28s ease; }
+
+/* Quoted reply line inside a bubble. */
+.chat-reply-quote {
+  font-size: .76rem;
+  opacity: .85;
+  border-left: 3px solid currentColor;
+  padding: 1px 0 1px 7px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Reply context bar above the composer. */
+.chat-reply-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 9px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--brown-50);
+}
+.chat-reply-accent { width: 3px; border-radius: 2px; background: var(--primary); flex: none; }
+.chat-reply-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.chat-reply-label   { font-size: .72rem; color: var(--ink-soft); }
+.chat-reply-snippet { font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-reply-bar .icon-btn { flex: none; align-self: center; }
+
 .chat-composer {
   display: flex;
   align-items: center;
@@ -935,7 +986,8 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
   background: var(--white);
 }
 .chat-composer #chatInput { flex: 1; }
-.chat-composer .icon-btn { font-size: 1.15rem; }
+.chat-composer .icon-btn { font-size: 1.15rem; color: var(--primary-deep); }
+.chat-composer .icon-btn svg { display: block; }
 .chat-send { background: var(--primary); color: #fff; border-color: var(--primary); }
 [data-theme="dark"] .chat-send { color: #0E1419; }
 

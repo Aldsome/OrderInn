@@ -325,6 +325,9 @@ const ROW_TO_MSG = (r) => r && ({
   body:       r.body,
   sizeBytes:  r.size_bytes || 0,
   ts:         toIsoTs(r.created_at),
+  reaction:     r.reaction || null,
+  replyTo:      r.reply_to || null,
+  replyPreview: r.reply_preview || null,
 });
 const MSG_TO_ROW = (m) => ({
   id:          m.id,
@@ -336,6 +339,9 @@ const MSG_TO_ROW = (m) => ({
   body:        m.body || '',
   size_bytes:  m.sizeBytes || 0,
   created_at:  m.ts,
+  reaction:      m.reaction || null,
+  reply_to:      m.replyTo || null,
+  reply_preview: m.replyPreview || null,
 });
 
 /* ----------------------------------------------------------------
@@ -1048,7 +1054,7 @@ const Store = {
     }
     return readJSON('bb_chat_local', []).filter(m => m.thread === thread);
   },
-  async sendMessage({ thread, role, senderName, kind, body }) {
+  async sendMessage({ thread, role, senderName, kind, body, replyTo = null, replyPreview = null }) {
     const msg = {
       id:        'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       thread:    thread || null,
@@ -1059,6 +1065,9 @@ const Store = {
       body:      body || '',
       sizeBytes: kind === 'text' ? 0 : (body ? body.length : 0),
       ts:        new Date().toISOString(),
+      reaction:     null,
+      replyTo:      replyTo || null,
+      replyPreview: replyPreview || null,
     };
     if (REMOTE_MODE && navigator.onLine) {
       // Let Postgres stamp created_at with its OWN clock (the column
@@ -1068,10 +1077,19 @@ const Store = {
       // wrong "x ago" times to the other party. We omit created_at,
       // then read the server-assigned value back and adopt it so the
       // sender's own optimistic echo matches what everyone else sees.
-      const row = MSG_TO_ROW(msg);
+      let row = MSG_TO_ROW(msg);
       delete row.created_at;
-      const { data, error } = await sb.from('bb_messages')
-        .insert(row).select('created_at').single();
+      // Resilient insert: if the reaction/reply columns aren't in the
+      // DB yet (migration not run), strip the offending column and
+      // retry so plain chat keeps working regardless.
+      let data, error;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        ({ data, error } = await sb.from('bb_messages').insert(row).select('created_at').single());
+        if (!error) break;
+        const missing = missingColumnFrom(error, row);
+        if (!missing) break;
+        const clone = { ...row }; delete clone[missing]; row = clone;
+      }
       if (error) { console.warn('[Store] message insert failed', error); throw error; }
       if (data && data.created_at) { msg.ts = toIsoTs(data.created_at); observeServerTime(data.created_at); }
       if (kind !== 'text') Store.pruneMedia();   // keep media under cap
@@ -1084,6 +1102,26 @@ const Store = {
       window.dispatchEvent(new CustomEvent('bb-chat', { detail: { message: msg } }));
     }
     return msg;
+  },
+  /* Set (or clear, with null) the single "❤️" reaction on a message.
+     Remote: a one-column UPDATE; the realtime UPDATE feed mirrors it
+     to the other device. Local mode patches the cached blob and fans
+     out a bb-chat-update event. */
+  async setReaction(messageId, reaction) {
+    if (!messageId) return;
+    if (REMOTE_MODE && navigator.onLine) {
+      const { error } = await sb.from('bb_messages')
+        .update({ reaction: reaction || null }).eq('id', messageId);
+      if (error) { console.warn('[Store] reaction update failed', error); throw error; }
+    } else {
+      const all = readJSON('bb_chat_local', []);
+      const m = all.find(x => x.id === messageId);
+      if (m) {
+        m.reaction = reaction || null;
+        writeJSON('bb_chat_local', all);
+        window.dispatchEvent(new CustomEvent('bb-chat-update', { detail: { message: m } }));
+      }
+    }
   },
   /* Delete oldest media messages until combined media size is
      back under the cap. Text messages are untouched. */
@@ -1425,6 +1463,9 @@ const Store = {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bb_messages' }, (payload) => {
         observeServerTime(payload.new && payload.new.created_at);   // fresh insert ≈ server "now"
         window.dispatchEvent(new CustomEvent('bb-chat', { detail: { message: ROW_TO_MSG(payload.new) } }));
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bb_messages' }, (payload) => {
+        window.dispatchEvent(new CustomEvent('bb-chat-update', { detail: { message: ROW_TO_MSG(payload.new) } }));
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'bb_messages' }, (payload) => {
         window.dispatchEvent(new CustomEvent('bb-chat-delete', { detail: { id: payload.old.id } }));

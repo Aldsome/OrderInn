@@ -3653,6 +3653,7 @@ async function openChat(thread, role = 'customer') {
   document.body.classList.add('chat-open');
   $('#chatBody').innerHTML = `<p class="empty-state">Loading…</p>`;
   chatMessages = await Store.listMessages(thread);
+  setChatReply(null);
   renderChatMessages();
   markChatSeen(thread);
   refreshChatDot();
@@ -3661,6 +3662,7 @@ function closeChat() {
   chatDrawer.classList.remove('open');
   chatDrawer.setAttribute('aria-hidden', 'true');
   document.body.classList.remove('chat-open');
+  setChatReply(null);
   if (chatThread) markChatSeen(chatThread);
   refreshChatDot();
 }
@@ -3679,15 +3681,112 @@ function renderChatMessages() {
     if (m.kind === 'image')      inner = `<img class="chat-img" src="${m.body}" alt="photo" />`;
     else if (m.kind === 'audio') inner = `<audio class="chat-audio" controls src="${m.body}"></audio>`;
     else                         inner = `<span>${escapeHtml(m.body)}</span>`;
+    const replyHtml = m.replyTo
+      ? `<div class="chat-reply-quote">${escapeHtml(m.replyPreview || 'message')}</div>` : '';
+    const reactHtml = m.reaction
+      ? `<span class="chat-react" aria-label="reaction">${m.reaction}</span>` : '';
     return `
-      <div class="chat-msg ${mine ? 'mine' : 'theirs'}">
+      <div class="chat-msg ${mine ? 'mine' : 'theirs'}${m.reaction ? ' has-react' : ''}" data-id="${m.id}">
         ${(!mine) ? `<small class="chat-who">${escapeHtml(m.senderName || (m.role === 'admin' ? 'Staff' : 'Guest'))}</small>` : ''}
-        <div class="chat-bubble chat-${m.kind}">${inner}</div>
+        <div class="chat-bubble chat-${m.kind}">${replyHtml}${inner}${reactHtml}</div>
         <small class="chat-time">${timeAgo(new Date(m.ts), Store.serverNow ? Store.serverNow() : Date.now())}</small>
       </div>`;
   }).join('');
   body.scrollTop = body.scrollHeight;
 }
+
+/* ----- Reply state -------------------------------------------- */
+let chatReplyTo = null;
+function chatSnippet(m) {
+  if (!m) return '';
+  if (m.kind === 'image') return '📷 Photo';
+  if (m.kind === 'audio') return '🎤 Voice note';
+  return (m.body || '').slice(0, 90);
+}
+function chatSenderLabel(m) {
+  return m.senderName || (m.role === 'admin' ? 'Staff' : 'Guest');
+}
+function setChatReply(m) {
+  const bar = $('#chatReplyBar');
+  if (!m) { chatReplyTo = null; if (bar) bar.hidden = true; return; }
+  chatReplyTo = { id: m.id, preview: `${chatSenderLabel(m)}: ${chatSnippet(m)}` };
+  $('#chatReplyName').textContent    = chatSenderLabel(m);
+  $('#chatReplySnippet').textContent = chatSnippet(m);
+  bar.hidden = false;
+  $('#chatInput').focus();
+}
+$('#chatReplyCancel').addEventListener('click', () => setChatReply(null));
+
+/* ----- Double-tap to react (single ❤️) ------------------------ */
+async function toggleReaction(m) {
+  if (!m) return;
+  const next = m.reaction ? null : '❤️';
+  m.reaction = next;                 // optimistic
+  renderChatMessages();
+  if (next) {
+    const el = $(`#chatBody .chat-msg[data-id="${m.id}"] .chat-react`);
+    if (el) { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
+  }
+  try { await Store.setReaction(m.id, next); }
+  catch (e) { /* keeps the optimistic state; reconciles on next fetch */ }
+}
+
+/* ----- Gestures: double-tap = react, horizontal swipe = reply -- */
+let chatGesture = null, chatLastTap = null;
+const REPLY_SWIPE_PX = 55;
+(function wireChatGestures() {
+  const body = $('#chatBody');
+  if (!body) return;
+  body.addEventListener('pointerdown', (e) => {
+    const el = e.target.closest('.chat-msg');
+    // Don't hijack interaction with the audio player.
+    if (!el || e.target.closest('audio')) { chatGesture = null; return; }
+    chatGesture = { id: el.dataset.id, el, x: e.clientX, y: e.clientY, drag: false, dx: 0 };
+  });
+  body.addEventListener('pointermove', (e) => {
+    if (!chatGesture) return;
+    const dx = e.clientX - chatGesture.x, dy = e.clientY - chatGesture.y;
+    chatGesture.dx = dx;
+    if (!chatGesture.drag && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) chatGesture.drag = true;
+    if (chatGesture.drag) {
+      e.preventDefault();
+      chatGesture.el.style.transform = `translateX(${Math.max(-80, Math.min(80, dx))}px)`;
+      chatGesture.el.classList.toggle('swiping-reply', Math.abs(dx) > REPLY_SWIPE_PX);
+    }
+  });
+  const endGesture = (e) => {
+    if (!chatGesture) return;
+    const g = chatGesture; chatGesture = null;
+    const m = chatMessages.find(x => x.id === g.id);
+    g.el.classList.remove('swiping-reply');
+    g.el.style.transition = 'transform .18s ease';
+    g.el.style.transform = '';
+    setTimeout(() => { g.el.style.transition = ''; }, 200);
+    const dy = (e.clientY || g.y) - g.y;
+    const moved = Math.hypot(g.dx, dy);
+    if (g.drag) {
+      if (Math.abs(g.dx) > REPLY_SWIPE_PX) setChatReply(m);
+    } else if (moved < 10) {
+      const now = Date.now();
+      if (chatLastTap && chatLastTap.id === g.id && now - chatLastTap.t < 320) {
+        chatLastTap = null;
+        toggleReaction(m);
+      } else {
+        chatLastTap = { id: g.id, t: now };
+      }
+    }
+  };
+  body.addEventListener('pointerup', endGesture);
+  body.addEventListener('pointercancel', () => { if (chatGesture) { chatGesture.el.style.transform = ''; chatGesture.el.classList.remove('swiping-reply'); chatGesture = null; } });
+})();
+
+/* Reaction / edit arriving from the other device. */
+window.addEventListener('bb-chat-update', (e) => {
+  const m = e.detail && e.detail.message;
+  if (!m || m.thread !== chatThread) return;
+  const idx = chatMessages.findIndex(x => x.id === m.id);
+  if (idx >= 0) { chatMessages[idx] = m; renderChatMessages(); }
+});
 
 async function sendChat(kind, body) {
   if (!chatThread) return;
@@ -3699,7 +3798,10 @@ async function sendChat(kind, body) {
       senderName: chatRole === 'admin'
         ? (Store.getSession()?.name || 'Staff')
         : (state.tableNumber || 'Guest'),
+      replyTo:      chatReplyTo ? chatReplyTo.id : null,
+      replyPreview: chatReplyTo ? chatReplyTo.preview : null,
     });
+    setChatReply(null);              // clear the reply context after sending
     // Optimistic echo: show the sender's own message immediately
     // if they're viewing the thread. In remote mode the realtime
     // INSERT also fires bb-chat with the same id; in local mode

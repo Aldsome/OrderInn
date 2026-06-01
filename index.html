@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=37" />
+  <link rel="stylesheet" href="style.css?v=38" />
 
   <script>
     (function () {
@@ -158,11 +158,39 @@
       <button class="btn btn-ghost" id="chatRecCancel">Cancel</button>
       <button class="btn btn-primary" id="chatRecStop">Send</button>
     </div>
+    <!-- Reply context — shows the message being replied to; cleared after send. -->
+    <div class="chat-reply-bar" id="chatReplyBar" hidden>
+      <span class="chat-reply-accent" aria-hidden="true"></span>
+      <div class="chat-reply-info">
+        <span class="chat-reply-label">Replying to <strong id="chatReplyName"></strong></span>
+        <span class="chat-reply-snippet" id="chatReplySnippet"></span>
+      </div>
+      <button class="icon-btn" id="chatReplyCancel" aria-label="Cancel reply">✕</button>
+    </div>
     <footer class="chat-composer" id="chatComposer">
-      <button class="icon-btn" id="chatImageBtn" aria-label="Send photo" title="Photo">🖼️</button>
-      <button class="icon-btn" id="chatMicBtn" aria-label="Record voice" title="Voice note">🎤</button>
+      <button class="icon-btn" id="chatImageBtn" aria-label="Send photo" title="Photo">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2.5"/>
+          <circle cx="8.5" cy="8.5" r="1.6"/>
+          <path d="M21 15l-5-5L5 21"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="chatMicBtn" aria-label="Record voice" title="Voice note">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2" width="6" height="12" rx="3"/>
+          <path d="M5 10a7 7 0 0 0 14 0"/>
+          <line x1="12" y1="17" x2="12" y2="22"/>
+          <line x1="8" y1="22" x2="16" y2="22"/>
+        </svg>
+      </button>
       <input type="text" id="chatInput" placeholder="Type a message…" autocomplete="off" />
-      <button class="icon-btn chat-send" id="chatSendBtn" aria-label="Send">➤</button>
+      <button class="icon-btn chat-send" id="chatSendBtn" aria-label="Send">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="currentColor">
+          <path d="M3.4 20.4l17.45-7.48a1 1 0 0 0 0-1.84L3.4 3.6a.993.993 0 0 0-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z"/>
+        </svg>
+      </button>
       <input type="file" id="chatImageInput" accept="image/*" hidden />
     </footer>
   </aside>
@@ -838,7 +866,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=27"></script>
-  <script src="script.js?v=52"></script>
+  <script src="store.js?v=28"></script>
+  <script src="script.js?v=53"></script>
 </body>
 </html>

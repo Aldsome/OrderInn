@@ -45,3 +45,20 @@ drop policy if exists "messages delete" on public.bb_messages;
 create policy "messages read"   on public.bb_messages for select using (true);
 create policy "messages insert" on public.bb_messages for insert with check (true);
 create policy "messages delete" on public.bb_messages for delete using (true);
+
+-- ------------------------------------------------------------
+-- REACTIONS + REPLIES  (added later — safe to re-run)
+--   reaction      : the single "❤️" tap-to-react, or NULL
+--   reply_to      : id of the message this one replies to
+--   reply_preview : cached "Sender: snippet" so the quoted line
+--                   renders without a second lookup
+-- Plus an UPDATE policy so a reaction can be toggled on a row.
+-- The app degrades gracefully if this block hasn't been run yet
+-- (it strips the unknown columns and still sends the message).
+-- ------------------------------------------------------------
+alter table public.bb_messages add column if not exists reaction      text;
+alter table public.bb_messages add column if not exists reply_to      text;
+alter table public.bb_messages add column if not exists reply_preview text;
+
+drop policy if exists "messages update" on public.bb_messages;
+create policy "messages update" on public.bb_messages for update using (true) with check (true);
