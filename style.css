@@ -398,6 +398,11 @@ select option,
 }
 /* Join-by-PIN section in the table modal */
 .table-join { margin-bottom: 4px; }
+/* Compact, de-emphasised join-by-PIN — secondary to entering a name. */
+.table-join--compact { margin-bottom: 0; }
+.table-join--compact label { font-size: .8rem; color: var(--ink-soft); }
+.table-join--compact input { font-size: .9rem; padding: 8px 10px; }
+.table-join--compact .btn { font-size: .85rem; padding: 9px 12px; }
 .or-divider {
   display: flex;
   align-items: center;
@@ -834,6 +839,29 @@ select option,
   background: var(--danger);
   border: 2px solid var(--white);
 }
+/* Attention state — a new staff message arrived while the customer
+   wasn't reading. Bounce + glowing ring so it's hard to miss; the
+   dot pulses alongside. Cleared the moment they open the thread. */
+@keyframes fabChatAttn {
+  0%, 100% { transform: translateY(0) scale(1); }
+  25%      { transform: translateY(-5px) scale(1.07); }
+  50%      { transform: translateY(0) scale(1); }
+  70%      { transform: translateY(-3px) scale(1.04); }
+}
+@keyframes fabChatRing {
+  0%   { box-shadow: 0 0 0 0 rgba(193,143,30,.55), var(--shadow-lg); }
+  100% { box-shadow: 0 0 0 12px rgba(193,143,30,0), var(--shadow-lg); }
+}
+.fab-chat.attn {
+  border-color: var(--primary);
+  animation: fabChatAttn 1.1s ease-in-out infinite,
+             fabChatRing  1.1s ease-out      infinite;
+}
+@keyframes fabDotPulse {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%      { transform: scale(1.5); opacity: .6; }
+}
+.fab-chat.attn .fab-chat-dot { animation: fabDotPulse 1.1s ease-in-out infinite; }
 body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
 
 .chat-drawer {

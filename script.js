@@ -3682,6 +3682,11 @@ window.addEventListener('bb-chat', (e) => {
     if (iAmAdmin && msg.thread) {
       adminUnreadThreads.add(String(msg.thread));
       if (!adminPanel.hidden && $('.admin-tab.active')?.dataset.adminTab === 'orders') renderOrders();
+    } else if (!iAmAdmin) {
+      // Customer-side: a clear, unmissable cue that staff replied —
+      // a toast plus the bouncing/glowing chat FAB (lit in
+      // refreshChatDot below).
+      showToast('New message from staff 💬');
     }
   }
   if (viewingThisThread) {
@@ -3707,13 +3712,19 @@ window.addEventListener('bb-chat-delete', (e) => {
    table since the customer last opened the chat. */
 function refreshChatDot(incoming) {
   const dot = $('#fabChatDot');
+  const fab = $('#fabChatBtn');
   if (!dot) return;
-  if (chatRole === 'admin') { dot.hidden = true; return; }   // dot is customer-only
+  const clear = () => { dot.hidden = true; fab && fab.classList.remove('attn'); };
+  if (chatRole === 'admin') { clear(); return; }              // dot is customer-only
   const thread = state.tableNumber;
-  if (!thread) { dot.hidden = true; return; }
-  if (incoming && incoming.thread === thread && incoming.role === 'admin'
-      && !(chatDrawer.classList.contains('open') && chatThread === thread)) {
+  if (!thread) { clear(); return; }
+  // Reading the thread right now → nothing pending, stop the cue.
+  if (chatDrawer.classList.contains('open') && chatThread === thread) { clear(); return; }
+  // A fresh staff message for this table → light the dot and make
+  // the FAB bounce/glow so it can't be missed.
+  if (incoming && incoming.thread === thread && incoming.role === 'admin') {
     dot.hidden = false;
+    fab && fab.classList.add('attn');
   }
 }
 

@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=35" />
+  <link rel="stylesheet" href="style.css?v=36" />
 
   <script>
     (function () {
@@ -380,20 +380,8 @@
         <h3>Join or start a table</h3>
       </header>
 
-      <!-- Fast path: a tablemate already started the table — just punch
-           in the PIN to be dropped straight into their room. No name,
-           no conflicts. -->
-      <div class="table-join">
-        <label>Joining your table? Enter the PIN
-          <input type="text" inputmode="numeric" autocomplete="off" maxlength="4"
-                 id="joinPinInput" placeholder="4-digit PIN" />
-        </label>
-        <button type="button" class="btn btn-primary btn-block" id="joinPinBtn">Join table</button>
-        <p class="form-error" id="joinPinError" hidden></p>
-      </div>
-
-      <div class="or-divider"><span>or start a new table</span></div>
-
+      <!-- Primary path: start a new table by entering a name/number.
+           This is what most walk-ins do, so it leads. -->
       <form id="tableForm">
         <p class="muted small" style="margin: 0;">
           Helps our staff find you when your order is ready.
@@ -404,6 +392,20 @@
         </label>
         <button type="submit" class="btn btn-primary btn-block">Continue</button>
       </form>
+
+      <div class="or-divider"><span>or join with a PIN</span></div>
+
+      <!-- Secondary path: a tablemate already started the table — punch
+           in their PIN to drop straight into their room. No name, no
+           conflicts. De-emphasised vs. starting a new table. -->
+      <div class="table-join table-join--compact">
+        <label>Joining your table? Enter the PIN
+          <input type="text" inputmode="numeric" autocomplete="off" maxlength="4"
+                 id="joinPinInput" placeholder="4-digit PIN" />
+        </label>
+        <button type="button" class="btn btn-ghost btn-block" id="joinPinBtn">Join table</button>
+        <p class="form-error" id="joinPinError" hidden></p>
+      </div>
       <!-- Staff escape hatch — admins can sign in directly from
            here without typing a fake table label (which would
            otherwise become this device's table forever). -->
@@ -836,6 +838,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
   <script src="store.js?v=24"></script>
-  <script src="script.js?v=48"></script>
+  <script src="script.js?v=49"></script>
 </body>
 </html>
