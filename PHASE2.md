@@ -8,6 +8,31 @@ Phase 2 builds the feature backlog on top of a foundational data-model change.
 
 ---
 
+## Status
+
+**Shipped (commits `ff7a0d8`, `6db419b`, `06c247c`, `a520f12`):**
+- Data-driven categories + customer chips; admin filter chips, group-by-category,
+  sortable table, auto item ID, "+ Category".
+- Custom option groups (admin-defined, beyond size/temp/milk/sugar).
+- Status banner + My-orders bubble linked to the current room; joiners see the
+  table's orders; copy-PIN button; sticky admin filter.
+- #1/#8 Modify placed orders (customer + admin) before preparing.
+- #2 Move table/name carrying orders (decline = cancel).
+- #3 Cancel-all + multi-select clear (customer).
+- #4 Admin multi-select delete (orders + menu).
+- #7 Table PIN + write-it-down reminder on the placed modal.
+- #9 Reset everything to default (cloud + local).
+
+**Deferred (deliberately): #0 full identity/location schema decouple.** The
+practical goal — orders follow the person when they move tables — is already met
+by the #2 move feature. A *full* schema split (a dedicated identity field
+distinct from `tableNumber`, plus rekeying chat threads, sessions, collision
+logic, admin display, and receipts/CSV) would touch nearly everything just
+shipped and risk regressions, so it is best done as its own focused effort
+rather than folded into this sweep. Details below remain the design of record.
+
+---
+
 ## 0. Foundational: decouple identity from location
 
 **Decision (brainstorm result):** today `tableNumber` is a single field that
