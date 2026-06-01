@@ -2028,6 +2028,14 @@ body.cart-open .fab-cart {
   display: grid;
   gap: 10px;
 }
+.myorders-foot {
+  border-top: 1px solid var(--line);
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+  text-align: center;
+}
+.myorders-foot small { font-size: .78rem; }
 .myorder-item {
   border: 1px solid var(--line);
   border-radius: var(--radius);

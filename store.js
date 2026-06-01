@@ -863,12 +863,19 @@ const Store = {
   getMyClientIds() { return [Store.getClientId(), ...Store.getClientIdHistory()]; },
 
   /* ==========================================================
-     SESSION TABLE  (24h guest label persistence)
-     - Survives page refresh: the visitor isn't re-asked just
-       because they reloaded.
-     - Expires after 24h, OR sooner if inactivity reset clears
-       it, so a different person at the same device the next
-       day gets a fresh prompt.
+     SESSION TABLE  (local re-entry CONVENIENCE — not a reservation)
+     - This is purely a same-device convenience: it survives a
+       page refresh so the visitor isn't re-asked for their name
+       just because they reloaded ("keep my name for today" on
+       THIS device). It expires after 24h, or sooner when a reset
+       clears it, so a different person at the same device the
+       next day gets a fresh prompt.
+     - It does NOT reserve the name against anyone. Name
+       exclusivity is a *lease* enforced elsewhere: the live
+       ACTIVE SESSIONS registry below (30-min heartbeat) plus any
+       active order at the table. When the visit ends the room is
+       abolished (see resetForNextCustomer) and the name is freed
+       immediately — there is no fixed 24h lock-out.
      ========================================================== */
   getSessionTable() {
     const rec = readJSON(STORE_KEYS.sessionTable, null);

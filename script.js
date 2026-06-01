@@ -1377,6 +1377,7 @@ function clearPinHint() {
 }
 $('#fabMyOrdersBtn').addEventListener('click', openMyOrders);
 $('#closeMyOrdersBtn').addEventListener('click', closeMyOrders);
+$('#endVisitBtn').addEventListener('click', endVisit);
 
 /* Orders the customer has "cleared" from their own list (history
    tidy-up). They stay in the store for staff; this just hides them
@@ -1409,6 +1410,12 @@ function renderMyOrdersList() {
   $('#myOrdersSummary').textContent = active === 0
     ? `${orders.length} total`
     : `${active} active · ${orders.length} total`;
+
+  // "End my visit" only makes sense once the guest holds a table
+  // label (a room to abolish). Admins keep their auto-stamped label
+  // for the panel and never run the customer abolish lifecycle.
+  const foot = $('#myOrdersFoot');
+  if (foot) foot.hidden = !(state.tableNumber && !Store.isAdmin());
 
   // Today's spending strip — the customer's OWN non-cancelled
   // orders placed today (don't count tablemates' spending as
@@ -1701,6 +1708,29 @@ function continueAsSameUser() {
   thanksShown = false;
   bumpInactivity();
   showToast('Welcome back ☕ Add anything else?', 'success');
+}
+/* Explicit "End my visit" — the user-initiated path into the same
+   abolish funnel as the thanks overlay and the inactivity reset.
+   The room is a lease tied to the visit, so ending it frees the
+   name immediately for the next walk-in. If orders are still in
+   flight we confirm first and surface the PIN, since the orders
+   stay in the store (admin still sees them) and the guest can
+   rejoin by re-entering the name or the PIN. */
+function endVisit() {
+  const here = state.tableNumber;
+  if (!here) { closeMyOrders(); return; }
+  const activeHere = getActiveOrdersHere();
+  if (activeHere.length > 0) {
+    const pin = activeHere.map(o => o.joinPin).find(Boolean);
+    const pinLine = pin ? `\n\nWrite down your PIN to rejoin: ${pin}` : '';
+    const ok = confirm(
+      `You still have ${activeHere.length} order${activeHere.length === 1 ? '' : 's'} being prepared. ` +
+      `End your visit anyway? Your name will be freed for the next guest.${pinLine}`
+    );
+    if (!ok) return;
+  }
+  resetForNextCustomer();
+  showToast('Visit ended — your name is free for the next guest', 'success');
 }
 function resetForNextCustomer() {
   // Forget this device's order history scope by clearing the
