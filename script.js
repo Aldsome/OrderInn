@@ -158,6 +158,13 @@ function setTableLabel(label) {
     Store.clearSessionTable();
     Store.dropActiveSession();
   }
+  // The status banner + My-orders bubble are linked to the current
+  // room, so re-evaluate them whenever the room changes (e.g. the
+  // banner must stop showing an order left behind in a prior room,
+  // and a newly-joined table's orders must appear immediately).
+  // Guarded: these run only after boot wires everything up.
+  if (typeof refreshOrderStatusBanner === 'function') refreshOrderStatusBanner();
+  if (typeof refreshMyOrdersFab === 'function') refreshMyOrdersFab();
 }
 function ensureTable() {
   // QR-code path: URL ?table= overrides everything and always
@@ -928,16 +935,30 @@ function clearActiveOrder() {
   $('#orderStatusBanner').hidden = true;
   if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
 }
+/* Case-insensitive table-label compare (labels are free text). */
+function sameLabel(a, b) {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
 function getActiveOrder() {
-  // Prefer the explicitly-stored last-placed order so the banner
-  // keeps tracking the same one until the customer dismisses it
-  // (so "served" shows up briefly to remind them to pay). When
-  // that one is gone, fall back to the most recent in-flight
-  // order for this device.
+  const here = state.tableNumber;
+  // Prefer the explicitly-stored last-placed order — but ONLY while it
+  // still belongs to the CURRENT room. Otherwise the banner would
+  // cling to an order left behind after the customer changed table.
   const id = localStorage.getItem('bossb_active_order');
   if (id) {
     const stored = Store.getOrders().find(o => o.id === id);
-    if (stored) return stored;
+    if (stored && (!here || sameLabel(stored.tableNumber, here))) return stored;
+  }
+  // Otherwise track the CURRENT room: its most recent active order
+  // from ANY device, so a customer who just joined an existing table
+  // (and hasn't ordered yet) still sees the table's order + banner.
+  // Falls back to this device's own active orders when no table label
+  // is set. Keeps the banner + My orders linked to the same room.
+  if (here) {
+    const tableActive = Store.getTableOrders(here)
+      .filter(o => o.status === 'pending' || o.status === 'preparing');
+    return tableActive[0] || null;     // getTableOrders is newest-first
   }
   const fallback = getMyActiveOrders();
   return fallback[0] || null;
@@ -1077,22 +1098,23 @@ function getMyActiveOrders() {
   return Store.getMyOrders().filter(o => o.status === 'pending' || o.status === 'preparing');
 }
 
-/* My active orders at the CURRENT table only. Used for the floating
-   "My orders" bubble so that, after changing rooms, an order left
-   behind under the old label doesn't keep lighting up the badge
-   (FIX1 — false order notification). Falls back to all my active
-   orders when no table label is set. */
-function getMyActiveOrdersHere() {
+/* Active orders for the CURRENT room (any device at this table), so
+   the floating bubble is linked to the room rather than to one
+   device. After changing rooms an order left behind under the old
+   label no longer lights up the badge (FIX1), AND a customer who
+   just joined an existing table sees the count even before they've
+   ordered anything. Falls back to this device's own active orders
+   when no table label is set. The My orders sheet already shows this
+   same combined table view, so the badge and the sheet now match. */
+function getActiveOrdersHere() {
   const here = state.tableNumber;
   if (!here) return getMyActiveOrders();
-  const needle = String(here).trim().toLowerCase();
-  return getMyActiveOrders().filter(o =>
-    String(o.tableNumber || '').trim().toLowerCase() === needle
-  );
+  return Store.getTableOrders(here)
+    .filter(o => o.status === 'pending' || o.status === 'preparing');
 }
 
 function refreshMyOrdersFab() {
-  const active = getMyActiveOrdersHere().length;
+  const active = getActiveOrdersHere().length;
   const fab = $('#fabMyOrdersBtn');
   fab.hidden = (active === 0);
   $('#fabMyOrdersBadge').textContent = active;
@@ -1232,9 +1254,13 @@ function renderMyOrdersList() {
     .map(o => o.joinPin).find(Boolean);
   const pinHtml = activePin
     ? `<div class="myorders-pin${pinHintActive ? ' hint' : ''}">
-         <span>Table PIN</span>
-         <strong>${escapeHtml(activePin)}</strong>
-         <small>share with your table so they can add orders</small>
+         <div class="myorders-pin-text">
+           <span>Table PIN</span>
+           <strong>${escapeHtml(activePin)}</strong>
+           <small>share with your table so they can add orders</small>
+         </div>
+         <button class="btn btn-ghost myorders-pin-copy" data-act="copy-pin"
+                 data-pin="${escapeHtml(activePin)}" aria-label="Copy table PIN">Copy</button>
        </div>`
     : '';
 
@@ -1301,10 +1327,17 @@ function renderMyOrdersList() {
   host.innerHTML = peopleHtml + pinHtml + orderRows + ctaHtml;
 }
 
-$('#myOrdersList').addEventListener('click', (e) => {
+$('#myOrdersList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
+  // Copy the Table PIN — lives in the PIN banner, not in an order card.
+  if (btn.dataset.act === 'copy-pin') {
+    await copyTextToClipboard(btn.dataset.pin || '');
+    showToast('Table PIN copied', 'success');
+    return;
+  }
   const card = btn.closest('.myorder-item');
+  if (!card) return;
   const id   = card.dataset.id;
   if (btn.dataset.act !== 'cancel') return;
   if (!confirm('Cancel this order?')) return;
@@ -3201,6 +3234,29 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+/* Copy text to the clipboard with a legacy fallback for http:// /
+   older browsers where navigator.clipboard is unavailable. */
+async function copyTextToClipboard(text) {
+  text = String(text || '');
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 function timeAgo(d) {
   const s = Math.floor((Date.now() - d.getTime()) / 1000);

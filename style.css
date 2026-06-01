@@ -1727,8 +1727,18 @@ body.admin-open { overflow: hidden; }
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  /* Override the customer .chips sticky offset (top:87px, sized for
+     the customer topbar). In the admin pane the tabs are pinned
+     outside the scroll box, so the filter pins to the top of the
+     scroll viewport — right below the tabs — instead of floating at
+     an 87px gap. */
+  position: sticky;
+  top: 0;
+  z-index: 6;                 /* under .admin-tabs (z-index 7) */
+  background: var(--cream);
   margin: 0 0 12px;
-  padding: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
 }
 .menu-group-toggle { white-space: nowrap; }
 .data-table th.sortable {
@@ -2061,16 +2071,22 @@ body.cart-open .fab-cart {
 /* Table PIN banner at the top of My Orders */
 .myorders-pin {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
   padding: 10px 14px;
   margin-bottom: 10px;
   border-radius: var(--radius);
   background: var(--brown-100);
   border: 1px dashed var(--brown-200);
 }
-.myorders-pin > span {
+.myorders-pin-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+.myorders-pin-text > span {
   font-size: .72rem;
   text-transform: uppercase;
   letter-spacing: .08em;
@@ -2083,10 +2099,16 @@ body.cart-open .fab-cart {
   letter-spacing: .12em;
   color: var(--primary-deep);
 }
-.myorders-pin small {
+.myorders-pin-text small {
   flex-basis: 100%;
   color: var(--ink-soft);
   font-size: .74rem;
+}
+.myorders-pin-copy {
+  flex-shrink: 0;
+  align-self: center;
+  padding: 6px 12px;
+  font-size: .82rem;
 }
 
 /* Admin order-card chat button: unread-message dot */
