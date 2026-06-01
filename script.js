@@ -279,20 +279,36 @@ let pinAttempts        = 0;
    - 'share'     : someone else has an open order at this label —
                    offer join (table sharing) or sit elsewhere. */
 function showDupModal({ mode, label, count = 1, onAccept = null, pin = null }) {
+  const modal   = $('#dupTableModal');
   const desc    = $('#dupTableDesc');
   const title   = $('#dupTableTitle');
+  const labelEl = $('#dupTableLabel');
   const joinBtn = $('#dupTableJoinBtn');
   const elseBtn = $('#dupTableElsewhereBtn');
   const pinRow  = $('#dupPinRow');
-  $('#dupTableLabel').textContent = label;
+  const pinErr  = $('#dupPinError');
+  const pinInp  = $('#dupPinInput');
+
+  if (!modal || !joinBtn || !elseBtn) {
+    console.error('[Store] duplicate-table modal markup is missing. Expected #dupTableModal, #dupTableJoinBtn, and #dupTableElsewhereBtn.');
+    pendingTableLabel = null;
+    pendingTableAccept = null;
+    pendingTablePin = null;
+    pinAttempts = 0;
+    openTableModal();
+    return;
+  }
+
+  if (labelEl) labelEl.textContent = label;
   // Reset PIN UI + button visibility each time (modes below only
   // override what they need to change).
   pendingTablePin = null;
   pinAttempts = 0;
   if (pinRow) pinRow.hidden = true;
-  $('#dupPinError').hidden = true;
-  $('#dupPinInput').value = '';
+  if (pinErr) pinErr.hidden = true;
+  if (pinInp) pinInp.value = '';
   joinBtn.hidden = false;
+  joinBtn.disabled = false;
   elseBtn.hidden = false;
 
   if (mode === 'sameRoom') {
@@ -334,22 +350,27 @@ function showDupModal({ mode, label, count = 1, onAccept = null, pin = null }) {
   pendingTableLabel = label;
   closeTableModal();            // ensure the dup prompt isn't painted behind the table modal
   openModal('#dupTableModal');
-  if (mode === 'share' && pin) setTimeout(() => $('#dupPinInput').focus(), 50);
+  if (mode === 'share' && pin && pinInp) setTimeout(() => pinInp.focus(), 50);
 }
 
 $('#dupTableJoinBtn').addEventListener('click', () => {
   // Share-join gate: if a PIN is expected, validate it first.
   if (pendingTablePin) {
-    const entered = ($('#dupPinInput').value || '').trim();
+    const pinInput = $('#dupPinInput');
+    const entered = (pinInput?.value || '').trim();
     if (entered !== pendingTablePin) {
       pinAttempts++;
       const err = $('#dupPinError');
-      err.textContent = pinAttempts >= 5
-        ? 'Too many attempts. Please ask staff for help.'
-        : 'Incorrect PIN. Ask the person who started this table.';
-      err.hidden = false;
-      const inp = $('#dupPinInput');
-      inp.focus(); inp.select();
+      if (err) {
+        err.textContent = pinAttempts >= 5
+          ? 'Too many attempts. Please ask staff for help.'
+          : 'Incorrect PIN. Ask the person who started this table.';
+        err.hidden = false;
+      }
+      if (pinInput) {
+        pinInput.focus();
+        pinInput.select();
+      }
       if (pinAttempts >= 5) $('#dupTableJoinBtn').disabled = true;
       return;
     }
