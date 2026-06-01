@@ -299,6 +299,22 @@ const USER_TO_ROW = (u) => ({
   password_hash: u.passwordHash,
   created_at:    u.createdAt,
 });
+/* Normalize a Postgres timestamptz into a value `new Date()` parses
+   correctly. PostgREST returns proper ISO ("...T...+00:00"), but the
+   Realtime websocket hands back the raw Postgres text form
+   ("2026-06-02 02:00:00+00" — a space separator and a 2-digit "+00"
+   offset), which browsers misparse (often as the future → negative
+   "ago"). This funnels both shapes to a single, parseable ISO string. */
+const toIsoTs = (v) => {
+  if (!v) return v;
+  if (v instanceof Date) return v.toISOString();
+  let s = String(v).trim();
+  if (s.includes(' ') && !s.includes('T')) s = s.replace(' ', 'T');
+  if (/[zZ]$/.test(s)) return s;                       // already has Z
+  const m = s.match(/([+-]\d{2})(:?)(\d{2})?$/);       // trailing tz offset?
+  if (m) return m[3] ? s : s.slice(0, m.index) + m[1] + ':00';  // "+00" -> "+00:00"
+  return s + 'Z';                                      // no offset -> assume UTC
+};
 const ROW_TO_MSG = (r) => r && ({
   id:         r.id,
   thread:     r.table_label,
@@ -308,7 +324,7 @@ const ROW_TO_MSG = (r) => r && ({
   kind:       r.kind,
   body:       r.body,
   sizeBytes:  r.size_bytes || 0,
-  ts:         r.created_at,
+  ts:         toIsoTs(r.created_at),
 });
 const MSG_TO_ROW = (m) => ({
   id:          m.id,

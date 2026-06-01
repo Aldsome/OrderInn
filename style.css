@@ -2599,8 +2599,11 @@ body.cart-open .fab-cart {
   color: var(--ink);
 }
 .receipt header { text-align: center; margin-bottom: 4px; }
-.receipt header strong { display: block; font-size: 1rem; }
+.receipt header strong { display: block; font-size: 1rem; letter-spacing: .04em; }
 .receipt header small  { display: block; color: var(--ink-soft); }
+/* Receipt export buttons wrap neatly; PNG (primary) leads. */
+.receipt-actions { flex-wrap: wrap; gap: 8px; }
+.receipt-actions .btn { flex: 1 1 auto; }
 .receipt hr {
   border: none;
   border-top: 1px dashed var(--line-strong);
@@ -2611,7 +2614,10 @@ body.cart-open .fab-cart {
   justify-content: space-between;
   gap: 8px;
 }
-.rec-row.total { font-size: .95rem; font-weight: 700; padding-top: 4px; }
+.rec-row.total {
+  font-size: 1rem; font-weight: 700;
+  border-top: 2px solid var(--ink); margin-top: 4px; padding-top: 6px;
+}
 .rec-line {
   display: flex;
   justify-content: space-between;

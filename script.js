@@ -3045,9 +3045,10 @@ function taxBreakdown(orderTotal) {
 function openReceiptModal(order) {
   const html = buildReceiptHtml(order);
   $('#receiptPreview').innerHTML = html;
-  $('#sendReceiptBtn').dataset.orderId      = order.id;
-  $('#downloadReceiptBtn').dataset.orderId  = order.id;
-  $('#printReceiptBtn').dataset.orderId     = order.id;
+  $('#sendReceiptBtn').dataset.orderId        = order.id;
+  $('#downloadReceiptBtn').dataset.orderId    = order.id;
+  $('#downloadReceiptPngBtn').dataset.orderId = order.id;
+  $('#printReceiptBtn').dataset.orderId       = order.id;
   openModal('#receiptModal');
 }
 function closeReceiptModal() { closeModal('#receiptModal'); }
@@ -3132,17 +3133,23 @@ $('#printReceiptBtn').addEventListener('click', () => {
   win.document.write(`
     <html><head><title>Receipt #${o.number}</title>
     <style>
-      body { font-family: ui-monospace, Menlo, Consolas, monospace; max-width: 320px; margin: 12px auto; }
-      .receipt { font-size: 12px; line-height: 1.4; }
-      .rec-row { display: flex; justify-content: space-between; }
-      .rec-line { display: flex; justify-content: space-between; }
-      .rec-line small { display: block; opacity: .65; }
-      .total { font-size: 14px; font-weight: 700; }
-      hr { border: none; border-top: 1px dashed #999; margin: 6px 0; }
-      header { text-align: center; }
-      header strong { display: block; font-size: 14px; }
-      header small { display: block; opacity: .75; }
-      .rec-thanks { text-align: center; margin: 6px 0 0; }
+      * { box-sizing: border-box; }
+      body { font-family: 'Courier New', ui-monospace, Menlo, Consolas, monospace;
+             color: #1c1712; margin: 0; padding: 18px; background: #fff; }
+      .receipt { width: 300px; margin: 0 auto; font-size: 12px; line-height: 1.55; }
+      header { text-align: center; margin-bottom: 8px; }
+      header strong { display: block; font-size: 16px; letter-spacing: .5px; }
+      header small  { display: block; color: #555; font-size: 10.5px; }
+      hr { border: none; border-top: 1px dashed #9a8a6a; margin: 9px 0; }
+      .rec-row, .rec-line { display: flex; justify-content: space-between; gap: 10px; }
+      .rec-line { margin-bottom: 3px; }
+      .rec-line-name { flex: 1; }
+      .rec-line-name small { display: block; color: #7a6e5d; font-style: italic; font-size: 10px; }
+      .rec-line-price { white-space: nowrap; }
+      .rec-row.total { font-size: 15px; font-weight: 700;
+                       border-top: 2px solid #333; margin-top: 4px; padding-top: 6px; }
+      .rec-thanks { text-align: center; margin: 12px 0 0; color: #555; }
+      @page { margin: 8mm; }
     </style></head><body>${buildReceiptHtml(o)}
     <script>window.onload = () => { window.print(); };<\/script>
     </body></html>
@@ -3179,6 +3186,125 @@ $('#downloadReceiptBtn').addEventListener('click', () => {
 });
 
 /* ==========================================================
+   RECEIPT → PNG  (no library, no print dialog, no external app)
+   Draws the receipt straight onto a <canvas> with the 2D API and
+   exports it via canvas.toBlob('image/png'). This sidesteps the
+   browser print path entirely (and any "open with .exe" / PDF
+   handler issues) — the customer just gets an image file.
+   ========================================================== */
+function drawReceiptToCanvas(order) {
+  const DPR  = 3;                         // crisp on retina / when zoomed
+  const W    = 340;                       // logical receipt width (px)
+  const PAD  = 22;
+  const contentW = W - PAD * 2;
+  const mono = "'Courier New', ui-monospace, Consolas, monospace";
+  const INK = '#1c1712', SOFT = '#7a6e5d', RULE = '#b9a77f', BG = '#FFFBF5';
+
+  // Measuring context for word-wrap (sized later for the real draw).
+  const mctx = document.createElement('canvas').getContext('2d');
+  const wrapText = (text, font, maxW) => {
+    mctx.font = font;
+    const words = String(text).split(/\s+/).filter(Boolean);
+    const out = []; let line = '';
+    for (const w of words) {
+      const test = line ? line + ' ' + w : w;
+      if (line && mctx.measureText(test).width > maxW) { out.push(line); line = w; }
+      else line = test;
+    }
+    if (line) out.push(line);
+    return out.length ? out : [''];
+  };
+
+  // ---- Pass 1: build an ops list and compute total height -------
+  const ops = [];
+  let y = PAD;
+  const center = (text, font, color, lh) => { ops.push({ t: 'c', text, font, color, y: y + lh * 0.78 }); y += lh; };
+  const rowOp  = (l, r, font, color, lh) => { ops.push({ t: 'r', l, r, font, color, y: y + lh * 0.78 }); y += lh; };
+  const dash   = () => { y += 7; ops.push({ t: 'd', y }); y += 9; };
+  const solid  = () => { y += 7; ops.push({ t: 's', y }); y += 9; };
+
+  const fName  = `bold 17px ${mono}`;
+  const fSmall = `11px ${mono}`;
+  const fMeta  = `12.5px ${mono}`;
+  const fItem  = `12.5px ${mono}`;
+  const fTotal = `bold 15px ${mono}`;
+
+  const { subtotal, tax, grand } = taxBreakdown(order.total);
+  const taxLabel = CONFIG.taxLabel || 'Tax';
+  const taxRate  = Number(CONFIG.taxRate || 0);
+
+  center(CONFIG.businessName || CONFIG.shopName || 'Receipt', fName, INK, 22);
+  if (CONFIG.businessAddr) wrapText(CONFIG.businessAddr, fSmall, contentW).forEach(l => center(l, fSmall, SOFT, 14));
+  if (CONFIG.businessTin)  center('TIN: ' + CONFIG.businessTin, fSmall, SOFT, 14);
+  dash();
+  rowOp('Order', '#' + order.number, fMeta, INK, 17);
+  rowOp('Table', String(order.tableNumber || '—'), fMeta, INK, 17);
+  rowOp('Placed', new Date(order.placedAt).toLocaleString(), fMeta, INK, 17);
+  if (order.servedAt) rowOp('Served', new Date(order.servedAt).toLocaleString(), fMeta, INK, 17);
+  dash();
+  order.items.forEach(i => {
+    const price = peso(i.unitPrice * i.qty);
+    const nameLines = wrapText(`${i.qty} × ${i.name}`, fItem, contentW - 70);
+    nameLines.forEach((ln, idx) => rowOp(ln, idx === 0 ? price : '', fItem, INK, 16));
+    if (i.summary) wrapText(i.summary, fSmall, contentW - 12).forEach(s => rowOp('  ' + s, '', fSmall, SOFT, 14));
+  });
+  dash();
+  rowOp('Subtotal', peso(subtotal), fMeta, INK, 17);
+  rowOp(`${taxLabel} (${taxRate}%${CONFIG.taxInclusive ? ', incl.' : ''})`, peso(tax), fMeta, INK, 17);
+  solid();
+  rowOp('TOTAL', peso(grand), fTotal, INK, 22);
+  dash();
+  center('Thank you ☕', fMeta, SOFT, 18);
+  const H = y + PAD;
+
+  // ---- Pass 2: render -------------------------------------------
+  const canvas = document.createElement('canvas');
+  canvas.width  = Math.round(W * DPR);
+  canvas.height = Math.round(H * DPR);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(DPR, DPR);
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'alphabetic';
+  for (const op of ops) {
+    if (op.t === 'c') {
+      ctx.font = op.font; ctx.fillStyle = op.color; ctx.textAlign = 'center';
+      ctx.fillText(op.text, W / 2, op.y);
+    } else if (op.t === 'r') {
+      ctx.font = op.font; ctx.fillStyle = op.color;
+      ctx.textAlign = 'left';  ctx.fillText(op.l, PAD, op.y);
+      if (op.r) { ctx.textAlign = 'right'; ctx.fillText(op.r, W - PAD, op.y); }
+    } else if (op.t === 'd' || op.t === 's') {
+      ctx.strokeStyle = op.t === 'd' ? RULE : '#333';
+      ctx.lineWidth = op.t === 'd' ? 1 : 1.5;
+      ctx.setLineDash(op.t === 'd' ? [3, 3] : []);
+      ctx.beginPath(); ctx.moveTo(PAD, op.y); ctx.lineTo(W - PAD, op.y); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  return canvas;
+}
+
+$('#downloadReceiptPngBtn').addEventListener('click', () => {
+  const id = $('#downloadReceiptPngBtn').dataset.orderId;
+  const o  = Store.getOrders().find(x => x.id === id);
+  if (!o) return;
+  try {
+    const canvas = drawReceiptToCanvas(o);
+    canvas.toBlob((blob) => {
+      if (!blob) { showAdminToast({ title: 'Could not render image', variant: 'danger' }); return; }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `receipt-${o.number}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showAdminToast({ title: `Receipt #${o.number} saved as image`, variant: 'success' });
+    }, 'image/png');
+  } catch (err) {
+    showAdminToast({ title: `Image export failed: ${err.message || err}`, variant: 'danger' });
+  }
+});
+
+/* ==========================================================
    DAILY REPORT  (CSV exporter)
    - One row per order placed today.
    - Metadata block at the top uses real cells (not # comments)
@@ -3207,10 +3333,11 @@ function buildDailyCsv() {
     return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
   };
 
+  const cur = CONFIG.currency || '';
   const headers = [
     'Order #', 'Table', 'Placed', 'Served', 'Status',
     'Items', 'Qty',
-    'Subtotal', `${CONFIG.taxLabel || 'Tax'} (${CONFIG.taxRate}%)`, 'Total',
+    `Subtotal (${cur})`, `${CONFIG.taxLabel || 'Tax'} ${CONFIG.taxRate}% (${cur})`, `Total (${cur})`,
   ];
 
   const dataRows = todays.map(o => {
@@ -3246,13 +3373,21 @@ function buildDailyCsv() {
   const lines = [];
 
   // Metadata block — real cells so Excel parses them as a small
-  // header table rather than dumping them into column A.
-  lines.push([`${CONFIG.businessName || CONFIG.shopName} — Daily Report`].map(csvEscape).join(','));
-  lines.push(['Generated',  fmtDate(now.toISOString())].map(csvEscape).join(','));
-  lines.push(['Currency',   CONFIG.currency].map(csvEscape).join(','));
-  lines.push(['Tax',        `${CONFIG.taxLabel} ${CONFIG.taxRate}% (${CONFIG.taxInclusive ? 'inclusive' : 'exclusive'})`].map(csvEscape).join(','));
-  lines.push(['Orders today', todays.length].map(csvEscape).join(','));
-  lines.push([`${(CONFIG.lifetimeOrders || 0).toLocaleString()} orders since opening!`].map(csvEscape).join(','));
+  // two-column header table (label | value) rather than dumping
+  // everything into column A.
+  const servedToday = todays.filter(o => o.status === 'served');
+  const grossAll    = todays.reduce((s, o) => s + taxBreakdown(o.total).grand, 0);
+  const grossServed = servedToday.reduce((s, o) => s + taxBreakdown(o.total).grand, 0);
+
+  lines.push([`${CONFIG.businessName || CONFIG.shopName} — Daily Sales Report`].map(csvEscape).join(','));
+  lines.push(['Generated',       fmtDate(now.toISOString())].map(csvEscape).join(','));
+  lines.push(['Currency',        cur].map(csvEscape).join(','));
+  lines.push(['Tax',             `${CONFIG.taxLabel} ${CONFIG.taxRate}% (${CONFIG.taxInclusive ? 'inclusive' : 'exclusive'})`].map(csvEscape).join(','));
+  lines.push(['Orders today',    todays.length].map(csvEscape).join(','));
+  lines.push(['Served today',    servedToday.length].map(csvEscape).join(','));
+  lines.push([`Gross all (${cur})`,    Number(grossAll.toFixed(2))].map(csvEscape).join(','));
+  lines.push([`Gross served (${cur})`, Number(grossServed.toFixed(2))].map(csvEscape).join(','));
+  lines.push(['Lifetime orders', (CONFIG.lifetimeOrders || 0)].map(csvEscape).join(','));
   lines.push('');                              // blank spacer
 
   // Header row sits at this 1-based spreadsheet row number;
@@ -3278,6 +3413,7 @@ function buildDailyCsv() {
     const rng = (col) => `${col}${firstDataRow}:${col}${lastDataRow}`;
 
     lines.push('');
+    lines.push(['TOTALS'].map(csvEscape).join(','));
     lines.push([
       '', '', '', '', 'ALL ORDERS', '',
       formula(`=SUM(${rng(colQty)})`),
@@ -3291,6 +3427,10 @@ function buildDailyCsv() {
       formula(`=SUMIF(${rng(colStatus)},"served",${rng(colSub)})`),
       formula(`=SUMIF(${rng(colStatus)},"served",${rng(colTax)})`),
       formula(`=SUMIF(${rng(colStatus)},"served",${rng(colTotal)})`),
+    ].map(csvEscape).join(','));
+    lines.push([
+      '', '', '', '', 'AVG / ORDER', '', '', '', '',
+      formula(`=IFERROR(SUM(${rng(colTotal)})/COUNT(${rng(colTotal)}),0)`),
     ].map(csvEscape).join(','));
   }
 
@@ -3769,11 +3909,17 @@ async function copyTextToClipboard(text) {
   }
 }
 function timeAgo(d) {
-  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  const t = (d instanceof Date) ? d.getTime() : new Date(d).getTime();
+  if (isNaN(t)) return '';
+  // Clamp to 0: nothing is in the future. Guards against minor clock
+  // skew between two devices (a message stamped on a slightly-fast
+  // phone would otherwise read as a negative "ago").
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 5)     return 'just now';
   if (s < 60)    return `${s}s ago`;
   if (s < 3600)  return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return d.toLocaleDateString();
+  return new Date(t).toLocaleDateString();
 }
 
 /* ==========================================================
