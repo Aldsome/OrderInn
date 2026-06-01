@@ -633,7 +633,15 @@ const Store = {
     // stale code.
     const activeAtTable = Store.findActiveOrdersByTable(tableNumber);
     const existingPin   = activeAtTable.map(o => o.joinPin).find(Boolean);
-    const joinPin       = existingPin || String(Math.floor(1000 + Math.random() * 9000));
+    // Mint a UNIQUE pin (not in use by any other active table) so a
+    // PIN maps to exactly one room — required for "join by PIN".
+    let joinPin = existingPin;
+    if (!joinPin) {
+      const usedPins = new Set(Store.getOrders()
+        .filter(o => (o.status === 'pending' || o.status === 'preparing') && o.joinPin)
+        .map(o => String(o.joinPin)));
+      do { joinPin = String(Math.floor(1000 + Math.random() * 9000)); } while (usedPins.has(joinPin));
+    }
     const order = {
       id:          'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       number,
@@ -801,6 +809,22 @@ const Store = {
       (o.status === 'pending' || o.status === 'preparing') &&
       String(o.tableNumber || '').trim().toLowerCase() === needle
     );
+  },
+
+  /* Find the room (table label) that a join PIN belongs to, by
+     scanning active orders. Returns { label, count, pin } or null.
+     Pins are minted unique per active table, so a hit is unambiguous;
+     getOrders() is newest-first so legacy duplicate pins resolve to
+     the most recent room. */
+  findTableByPin(pin) {
+    pin = String(pin || '').trim();
+    if (!pin) return null;
+    const matches = Store.getOrders().filter(o =>
+      (o.status === 'pending' || o.status === 'preparing') &&
+      String(o.joinPin || '') === pin);
+    if (!matches.length) return null;
+    const label = matches[0].tableNumber;
+    return { label, count: matches.length, pin };
   },
 
   deleteOrder(orderId) {

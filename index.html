@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=29" />
+  <link rel="stylesheet" href="style.css?v=30" />
 
   <script>
     (function () {
@@ -376,8 +376,23 @@
   <div class="modal" id="tableModal" aria-hidden="true">
     <div class="modal-card small-card" role="dialog">
       <header class="modal-head">
-        <h3>Type in your name or table number</h3>
+        <h3>Join or start a table</h3>
       </header>
+
+      <!-- Fast path: a tablemate already started the table — just punch
+           in the PIN to be dropped straight into their room. No name,
+           no conflicts. -->
+      <div class="table-join">
+        <label>Joining your table? Enter the PIN
+          <input type="text" inputmode="numeric" autocomplete="off" maxlength="4"
+                 id="joinPinInput" placeholder="4-digit PIN" />
+        </label>
+        <button type="button" class="btn btn-primary btn-block" id="joinPinBtn">Join table</button>
+        <p class="form-error" id="joinPinError" hidden></p>
+      </div>
+
+      <div class="or-divider"><span>or start a new table</span></div>
+
       <form id="tableForm">
         <p class="muted small" style="margin: 0;">
           Helps our staff find you when your order is ready.
@@ -823,7 +838,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=20"></script>
-  <script src="script.js?v=42"></script>
+  <script src="store.js?v=21"></script>
+  <script src="script.js?v=43"></script>
 </body>
 </html>

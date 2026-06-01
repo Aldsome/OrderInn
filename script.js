@@ -268,8 +268,45 @@ function openTableModalPrefilled(name) {
   $('#tableInput').value = name || '';
   openTableModal();
 }
-function openTableModal()  { const si = $('#seatInput'); if (si) si.value = state.seat || ''; openModal('#tableModal'); }
+function openTableModal()  {
+  const si = $('#seatInput');   if (si) si.value = state.seat || '';
+  const jp = $('#joinPinInput'); if (jp) jp.value = '';
+  const je = $('#joinPinError'); if (je) je.hidden = true;
+  openModal('#tableModal');
+}
 function closeTableModal() { closeModal('#tableModal'); }
+
+/* Join-by-PIN: a tablemate enters the table's 4-digit PIN and is
+   dropped straight into that room — no name typed, no collision
+   check (the PIN is the authorization). The fast path that avoids
+   the conflicting-name problem entirely. */
+function joinByPin() {
+  const inp = $('#joinPinInput');
+  const err = $('#joinPinError');
+  const pin = (inp?.value || '').trim();
+  if (err) err.hidden = true;
+  if (!/^\d{3,4}$/.test(pin)) {
+    if (err) { err.textContent = 'Enter the 3–4 digit PIN from your tablemate.'; err.hidden = false; }
+    return;
+  }
+  const found = Store.findTableByPin(pin);
+  if (!found || !found.label) {
+    if (err) { err.textContent = 'No active table has that PIN. Double-check with your tablemate.'; err.hidden = false; }
+    return;
+  }
+  // Adopt the matched room as our table/identity. Bypass the
+  // name-collision flow on purpose — joining is authorised by the PIN.
+  setTableLabel(found.label);
+  closeTableModal();
+  bumpInactivity();
+  refreshOrderStatusBanner();
+  refreshMyOrdersFab();
+  showToast(`Joined "${found.label}" ☕`, 'success');
+}
+$('#joinPinBtn').addEventListener('click', joinByPin);
+$('#joinPinInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); joinByPin(); }
+});
 
 /* Two layers of collision check before accepting a table label:
    1. A *live* session on another device holding the same name —
