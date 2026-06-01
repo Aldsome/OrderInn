@@ -55,40 +55,68 @@ let CONFIG = Store.getConfig();
 const peso = (n) => `${CONFIG.currency}${Number(n).toFixed(2)}`;
 const getOpt = (list, id) => list.find(o => o.id === id);
 
+/* ----- Option groups (built-in + admin-defined custom) -----
+   The four built-ins keep their bespoke choice lists; custom groups
+   come from Store.getOptionGroups(). optionDefs() unifies them so the
+   pricing / line-key / summary / customizer code treats every option
+   group the same way and isn't hardcoded to milk/sugar/etc. */
+const BUILTIN_OPTION_DEFS = [
+  { key: 'size',  label: 'Size',     list: SIZES },
+  { key: 'temp',  label: 'Hot/Iced', list: TEMPS },
+  { key: 'milk',  label: 'Milk',     list: MILKS },
+  { key: 'sugar', label: 'Sugar',    list: SUGAR },
+];
+function optionDefs() {
+  return BUILTIN_OPTION_DEFS.concat(
+    Store.getOptionGroups().map(g => ({
+      key: g.id, label: g.label, list: g.choices || [], custom: true,
+    }))
+  );
+}
+const optionDef = (key) => optionDefs().find(d => d.key === key);
+
 function defaultConfigFor(item) {
   const o = item.options || {};
-  return {
-    size:  o.size  ? (SIZES.find(s => s.default)?.id) : null,
-    temp:  o.temp  ? (TEMPS.find(s => s.default)?.id) : (item.category === 'cold' ? 'ice' : null),
-    milk:  o.milk  ? (MILKS.find(s => s.default)?.id) : null,
-    sugar: o.sugar ? (SUGAR.find(s => s.default)?.id) : null,
-    notes: '',
-  };
+  const config = { notes: '' };
+  for (const def of optionDefs()) {
+    if (!o[def.key]) continue;
+    config[def.key] = (def.list.find(c => c.default)?.id) || def.list[0]?.id || null;
+  }
+  // Preserve the legacy marker: when the Hot/Iced toggle is OFF, a
+  // cold-category drink still carries an inert 'ice' temp (when the
+  // toggle is ON the loop above already set the list default).
+  if (item.category === 'cold' && !o.temp) config.temp = 'ice';
+  return config;
 }
 function unitPrice(item, config) {
   let p = item.price;
-  if (config.size)  p += getOpt(SIZES, config.size)?.delta  || 0;
-  if (config.temp)  p += getOpt(TEMPS, config.temp)?.delta  || 0;
-  if (config.milk)  p += getOpt(MILKS, config.milk)?.delta  || 0;
-  if (config.sugar) p += getOpt(SUGAR, config.sugar)?.delta || 0;
+  const o = item.options || {};
+  for (const def of optionDefs()) {
+    if (!o[def.key] || !config[def.key]) continue;
+    p += getOpt(def.list, config[def.key])?.delta || 0;
+  }
   return p;
 }
+/* Stable cart line key: item id + every set option selection (sorted
+   so order is deterministic) + notes. Format is internal to the cart
+   only (never persisted), so generalising it is safe. */
 function lineKeyOf(itemId, config) {
-  return [
-    itemId,
-    config.size || '_',
-    config.temp || '_',
-    config.milk || '_',
-    config.sugar || '_',
-    (config.notes || '').trim().toLowerCase(),
-  ].join('|');
+  const keys = Object.keys(config).filter(k => k !== 'notes').sort();
+  return [itemId, ...keys.map(k => `${k}:${config[k] ?? '_'}`),
+    (config.notes || '').trim().toLowerCase()].join('|');
 }
 function configSummary(item, config) {
   const bits = [];
-  if (config.size)  bits.push(getOpt(SIZES, config.size).label.split(/\s+/)[0]);
-  if (config.temp)  bits.push(getOpt(TEMPS, config.temp).label);
-  if (config.milk && config.milk !== 'regular') bits.push(getOpt(MILKS, config.milk).label);
-  if (config.sugar) bits.push(`${getOpt(SUGAR, config.sugar).label} sugar`);
+  const o = item.options || {};
+  for (const def of optionDefs()) {
+    if (!o[def.key] || !config[def.key]) continue;
+    const choice = getOpt(def.list, config[def.key]);
+    if (!choice) continue;
+    if (def.key === 'size')       bits.push(choice.label.split(/\s+/)[0]);
+    else if (def.key === 'milk') { if (config.milk !== 'regular') bits.push(choice.label); }
+    else if (def.key === 'sugar') bits.push(`${choice.label} sugar`);
+    else                          bits.push(choice.label);   // temp + custom groups
+  }
   if (config.notes) bits.push(`"${config.notes}"`);
   return bits.join(' · ');
 }
@@ -767,7 +795,7 @@ function openCustomizer(itemId, opts = {}) {
   const item = MENU.find(m => m.id === itemId);
   if (!item) return;
   const o = item.options || {};
-  const canCustomize = o.size || o.temp || o.milk || o.sugar;
+  const canCustomize = optionDefs().some(def => o[def.key]);
 
   if (!canCustomize && !opts.editLineKey) {
     addLine(item.id, defaultConfigFor(item), 1);
@@ -803,6 +831,20 @@ function openCustomizer(itemId, opts = {}) {
   if (o.temp)  buildOpts($('#czTempOptions'),  TEMPS,  config.temp,  v => { config.temp  = v; refresh(); });
   if (o.milk)  buildOpts($('#czMilkOptions'),  MILKS,  config.milk,  v => { config.milk  = v; refresh(); });
   if (o.sugar) buildOpts($('#czSugarOptions'), SUGAR,  config.sugar, v => { config.sugar = v; refresh(); });
+
+  // Custom (admin-defined) option groups — one section each, same
+  // button-list UI as the built-ins.
+  const customHost = $('#czCustomSections');
+  customHost.innerHTML = '';
+  for (const g of Store.getOptionGroups()) {
+    if (!o[g.id] || !(g.choices || []).length) continue;
+    const sec = document.createElement('section');
+    sec.className = 'cz-section';
+    sec.innerHTML = `<h5>${escapeHtml(g.label)}</h5><div class="cz-options"></div>`;
+    customHost.appendChild(sec);
+    buildOpts(sec.querySelector('.cz-options'), g.choices, config[g.id],
+      v => { config[g.id] = v; refresh(); });
+  }
 
   $('#czNotes').value = config.notes || '';
   $('#czNotes').oninput = (e) => { config.notes = e.target.value; };
@@ -2146,6 +2188,17 @@ function fillItemCategorySelect(selectedId) {
   sel.dataset.prev = sel.value;            // remembered so we can revert a cancelled "+ New"
 }
 
+/* Render the "Options the customer can choose" toggles from the
+   unified option-def list (built-ins + custom groups) so admins can
+   enable any group, not just size/temp/milk/sugar. */
+function renderItemOptionChecks(selected = {}) {
+  const host = $('#itemOptionsChecks');
+  if (!host) return;
+  host.innerHTML = optionDefs().map(def =>
+    `<label><input type="checkbox" data-opt-key="${escapeHtml(def.key)}"${selected[def.key] ? ' checked' : ''} /> ${escapeHtml(def.label)}</label>`
+  ).join('');
+}
+
 function openItemModal(item) {
   editingItemId = item?.id || null;
   $('#itemModalTitle').textContent = item ? 'Edit item' : 'Add item';
@@ -2153,6 +2206,7 @@ function openItemModal(item) {
   const f = $('#itemForm');
   f.reset();
   fillItemCategorySelect(item ? item.category : null);
+  renderItemOptionChecks(item ? (item.options || {}) : {});
   if (item) {
     f.id.value       = item.id;       f.id.disabled = true;
     f.name.value     = item.name;
@@ -2161,11 +2215,6 @@ function openItemModal(item) {
     f.tag.value      = item.tag   || '';
     f.desc.value     = item.desc  || '';
     f.img.value      = item.img   || '';
-    const o = item.options || {};
-    f.opt_size.checked  = !!o.size;
-    f.opt_temp.checked  = !!o.temp;
-    f.opt_milk.checked  = !!o.milk;
-    f.opt_sugar.checked = !!o.sugar;
   } else {
     f.id.disabled = false;
     f.emoji.value = '☕';
@@ -2212,6 +2261,12 @@ $('#itemForm').addEventListener('submit', (e) => {
     $('#itemFormError').hidden = false;
     return;
   }
+  // Read enabled option groups (built-in + custom) from the dynamic
+  // checkboxes. Store true only for the checked ones.
+  const options = {};
+  $$('#itemOptionsChecks input[type="checkbox"]').forEach(cb => {
+    if (cb.checked) options[cb.dataset.optKey] = true;
+  });
   const item = {
     id,
     name:     f.name.value.trim(),
@@ -2221,12 +2276,7 @@ $('#itemForm').addEventListener('submit', (e) => {
     desc:     f.desc.value.trim(),
     tag:      f.tag.value.trim() || undefined,
     img:      f.img.value || '',
-    options: {
-      size:  f.opt_size.checked,
-      temp:  f.opt_temp.checked,
-      milk:  f.opt_milk.checked,
-      sugar: f.opt_sugar.checked,
-    },
+    options,
   };
   const wasEdit = !!editingItemId;
   Store.upsertMenuItemLogged(item);
@@ -2240,6 +2290,69 @@ $('#itemForm').addEventListener('submit', (e) => {
   });
   refreshAdminActivity();
 });
+
+/* ----- Add option group modal -----
+   Lets an admin define a brand-new customer option group (label +
+   choices with price deltas), so item options aren't limited to the
+   four built-ins. Opened from the "+ Add option" button in the item
+   modal; on save the new group is added to config and immediately
+   selectable as a checkbox in the item modal. */
+function addOptionChoiceRow(label = '', delta = '') {
+  const host = $('#optionChoiceRows');
+  const row = document.createElement('div');
+  row.className = 'opt-choice-row';
+  row.innerHTML = `
+    <input type="text" class="opt-choice-label" placeholder="Choice (e.g. Pearls)" value="${escapeHtml(label)}" />
+    <input type="number" class="opt-choice-delta" step="1" placeholder="+0" value="${delta === '' ? '' : Number(delta)}" aria-label="Extra price" />
+    <button type="button" class="icon-btn opt-choice-remove" aria-label="Remove choice">✕</button>`;
+  host.appendChild(row);
+}
+function openOptionGroupModal() {
+  const f = $('#optionGroupForm');
+  f.reset();
+  $('#optionGroupError').hidden = true;
+  $('#optionChoiceRows').innerHTML = '';
+  addOptionChoiceRow();          // start with a couple of blank rows
+  addOptionChoiceRow();
+  openModal('#optionGroupModal');
+  setTimeout(() => f.elements.label?.focus(), 50);
+}
+function closeOptionGroupModal() { closeModal('#optionGroupModal'); }
+$('#addOptionGroupBtn').addEventListener('click', openOptionGroupModal);
+$('#closeOptionGroupBtn').addEventListener('click', closeOptionGroupModal);
+$('#cancelOptionGroupBtn').addEventListener('click', closeOptionGroupModal);
+$('#addChoiceRowBtn').addEventListener('click', () => addOptionChoiceRow());
+$('#optionChoiceRows').addEventListener('click', (e) => {
+  const rm = e.target.closest('.opt-choice-remove');
+  if (rm) rm.closest('.opt-choice-row').remove();
+});
+$('#optionGroupForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const err = $('#optionGroupError');
+  err.hidden = true;
+  const label = $('#optionGroupForm').elements.label.value.trim();
+  const choices = $$('#optionChoiceRows .opt-choice-row').map(r => ({
+    label: r.querySelector('.opt-choice-label').value,
+    delta: r.querySelector('.opt-choice-delta').value,
+  })).filter(c => c.label.trim());
+  if (!label)            { err.textContent = 'Give the option group a name.';     err.hidden = false; return; }
+  if (!choices.length)   { err.textContent = 'Add at least one choice.';          err.hidden = false; return; }
+  const { group, created } = Store.addOptionGroup(label, choices);
+  if (!group) { err.textContent = 'Could not add that group.'; err.hidden = false; return; }
+  CONFIG = Store.getConfig();
+  // Re-render the item modal's option toggles, keeping what's already
+  // checked and enabling the new group by default.
+  const selected = {};
+  $$('#itemOptionsChecks input[type="checkbox"]').forEach(cb => { if (cb.checked) selected[cb.dataset.optKey] = true; });
+  if (created) selected[group.id] = true;
+  renderItemOptionChecks(selected);
+  closeOptionGroupModal();
+  showAdminToast({
+    title: created ? `Option "${group.label}" added` : `Option "${group.label}" already exists`,
+    variant: created ? 'success' : 'info',
+  });
+});
+bindBackdropClose('#optionGroupModal', closeOptionGroupModal);
 
 /* ----- Settings panel ----- */
 function loadSettingsForm() {

@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=26" />
+  <link rel="stylesheet" href="style.css?v=27" />
 
   <script>
     (function () {
@@ -229,6 +229,9 @@
             <h5>Sweetness</h5>
             <div class="cz-options cz-pill-row" id="czSugarOptions"></div>
           </section>
+
+          <!-- custom (admin-defined) option groups injected here -->
+          <div id="czCustomSections"></div>
 
           <section class="cz-section">
             <h5>Notes <small class="muted">(optional)</small></h5>
@@ -662,18 +665,48 @@
         <label>Description <textarea name="desc" rows="2" required></textarea></label>
         <label>Image URL <input type="url" name="img" placeholder="https://…" /></label>
         <fieldset>
-          <legend>Options the customer can choose</legend>
-          <div class="check-row">
-            <label><input type="checkbox" name="opt_size" /> Size</label>
-            <label><input type="checkbox" name="opt_temp" /> Hot/Iced</label>
-            <label><input type="checkbox" name="opt_milk" /> Milk</label>
-            <label><input type="checkbox" name="opt_sugar" /> Sugar</label>
-          </div>
+          <legend class="legend-row">
+            <span>Options the customer can choose</span>
+            <button type="button" class="btn btn-ghost btn-mini" id="addOptionGroupBtn">+ Add option</button>
+          </legend>
+          <!-- built-in + custom option toggles injected via script.js -->
+          <div class="check-row" id="itemOptionsChecks"></div>
         </fieldset>
         <p class="form-error" id="itemFormError" hidden></p>
         <div class="form-actions">
           <button type="button" class="btn btn-ghost" id="cancelItemBtn">Cancel</button>
           <button type="submit" class="btn btn-primary">Save item</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       ADD OPTION GROUP MODAL  (admin) — define a new customer
+       option group (e.g. "Toppings") with its choices + price
+       deltas, so item options aren't limited to size/temp/milk/sugar
+       ========================================================== -->
+  <div class="modal" id="optionGroupModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-labelledby="optionGroupTitle">
+      <header class="modal-head">
+        <h3 id="optionGroupTitle">New option group</h3>
+        <button class="icon-btn close-btn" id="closeOptionGroupBtn" aria-label="Close">✕</button>
+      </header>
+      <form id="optionGroupForm" class="settings-form">
+        <label>Group name
+          <input type="text" name="label" required placeholder="e.g. Toppings, Syrup, Add-ons" />
+        </label>
+        <div>
+          <div class="legend-row">
+            <span class="muted small">Choices (label + extra price)</span>
+            <button type="button" class="btn btn-ghost btn-mini" id="addChoiceRowBtn">+ Choice</button>
+          </div>
+          <div id="optionChoiceRows"></div>
+        </div>
+        <p class="form-error" id="optionGroupError" hidden></p>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" id="cancelOptionGroupBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add option group</button>
         </div>
       </form>
     </div>
@@ -738,7 +771,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=17"></script>
-  <script src="script.js?v=39"></script>
+  <script src="store.js?v=18"></script>
+  <script src="script.js?v=40"></script>
 </body>
 </html>

@@ -90,6 +90,13 @@ const DEFAULT_CONFIG = {
     { id: 'cold',   label: 'Cold' },
     { id: 'pastry', label: 'Pastries' },
   ],
+  /* Custom option groups — admin-defined choices beyond the four
+     built-ins (size / temp / milk / sugar), so the per-item options
+     aren't limited to that set. Each group:
+       { id, label, choices: [ { id, label, delta } ] }
+     A menu item opts into a group via item.options[groupId] = true,
+     exactly like the built-ins. Rides the bb_config sync path. */
+  optionGroups: [],
 };
 
 const img = (topic, lock, w = 600, h = 420) =>
@@ -512,6 +519,42 @@ const Store = {
     cats.push(category);
     Store.setConfig({ categories: cats });
     return { category, created: true };
+  },
+
+  /* ----- Custom option groups (data-driven item options) ----- */
+  getOptionGroups() {
+    const g = Store.getConfig().optionGroups;
+    return Array.isArray(g) ? g : [];
+  },
+  /* Add an option group from a label + a list of { label, delta }
+     choices. Slugifies the group id and each choice id, dedupes the
+     group by id/label, persists via setConfig (so it syncs), and
+     returns { group, created }. */
+  addOptionGroup(label, choices) {
+    label = String(label || '').trim();
+    if (!label) return { group: null, created: false };
+    const slug = (s, fb) => String(s || '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || fb;
+    const id = slug(label, 'opt-' + Date.now());
+    const groups = Store.getOptionGroups().slice();
+    const existing = groups.find(g =>
+      g.id === id || g.label.trim().toLowerCase() === label.toLowerCase());
+    if (existing) return { group: existing, created: false };
+    const seen = new Set();
+    const cleanChoices = (Array.isArray(choices) ? choices : [])
+      .map((c, i) => {
+        const clabel = String(c.label || '').trim();
+        if (!clabel) return null;
+        let cid = slug(clabel, 'c' + (i + 1));
+        while (seen.has(cid)) cid += '_';
+        seen.add(cid);
+        return { id: cid, label: clabel, delta: Number(c.delta) || 0 };
+      })
+      .filter(Boolean);
+    const group = { id, label, choices: cleanChoices };
+    groups.push(group);
+    Store.setConfig({ optionGroups: groups });
+    return { group, created: true };
   },
 
   /* ==========================================================

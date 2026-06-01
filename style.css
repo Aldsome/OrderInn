@@ -1761,6 +1761,27 @@ body.admin-open { overflow: hidden; }
 }
 .data-table tr.menu-group-row:hover td { background: var(--brown-100, var(--brown-50)); }
 
+/* Fieldset legend with an inline action button (e.g. "+ Add option") */
+.legend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+.btn-mini { padding: 4px 10px; font-size: .78rem; line-height: 1.4; }
+
+/* Add-option-group modal: per-choice rows (label + price delta) */
+.opt-choice-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.opt-choice-row .opt-choice-label { flex: 1; min-width: 0; }
+.opt-choice-row .opt-choice-delta { width: 92px; flex: none; }
+.opt-choice-remove { flex: none; }
+
 /* ----- Settings ----- */
 .settings-form {
   background: var(--white);
