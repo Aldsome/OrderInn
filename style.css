@@ -2060,6 +2060,23 @@ body.cart-open .fab-cart {
   font-size: .74rem;
 }
 
+/* Admin order-card chat button: unread-message dot */
+.chat-act-btn { position: relative; }
+.chat-act-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--danger);
+  vertical-align: middle;
+  animation: chatDotPulse 1.4s ease-in-out infinite;
+}
+@keyframes chatDotPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, .5); }
+  50%      { box-shadow: 0 0 0 5px rgba(220, 53, 69, 0); }
+}
+
 /* First-time Table-PIN spotlight: a static (flicker-free) glow on
    the banner + an animated pointer callout below it. */
 .myorders-pin.hint {

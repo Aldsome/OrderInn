@@ -1717,7 +1717,7 @@ function renderOrders() {
           ${o.status === 'preparing'  ? `<button class="btn btn-serve"  data-act="served">Mark served</button>`        : ''}
           ${o.status !== 'served' && o.status !== 'cancelled'
             ? `<button class="btn btn-danger" data-act="cancelled">Cancel</button>` : ''}
-          <button class="btn btn-ghost" data-act="chat">💬 Chat</button>
+          <button class="btn btn-ghost chat-act-btn" data-act="chat">💬 Chat${adminUnreadThreads.has(String(o.tableNumber)) ? '<span class="chat-act-dot" aria-label="unread message"></span>' : ''}</button>
           <button class="btn btn-ghost" data-act="receipt">🧾 Receipt</button>
           <button class="btn btn-ghost" data-act="delete">Delete</button>
         </div>
@@ -2591,7 +2591,6 @@ function reactToCustomerOrderChanges() {
       // behind the panel.
       if (!adminPanelOpenForToasts()) {
         showToast(`${info.icon} Order #${o.number} — ${info.text}`, 'success');
-        playNotif();
       }
     }
     ORDER_STATUS_BY_ID.set(o.id, o.status);
@@ -2611,17 +2610,12 @@ function reactToAdminOrderChanges() {
   // (Otherwise an admin testing the customer flow gets a
   // duplicate "new order!" toast for the order they just placed.)
   const myId = Store.getClientId();
-  let chimed = false;
   for (const o of newcomers) {
     if (o.clientId === myId) continue;
     showAdminToast({
       title:   `🧾 New order #${o.number} · ${o.tableNumber || '—'}`,
       variant: 'info',
     });
-    // One chime per batch, only when the admin panel is the active
-    // surface (so a staff member testing the customer flow in the
-    // same tab isn't double-pinged).
-    if (!chimed && adminPanelOpenForToasts()) { playNotif(); chimed = true; }
   }
   knownOrderIds = ids;
   if (!adminPanel.hidden && $('.admin-tab.active').dataset.adminTab === 'orders') {
@@ -2665,6 +2659,9 @@ const chatDrawer = $('#chatDrawer');
 let chatThread = null;       // table label this drawer is showing
 let chatRole   = 'customer'; // 'customer' | 'admin'
 let chatMessages = [];
+// Table labels with unread customer messages, for the admin's
+// per-order chat-button dot (the customer dot lives on the FAB).
+const adminUnreadThreads = new Set();
 
 const CHAT_SEEN_KEY = 'bb_chat_seen';   // { [thread]: lastSeenTs }
 function chatSeenMap() { try { return JSON.parse(localStorage.getItem(CHAT_SEEN_KEY) || '{}'); } catch { return {}; } }
@@ -2682,6 +2679,10 @@ async function openChat(thread, role = 'customer') {
   }
   chatThread = thread;
   chatRole   = role;
+  // Admin opened this table's thread → clear its unread dot.
+  if (role === 'admin' && adminUnreadThreads.delete(String(thread))) {
+    if (!adminPanel.hidden) renderOrders();
+  }
   $('#chatTitle').textContent    = role === 'admin' ? `Table ${thread}` : 'Chat with staff';
   $('#chatSubtitle').textContent = role === 'admin' ? 'reply to this table' : 'ask about your order';
   chatDrawer.classList.add('open');
@@ -2730,14 +2731,21 @@ async function sendChat(kind, body) {
   const text = (kind === 'text') ? (body || '').trim() : body;
   if (!text) return;
   try {
-    await Store.sendMessage({
+    const msg = await Store.sendMessage({
       thread: chatThread, role: chatRole, kind, body: text,
       senderName: chatRole === 'admin'
         ? (Store.getSession()?.name || 'Staff')
         : (state.tableNumber || 'Guest'),
     });
-    // Optimistic local echo for remote mode (realtime will also
-    // fire, but de-duped by id in the handler).
+    // Optimistic echo: show the sender's own message immediately
+    // if they're viewing the thread. In remote mode the realtime
+    // INSERT also fires bb-chat with the same id; in local mode
+    // sendMessage already dispatched it. Both are de-duped by id,
+    // so this never double-renders.
+    if (msg && chatThread === msg.thread && !chatMessages.some(m => m.id === msg.id)) {
+      chatMessages.push(msg);
+      renderChatMessages();
+    }
   } catch (e) {
     showToast('Message failed to send', 'error');
   }
@@ -2846,7 +2854,25 @@ function stopRecording(keep) {
 window.addEventListener('bb-chat', (e) => {
   const msg = e.detail && e.detail.message;
   if (!msg) return;
-  if (chatThread && msg.thread === chatThread && chatDrawer.classList.contains('open')) {
+  const viewingThisThread = chatThread && msg.thread === chatThread && chatDrawer.classList.contains('open');
+  // Chime only for chat messages from the OTHER party that arrive
+  // while you're NOT already reading that thread. Staff hear it for
+  // customer messages; a customer hears it for staff replies on
+  // their own table. (Order/activity events stay silent.)
+  const iAmAdmin = Store.isAdmin();
+  const fromOther = iAmAdmin
+    ? msg.role === 'customer'
+    : (msg.role === 'admin' && msg.thread === state.tableNumber);
+  if (fromOther && !viewingThisThread) {
+    playNotif();
+    // Admin-side unread cue: light a dot on that table's order
+    // card (the customer FAB dot is handled by refreshChatDot).
+    if (iAmAdmin && msg.thread) {
+      adminUnreadThreads.add(String(msg.thread));
+      if (!adminPanel.hidden && $('.admin-tab.active')?.dataset.adminTab === 'orders') renderOrders();
+    }
+  }
+  if (viewingThisThread) {
     if (!chatMessages.some(m => m.id === msg.id)) {
       chatMessages.push(msg);
       renderChatMessages();
