@@ -46,6 +46,11 @@
   --shadow-sm: 0 2px 8px rgba(61, 46, 31, 0.06);
   --shadow:    0 8px 24px rgba(61, 46, 31, 0.10);
   --shadow-lg: 0 20px 60px rgba(61, 46, 31, 0.22);
+  /* Global modal gutters — single source of truth so every modal's
+     inner content lines up to the same left/right (and top/bottom)
+     margin, whether the body is a <form> or plain content. */
+  --modal-pad-x: 20px;
+  --modal-pad-y: 18px;
 
   --container: 720px;
   --gutter: clamp(16px, 4vw, 28px);
@@ -958,7 +963,7 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 16px var(--modal-pad-x);
   border-bottom: 1px solid var(--line);
 }
 .drawer-head h3, .modal-head h3 { margin: 0; }
@@ -1120,7 +1125,23 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
 @keyframes slideUp { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
 
-.modal-card form { padding: 18px 20px 22px; display: grid; gap: 14px; }
+.modal-card form { padding: var(--modal-pad-y) var(--modal-pad-x) 22px; display: grid; gap: 14px; }
+
+/* Uniform gutters for modal bodies that AREN'T wrapped in a <form>
+   (e.g. the dup-table prompt, the admin order-modify modal, receipt).
+   Drives them off the same --modal-pad-x as forms + headers so every
+   modal lines up. The placed-card + customizer-card manage their own
+   internal layout and opt out. */
+.modal-card:not(.placed-card):not(.customizer-card) > :not(.modal-head):not(form) {
+  padding-left: var(--modal-pad-x);
+  padding-right: var(--modal-pad-x);
+}
+.modal-card:not(.placed-card):not(.customizer-card) > .modal-head + :not(form) {
+  padding-top: var(--modal-pad-y);
+}
+.modal-card:not(.placed-card):not(.customizer-card) > :not(.modal-head):not(form):last-child {
+  padding-bottom: var(--modal-pad-y);
+}
 
 /* ==========================================================
    CUSTOMIZER
@@ -1303,7 +1324,7 @@ html[data-theme="dark"] textarea::placeholder {
    ========================================================== */
 .placed-card {
   text-align: center;
-  padding: 28px 24px 22px;
+  padding: 28px var(--modal-pad-x) 22px;
   max-width: 420px;
 }
 .placed-tick {
@@ -1381,7 +1402,7 @@ html[data-theme="dark"] textarea::placeholder {
    ========================================================== */
 .small-card { max-width: 420px; }
 .auth-card  { max-width: 420px; }
-.auth-card .auth-form  { padding: 22px 22px 24px; }
+.auth-card .auth-form  { padding: 22px var(--modal-pad-x) 24px; }
 .auth-form .hint { margin-top: 0; text-align: center; }
 code {
   background: var(--brown-50);
