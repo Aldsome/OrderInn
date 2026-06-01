@@ -1882,7 +1882,13 @@ body.admin-open { overflow: hidden; }
 /* Admin menu: category filter chips, sortable headers, group rows */
 .menu-cat-filter {
   display: flex;
-  flex-wrap: wrap;
+  /* Keep a stable single-row sticky height; multi-row wrapping can
+     get pushed upward near the scroll boundary and appear detached
+     from .admin-tabs at the very bottom of long pages. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: center;
   gap: 8px;
   /* Override the customer .chips sticky offset (top:87px, sized for
      the customer topbar). In the admin pane the tabs are pinned
