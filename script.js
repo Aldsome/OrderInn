@@ -1287,6 +1287,11 @@ function refreshMyOrdersFab() {
   const fab = $('#fabMyOrdersBtn');
   fab.hidden = (active === 0);
   $('#fabMyOrdersBadge').textContent = active;
+  // Chat FAB only appears once this table has an order to talk about.
+  const chatFab = $('#fabChatBtn');
+  if (chatFab) {
+    chatFab.hidden = !(state.tableNumber && Store.getTableOrders(state.tableNumber).length > 0);
+  }
 }
 
 function openMyOrders() {
@@ -3481,6 +3486,12 @@ async function openChat(thread, role = 'customer') {
   if (!thread) {                       // customer with no table yet
     showToast('Set your table first to chat', 'error');
     openTableModal();
+    return;
+  }
+  // Customers can only chat once their table actually has an order —
+  // no point messaging staff before ordering. (Admins always can.)
+  if (role !== 'admin' && Store.getTableOrders(thread).length === 0) {
+    showToast('Place an order first to chat with staff', 'error');
     return;
   }
   chatThread = thread;

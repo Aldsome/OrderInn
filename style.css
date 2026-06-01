@@ -1869,6 +1869,10 @@ body.admin-open { overflow: hidden; }
   z-index: 110;
   max-width: 92vw;
   text-align: center;
+  /* Never intercept taps — it's a passive notification. Without this
+     the (invisible, opacity:0) toast box sits over the chat composer
+     and swallows taps on the input + recording buttons on mobile. */
+  pointer-events: none;
 }
 .toast.show { transform: translate(-50%, 0); opacity: 1; }
 .toast.success { background: var(--primary-deep); color: var(--white); }
