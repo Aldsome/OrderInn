@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=27" />
+  <link rel="stylesheet" href="style.css?v=28" />
 
   <script>
     (function () {
@@ -266,6 +266,18 @@
       <div class="order-number">#<span id="placedOrderNumber">—</span></div>
       <p class="muted small" id="placedTable">Table —</p>
 
+      <!-- Table PIN + write-it-down reminder. The PIN is needed to
+           rejoin / modify / move this table later, so surface it
+           right after ordering. -->
+      <div class="placed-pin" id="placedPinRow" hidden>
+        <div class="placed-pin-main">
+          <span>Table PIN</span>
+          <strong id="placedPin">----</strong>
+          <button type="button" class="btn btn-ghost btn-mini" id="placedPinCopyBtn">Copy</button>
+        </div>
+        <small class="muted">📝 Write this down — you'll need it to change your name/table or modify your order later.</small>
+      </div>
+
       <!-- Live status pill -->
       <div class="placed-status">
         <span class="status-pill" id="placedStatusPill">pending</span>
@@ -514,6 +526,8 @@
             </select>
             <button class="btn btn-ghost" id="exportCsvBtn">Export today (.csv)</button>
             <button class="btn btn-ghost" id="clearServedBtn">Clear served</button>
+            <button class="btn btn-ghost" id="orderSelectToggle">Select</button>
+            <button class="btn btn-danger" id="deleteSelectedOrdersBtn" hidden>Delete selected</button>
           </div>
         </div>
         <div class="orders-list" id="ordersList">
@@ -527,6 +541,8 @@
           <h2>Menu</h2>
           <div class="row-gap">
             <button class="btn btn-ghost" id="addCategoryBtn">+ Category</button>
+            <button class="btn btn-ghost" id="menuSelectToggle">Select</button>
+            <button class="btn btn-danger" id="deleteSelectedMenuBtn" hidden>Delete selected</button>
             <button class="btn btn-primary" id="addMenuItemBtn">+ Add item</button>
           </div>
         </div>
@@ -629,6 +645,16 @@
           <h4>Factory reset</h4>
           <p class="muted small">Wipes ALL local data (menu, orders, settings, sign-in). You'll be signed out.</p>
           <button class="btn btn-danger" id="factoryResetBtn">Factory reset</button>
+        </div>
+        <div class="danger-card danger-card-strong">
+          <h4>Reset everything to default</h4>
+          <p class="muted small">
+            Blank slate — clears <strong>all orders, chat logs, activity, sessions,
+            staff accounts, menu, and settings</strong> on the cloud backend AND this
+            device, then reseeds the default admin + default menu. This affects every
+            device. Cannot be undone.
+          </p>
+          <button class="btn btn-danger" id="resetEverythingBtn">Reset everything</button>
         </div>
       </section>
     </main>
@@ -740,6 +766,26 @@
   </div>
 
   <!-- ==========================================================
+       MODIFY ORDER MODAL  (admin) — edit quantities / remove items
+       on an order that hasn't started preparing yet
+       ========================================================== -->
+  <div class="modal" id="adminEditOrderModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-labelledby="adminEditOrderTitle">
+      <header class="modal-head">
+        <h3 id="adminEditOrderTitle">Modify order #<span id="adminEditOrderNum">—</span></h3>
+        <button class="icon-btn close-btn" id="closeAdminEditOrderBtn" aria-label="Close">✕</button>
+      </header>
+      <div class="admin-edit-items" id="adminEditOrderItems"></div>
+      <div class="order-total"><span>Total</span><span id="adminEditOrderTotal">₱0</span></div>
+      <p class="form-error" id="adminEditOrderError" hidden></p>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost"   id="cancelAdminEditOrderBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="saveAdminEditOrderBtn">Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================
        RECEIPT MODAL  (admin)
        Renders a printable receipt for one order. The "Send to
        printer" button currently calls a stub — replace the body
@@ -771,7 +817,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=18"></script>
-  <script src="script.js?v=40"></script>
+  <script src="store.js?v=19"></script>
+  <script src="script.js?v=41"></script>
 </body>
 </html>

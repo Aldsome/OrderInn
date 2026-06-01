@@ -44,6 +44,7 @@ const state = {
   tableNumber: null,
   editingLineKey: null,
   pendingQty:  1,
+  editingOrderId: null,   // when set, placing the cart UPDATES this order
 };
 
 let MENU   = Store.getMenu();
@@ -459,6 +460,7 @@ $('#tableForm').addEventListener('submit', async (e) => {
   if (submitBtn) submitBtn.disabled = true;
   try {
     await checkDuplicateTable(label, () => {
+      moveOrdersOnTableChange(label);   // carry / cancel active orders when moving
       setTableLabel(label);
       closeTableModal();
       bumpInactivity();
@@ -467,6 +469,31 @@ $('#tableForm').addEventListener('submit', async (e) => {
     if (submitBtn) submitBtn.disabled = false;
   }
 });
+
+/* When a guest changes to a DIFFERENT label while they have active
+   orders at the old one, offer to move those orders along (they
+   follow the person). Declining cancels them — the customer is
+   leaving that room. No-op when there's nothing active to move. */
+function moveOrdersOnTableChange(newLabel) {
+  const oldLabel = state.tableNumber;
+  if (!oldLabel || sameLabel(oldLabel, newLabel)) return;
+  const mine = Store.getMyOrders().filter(o =>
+    (o.status === 'pending' || o.status === 'preparing') && sameLabel(o.tableNumber, oldLabel));
+  if (!mine.length) return;
+  const move = confirm(
+    `You have ${mine.length} active order${mine.length === 1 ? '' : 's'} at "${oldLabel}".\n\n` +
+    `OK = move ${mine.length === 1 ? 'it' : 'them'} to "${newLabel}".\n` +
+    `Cancel = cancel ${mine.length === 1 ? 'that order' : 'those orders'}.`
+  );
+  if (move) {
+    Store.moveOrders(mine.map(o => o.id), newLabel);
+    showToast(`Moved ${mine.length} order${mine.length === 1 ? '' : 's'} to "${newLabel}"`, 'success');
+  } else {
+    mine.forEach(o => Store.updateOrderStatus(o.id, 'cancelled'));
+    showToast(`Cancelled ${mine.length} order${mine.length === 1 ? '' : 's'}`, 'info');
+  }
+  refreshAdminActivity();
+}
 $('#changeTableBtn').addEventListener('click', () => {
   // When an account is logged in (admin or, in future, a
   // customer account) this button is "Log out" rather than
@@ -904,6 +931,36 @@ $('#placeOrderBtn').addEventListener('click', async () => {
       summary:   configSummary(item, line.config),
     };
   });
+
+  // MODIFY MODE — update an existing (still-pending) order instead of
+  // placing a new one. Shares the cart UI; the button label reflects it.
+  if (state.editingOrderId) {
+    const editId = state.editingOrderId;
+    const result = Store.updateOrderItems(editId, items, state.tableNumber ? undefined : undefined);
+    btn.dataset.placing = '0';
+    btn.disabled = false;
+    if (!result.ok) {
+      showToast(result.reason === 'already_started'
+        ? 'Too late to modify — it\'s being prepared.'
+        : 'Could not modify the order.', 'error');
+      finishEditingOrder();
+      renderMyOrdersList();
+      refreshOrderStatusBanner();
+      return;
+    }
+    showToast(`Order #${result.order.number} updated`, 'success');
+    finishEditingOrder();
+    clearCart();
+    closeCart();
+    ORDER_STATUS_BY_ID.set(editId, result.order.status);
+    refreshOrderStatusBanner();
+    refreshMyOrdersFab();
+    renderMyOrdersList();
+    refreshAdminActivity();
+    if (!adminPanel.hidden && $('.admin-tab.active').dataset.adminTab === 'orders') renderOrders();
+    return;
+  }
+
   let order;
   try {
     // placeOrder is async in remote mode (it queries Supabase
@@ -943,6 +1000,25 @@ $('#placeOrderBtn').addEventListener('click', async () => {
   }
 });
 
+/* Customer "Modify" — pull a still-pending order's items back into
+   the cart and switch the cart into update mode. Shares the same
+   grace window as Cancel (only offered while cancellable). */
+function startEditingOrder(order) {
+  clearCart();
+  state.editingOrderId = order.id;
+  for (const it of order.items) {
+    addLine(it.itemId, JSON.parse(JSON.stringify(it.config || {})), it.qty);
+  }
+  $('#placeOrderBtn').textContent = `Update order #${order.number}`;
+  closeMyOrders();
+  openCart();
+  showToast('Editing your order — change items, then tap Update', 'success');
+}
+function finishEditingOrder() {
+  state.editingOrderId = null;
+  $('#placeOrderBtn').textContent = 'Place Order';
+}
+
 $('#newOrderBtn').addEventListener('click', () => {
   closeModal('#orderPlacedModal');
   // "Start new order" = the customer is done with the last
@@ -950,6 +1026,10 @@ $('#newOrderBtn').addEventListener('click', () => {
   clearActiveOrder();
 });
 $('#closePlacedBtn').addEventListener('click', () => closeModal('#orderPlacedModal'));
+$('#placedPinCopyBtn').addEventListener('click', async () => {
+  await copyTextToClipboard($('#placedPinCopyBtn').dataset.pin || '');
+  showToast('Table PIN copied — keep it handy', 'success');
+});
 
 /* ==========================================================
    CUSTOMER ORDER STATUS BANNER
@@ -1054,6 +1134,17 @@ function updatePlacedModalForOrder(order) {
   const pill = $('#placedStatusPill');
   pill.textContent = order.status;
   pill.className   = 'status-pill status-' + order.status;
+  // Table PIN + reminder — only meaningful while the table is live.
+  const pinRow = $('#placedPinRow');
+  if (pinRow) {
+    if (order.joinPin && order.status !== 'cancelled') {
+      $('#placedPin').textContent = order.joinPin;
+      $('#placedPinCopyBtn').dataset.pin = order.joinPin;
+      pinRow.hidden = false;
+    } else {
+      pinRow.hidden = true;
+    }
+  }
   $('#newOrderBtn').textContent = (order.status === 'served' || order.status === 'cancelled')
     ? 'Start new order'
     : 'Place another order';
@@ -1246,15 +1337,32 @@ function clearPinHint() {
 $('#fabMyOrdersBtn').addEventListener('click', openMyOrders);
 $('#closeMyOrdersBtn').addEventListener('click', closeMyOrders);
 
+/* Orders the customer has "cleared" from their own list (history
+   tidy-up). They stay in the store for staff; this just hides them
+   from this device's My-orders view. */
+function dismissedOrderIds() {
+  try { return new Set(JSON.parse(localStorage.getItem('bb_dismissed_orders') || '[]')); }
+  catch { return new Set(); }
+}
+function dismissOrders(ids) {
+  const set = dismissedOrderIds();
+  ids.forEach(id => set.add(id));
+  localStorage.setItem('bb_dismissed_orders', JSON.stringify([...set]));
+}
+/* Multi-select "clear" mode for the My-orders list. */
+let myOrdersSelectMode = false;
+const selectedToClear = new Set();
+
 function renderMyOrdersList() {
   const myId = Store.getClientId();
   // Combined view: when the customer is on a table, show the
   // whole table's orders across all devices (so joined tablemates
   // see each other's rounds). Falls back to own orders if no
-  // table label is set.
-  const orders = state.tableNumber
+  // table label is set. Dismissed (cleared) orders are hidden.
+  const dismissed = dismissedOrderIds();
+  const orders = (state.tableNumber
     ? Store.getTableOrders(state.tableNumber)
-    : Store.getMyOrders();
+    : Store.getMyOrders()).filter(o => !dismissed.has(o.id));
   const host   = $('#myOrdersList');
   const active = orders.filter(o => o.status === 'pending' || o.status === 'preparing').length;
   $('#myOrdersSummary').textContent = active === 0
@@ -1328,9 +1436,27 @@ function renderMyOrdersList() {
        </div>`
     : '';
 
+  // Toolbar: cancel-all (any of MY cancellable orders) + multi-select
+  // "clear" of MY finished orders (served/cancelled) from this list.
+  const myCancellable = orders.filter(o => o.clientId === myId && Store.isCancellableByCustomer(o));
+  const myClearable   = orders.filter(o => o.clientId === myId && (o.status === 'served' || o.status === 'cancelled'));
+  const toolbarBtns = [];
+  if (myCancellable.length) {
+    toolbarBtns.push(`<button class="btn btn-ghost btn-mini" data-act="cancel-all">Cancel all (${myCancellable.length})</button>`);
+  }
+  if (myClearable.length) {
+    toolbarBtns.push(myOrdersSelectMode
+      ? `<button class="btn btn-ghost btn-mini" data-act="clear-selected">Clear selected${selectedToClear.size ? ` (${selectedToClear.size})` : ''}</button>
+         <button class="btn btn-ghost btn-mini" data-act="select-done">Done</button>`
+      : `<button class="btn btn-ghost btn-mini" data-act="select-clear">Select to clear</button>`);
+  }
+  const toolbarHtml = toolbarBtns.length
+    ? `<div class="myorders-toolbar">${toolbarBtns.join('')}</div>` : '';
+
   const orderRows = orders.map(o => {
     const info  = STATUS_INFO[o.status] || STATUS_INFO.pending;
     const isMine = o.clientId === myId;
+    const selectable = myOrdersSelectMode && isMine && (o.status === 'served' || o.status === 'cancelled');
     const itemsHtml = o.items.map(i => {
       const menuItem = MENU.find(m => m.id === i.itemId);
       const img   = menuItem && menuItem.img;
@@ -1346,6 +1472,7 @@ function renderMyOrdersList() {
       <article class="myorder-item" data-id="${o.id}" data-status="${o.status}">
         <header>
           <div>
+            ${selectable ? `<label class="myo-select"><input type="checkbox" data-clear-id="${o.id}"${selectedToClear.has(o.id) ? ' checked' : ''} aria-label="Select to clear"></label>` : ''}
             <strong>Order #${o.number}</strong>
             <span class="myorder-who ${isMine ? 'mine' : ''}">${isMine ? 'you' : 'tablemate'}</span>
             <small class="muted"> · ${timeAgo(new Date(o.placedAt))}</small>
@@ -1358,7 +1485,10 @@ function renderMyOrdersList() {
           <span class="myorder-status-icon" aria-hidden="true">${info.icon}</span>
           <span class="myorder-status-text">${info.text}</span>
           ${cancellable
-            ? `<button class="btn btn-cancel-grace" data-act="cancel">
+            ? `<button class="btn btn-ghost btn-modify-grace" data-act="modify">
+                 Modify <span class="cancel-countdown">${secs}s</span>
+               </button>
+               <button class="btn btn-cancel-grace" data-act="cancel">
                  Cancel <span class="cancel-countdown">${secs}s</span>
                </button>`
             : ''}
@@ -1366,37 +1496,85 @@ function renderMyOrdersList() {
       </article>
     `;
   }).join('');
-  host.innerHTML = peopleHtml + pinHtml + orderRows + ctaHtml;
+  host.innerHTML = peopleHtml + pinHtml + toolbarHtml + orderRows + ctaHtml;
 }
+
+/* Track checkbox selection for the "clear" multi-select (the 1s
+   re-render reads selectedToClear back, so state survives). */
+$('#myOrdersList').addEventListener('change', (e) => {
+  const cb = e.target.closest('input[data-clear-id]');
+  if (!cb) return;
+  if (cb.checked) selectedToClear.add(cb.dataset.clearId);
+  else            selectedToClear.delete(cb.dataset.clearId);
+});
 
 $('#myOrdersList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
-  // Copy the Table PIN — lives in the PIN banner, not in an order card.
-  if (btn.dataset.act === 'copy-pin') {
+  const act = btn.dataset.act;
+
+  // ----- Toolbar / banner actions (not tied to a single order) -----
+  if (act === 'copy-pin') {
     await copyTextToClipboard(btn.dataset.pin || '');
     showToast('Table PIN copied', 'success');
     return;
   }
+  if (act === 'cancel-all') {
+    const myId = Store.getClientId();
+    const targets = Store.getMyOrders().filter(o => Store.isCancellableByCustomer(o));
+    if (!targets.length) return;
+    if (!confirm(`Cancel all ${targets.length} of your open order${targets.length === 1 ? '' : 's'}?`)) return;
+    let ok = 0;
+    targets.forEach(o => { if (Store.customerCancelOrder(o.id).ok) ok++; });
+    showToast(ok ? `Cancelled ${ok} order${ok === 1 ? '' : 's'}` : 'Nothing could be cancelled', ok ? 'success' : 'error');
+    renderMyOrdersList(); refreshMyOrdersFab(); refreshOrderStatusBanner();
+    return;
+  }
+  if (act === 'select-clear') { myOrdersSelectMode = true;  selectedToClear.clear(); renderMyOrdersList(); return; }
+  if (act === 'select-done')  { myOrdersSelectMode = false; selectedToClear.clear(); renderMyOrdersList(); return; }
+  if (act === 'clear-selected') {
+    if (!selectedToClear.size) { showToast('Select orders to clear first', 'error'); return; }
+    dismissOrders([...selectedToClear]);
+    showToast(`Cleared ${selectedToClear.size} from your list`, 'success');
+    myOrdersSelectMode = false; selectedToClear.clear();
+    renderMyOrdersList(); refreshMyOrdersFab(); refreshOrderStatusBanner();
+    return;
+  }
+
+  // ----- Per-order actions -----
   const card = btn.closest('.myorder-item');
   if (!card) return;
-  const id   = card.dataset.id;
-  if (btn.dataset.act !== 'cancel') return;
-  if (!confirm('Cancel this order?')) return;
-  const result = Store.customerCancelOrder(id);
-  if (!result.ok) {
-    showToast(
-      result.reason === 'already_started' ? 'Already being prepared — ask staff.' :
-      result.reason === 'window_expired'  ? 'Cancel window expired — ask staff.'  :
-      'Could not cancel.',
-      'error'
-    );
-  } else {
-    showToast('Order cancelled', 'success');
+  const id = card.dataset.id;
+
+  if (act === 'modify') {
+    const order = Store.getOrders().find(o => o.id === id);
+    if (!order) return;
+    if (!Store.isCancellableByCustomer(order)) {
+      showToast('Modify window expired — ask staff.', 'error');
+      renderMyOrdersList();
+      return;
+    }
+    startEditingOrder(order);
+    return;
   }
-  renderMyOrdersList();
-  refreshMyOrdersFab();
-  refreshOrderStatusBanner();
+
+  if (act === 'cancel') {
+    if (!confirm('Cancel this order?')) return;
+    const result = Store.customerCancelOrder(id);
+    if (!result.ok) {
+      showToast(
+        result.reason === 'already_started' ? 'Already being prepared — ask staff.' :
+        result.reason === 'window_expired'  ? 'Cancel window expired — ask staff.'  :
+        'Could not cancel.',
+        'error'
+      );
+    } else {
+      showToast('Order cancelled', 'success');
+    }
+    renderMyOrdersList();
+    refreshMyOrdersFab();
+    refreshOrderStatusBanner();
+  }
 });
 
 /* Thank-you flow — runs whenever the customer has at least one
@@ -1489,6 +1667,7 @@ function resetForNextCustomer() {
   // the store for the admin to clear/serve.
   const leaving = state.tableNumber;     // capture before setTableLabel(null) wipes it
   clearActiveOrder();
+  finishEditingOrder();             // drop any in-progress order edit
   setTableLabel(null);
   Store.clearSessionTable();        // forget the 24h guest persistence
   clearCart();
@@ -1872,9 +2051,10 @@ function renderOrders() {
     const cancellable = Store.isCancellableByCustomer(o);
     const secs = Math.ceil(Store.cancelWindowRemaining(o) / 1000);
     return `
-      <article class="order-card" data-id="${o.id}" data-status="${o.status}">
+      <article class="order-card${orderSelectMode ? ' selectable' : ''}" data-id="${o.id}" data-status="${o.status}">
         <header class="order-head">
           <div class="order-head-id">
+            ${orderSelectMode ? `<label class="order-select"><input type="checkbox" data-order-select="${o.id}"${selectedOrders.has(o.id) ? ' checked' : ''} aria-label="Select order"></label>` : ''}
             <h3>#${o.number}</h3>
             <span class="table-tag" title="Table">
               <span class="table-tag-label">Table</span>
@@ -1898,6 +2078,7 @@ function renderOrders() {
         </div>
         <div class="order-actions">
           ${o.status === 'pending'    ? `<button class="btn btn-prep"   data-act="preparing">Mark preparing</button>` : ''}
+          ${o.status === 'pending'    ? `<button class="btn btn-ghost"  data-act="modify">✎ Modify</button>` : ''}
           ${o.status === 'preparing'  ? `<button class="btn btn-serve"  data-act="served">Mark served</button>`        : ''}
           ${o.status !== 'served' && o.status !== 'cancelled'
             ? `<button class="btn btn-danger" data-act="cancelled">Cancel</button>` : ''}
@@ -1935,13 +2116,17 @@ $('#ordersList').addEventListener('click', (e) => {
     if (order) openReceiptModal(order);
     return;
   }
+  if (act === 'modify') {
+    if (order) openAdminEditOrder(order);
+    return;
+  }
   if (act === 'delete') {
     if (!confirm('Delete this order?')) return;
     Store.deleteOrder(id);
     knownOrderIds.delete(id);
     ORDER_STATUS_BY_ID.delete(id);
     showAdminToast({ title: `${label} deleted`, variant: 'danger' });
-  } else {
+  } else if (act === 'preparing' || act === 'served' || act === 'cancelled') {
     Store.updateOrderStatus(id, act);
     // Seed the snapshot with the new status so this same tab's
     // customer-side poll doesn't surface a status-change toast
@@ -1951,7 +2136,111 @@ $('#ordersList').addEventListener('click', (e) => {
       title: `${label} → ${act}`,
       variant: act === 'served' ? 'success' : act === 'cancelled' ? 'danger' : 'info',
     });
+  } else {
+    return;
   }
+  renderOrders();
+  refreshAdminActivity();
+});
+
+/* ----- Admin multi-select delete (orders) ----- */
+let orderSelectMode = false;
+const selectedOrders = new Set();
+$('#orderSelectToggle').addEventListener('click', () => {
+  orderSelectMode = !orderSelectMode;
+  selectedOrders.clear();
+  $('#orderSelectToggle').textContent = orderSelectMode ? 'Cancel select' : 'Select';
+  $('#deleteSelectedOrdersBtn').hidden = !orderSelectMode;
+  renderOrders();
+});
+$('#ordersList').addEventListener('change', (e) => {
+  const cb = e.target.closest('input[data-order-select]');
+  if (!cb) return;
+  if (cb.checked) selectedOrders.add(cb.dataset.orderSelect);
+  else            selectedOrders.delete(cb.dataset.orderSelect);
+  $('#deleteSelectedOrdersBtn').textContent = selectedOrders.size
+    ? `Delete selected (${selectedOrders.size})` : 'Delete selected';
+});
+$('#deleteSelectedOrdersBtn').addEventListener('click', () => {
+  if (!selectedOrders.size) { showAdminToast({ title: 'No orders selected', variant: 'info' }); return; }
+  if (!confirm(`Delete ${selectedOrders.size} selected order${selectedOrders.size === 1 ? '' : 's'}?`)) return;
+  const n = selectedOrders.size;
+  selectedOrders.forEach(id => {
+    Store.deleteOrder(id);
+    knownOrderIds.delete(id);
+    ORDER_STATUS_BY_ID.delete(id);
+  });
+  selectedOrders.clear();
+  orderSelectMode = false;
+  $('#orderSelectToggle').textContent = 'Select';
+  $('#deleteSelectedOrdersBtn').hidden = true;
+  $('#deleteSelectedOrdersBtn').textContent = 'Delete selected';
+  showAdminToast({ title: `Deleted ${n} order${n === 1 ? '' : 's'}`, variant: 'danger' });
+  renderOrders();
+  refreshAdminActivity();
+});
+
+/* ----- Admin order modify modal ----- */
+let adminEditOrderId = null;
+let adminEditItems = [];
+function openAdminEditOrder(order) {
+  if (order.status !== 'pending') {
+    showAdminToast({ title: 'Can only modify before preparing', variant: 'info' });
+    return;
+  }
+  adminEditOrderId = order.id;
+  adminEditItems = JSON.parse(JSON.stringify(order.items || []));
+  $('#adminEditOrderNum').textContent = order.number;
+  $('#adminEditOrderError').hidden = true;
+  renderAdminEditItems();
+  openModal('#adminEditOrderModal');
+}
+function renderAdminEditItems() {
+  const host = $('#adminEditOrderItems');
+  if (!adminEditItems.length) {
+    host.innerHTML = `<p class="empty-state">No items left — removing all will block save.</p>`;
+  } else {
+    host.innerHTML = adminEditItems.map((it, idx) => `
+      <div class="admin-edit-row" data-idx="${idx}">
+        <span class="admin-edit-name">${it.qty}× ${escapeHtml(it.name)}${it.summary ? `<small> — ${escapeHtml(it.summary)}</small>` : ''}</span>
+        <div class="qty-stepper">
+          <button type="button" data-eit-dec="${idx}" aria-label="Less">−</button>
+          <span>${it.qty}</span>
+          <button type="button" data-eit-inc="${idx}" aria-label="More">+</button>
+        </div>
+        <span class="admin-edit-price">${peso(it.unitPrice * it.qty)}</span>
+        <button type="button" class="icon-btn" data-eit-rem="${idx}" aria-label="Remove">✕</button>
+      </div>`).join('');
+  }
+  const total = adminEditItems.reduce((s, i) => s + i.unitPrice * i.qty, 0);
+  $('#adminEditOrderTotal').textContent = peso(total);
+}
+$('#adminEditOrderItems').addEventListener('click', (e) => {
+  const inc = e.target.closest('[data-eit-inc]');
+  const dec = e.target.closest('[data-eit-dec]');
+  const rem = e.target.closest('[data-eit-rem]');
+  if (inc) { const i = +inc.dataset.eitInc; adminEditItems[i].qty++; renderAdminEditItems(); }
+  if (dec) { const i = +dec.dataset.eitDec; if (adminEditItems[i].qty > 1) { adminEditItems[i].qty--; renderAdminEditItems(); } }
+  if (rem) { const i = +rem.dataset.eitRem; adminEditItems.splice(i, 1); renderAdminEditItems(); }
+});
+function closeAdminEditOrder() { closeModal('#adminEditOrderModal'); adminEditOrderId = null; adminEditItems = []; }
+$('#closeAdminEditOrderBtn').addEventListener('click', closeAdminEditOrder);
+$('#cancelAdminEditOrderBtn').addEventListener('click', closeAdminEditOrder);
+bindBackdropClose('#adminEditOrderModal', closeAdminEditOrder);
+$('#saveAdminEditOrderBtn').addEventListener('click', () => {
+  if (!adminEditOrderId) return;
+  const err = $('#adminEditOrderError');
+  if (!adminEditItems.length) { err.textContent = 'Add at least one item (or delete the order instead).'; err.hidden = false; return; }
+  const result = Store.updateOrderItems(adminEditOrderId, adminEditItems);
+  if (!result.ok) {
+    err.textContent = result.reason === 'already_started'
+      ? 'Too late — this order is already being prepared.' : 'Could not save changes.';
+    err.hidden = false;
+    return;
+  }
+  ORDER_STATUS_BY_ID.set(adminEditOrderId, result.order.status);
+  showAdminToast({ title: `Order #${result.order.number} modified`, variant: 'success' });
+  closeAdminEditOrder();
   renderOrders();
   refreshAdminActivity();
 });
@@ -2053,7 +2342,7 @@ function renderMenuTable() {
 
   const rowHtml = (it) => `
     <tr data-id="${it.id}">
-      <td><img class="thumb" src="${it.img || ''}" alt="" onerror="this.style.display='none'"></td>
+      <td>${menuSelectMode ? `<input type="checkbox" class="menu-select" data-menu-select="${it.id}"${selectedMenu.has(it.id) ? ' checked' : ''} aria-label="Select item">` : `<img class="thumb" src="${it.img || ''}" alt="" onerror="this.style.display='none'">`}</td>
       <td><strong>${escapeHtml(it.name)}</strong></td>
       <td>${escapeHtml(categoryLabel(it.category))}</td>
       <td>${peso(it.price)}</td>
@@ -2119,6 +2408,42 @@ $('#addCategoryBtn').addEventListener('click', () => {
     title: created ? `Category "${category.label}" added` : `Category "${category.label}" already exists`,
     variant: created ? 'success' : 'info',
   });
+});
+
+/* ----- Admin multi-select delete (menu) ----- */
+let menuSelectMode = false;
+const selectedMenu = new Set();
+$('#menuSelectToggle').addEventListener('click', () => {
+  menuSelectMode = !menuSelectMode;
+  selectedMenu.clear();
+  $('#menuSelectToggle').textContent = menuSelectMode ? 'Cancel select' : 'Select';
+  $('#deleteSelectedMenuBtn').hidden = !menuSelectMode;
+  $('#deleteSelectedMenuBtn').textContent = 'Delete selected';
+  renderMenuTable();
+});
+$('#menuTableBody').addEventListener('change', (e) => {
+  const cb = e.target.closest('input[data-menu-select]');
+  if (!cb) return;
+  if (cb.checked) selectedMenu.add(cb.dataset.menuSelect);
+  else            selectedMenu.delete(cb.dataset.menuSelect);
+  $('#deleteSelectedMenuBtn').textContent = selectedMenu.size
+    ? `Delete selected (${selectedMenu.size})` : 'Delete selected';
+});
+$('#deleteSelectedMenuBtn').addEventListener('click', () => {
+  if (!selectedMenu.size) { showAdminToast({ title: 'No items selected', variant: 'info' }); return; }
+  if (!confirm(`Delete ${selectedMenu.size} selected item${selectedMenu.size === 1 ? '' : 's'}?`)) return;
+  const n = selectedMenu.size;
+  selectedMenu.forEach(id => Store.deleteMenuItemLogged(id));
+  selectedMenu.clear();
+  menuSelectMode = false;
+  $('#menuSelectToggle').textContent = 'Select';
+  $('#deleteSelectedMenuBtn').hidden = true;
+  $('#deleteSelectedMenuBtn').textContent = 'Delete selected';
+  MENU = Store.getMenu();
+  renderMenuTable();
+  renderMenu();
+  showAdminToast({ title: `Deleted ${n} item${n === 1 ? '' : 's'}`, variant: 'danger' });
+  refreshAdminActivity();
 });
 $('#menuTableBody').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act]');
@@ -2466,6 +2791,25 @@ $('#factoryResetBtn').addEventListener('click', () => {
   Store.factoryReset();
   showToast('Reset complete');
   setTimeout(() => location.reload(), 600);
+});
+$('#resetEverythingBtn').addEventListener('click', async () => {
+  if (!confirm('Reset EVERYTHING to default? This clears all orders, chat, activity, sessions, accounts, menu and settings on the cloud AND this device. This affects every device and cannot be undone.')) return;
+  // Type-to-confirm for a destructive, cross-device wipe.
+  const typed = prompt('Type RESET to confirm the full wipe:');
+  if ((typed || '').trim().toUpperCase() !== 'RESET') { showAdminToast({ title: 'Reset cancelled', variant: 'info' }); return; }
+  const btn = $('#resetEverythingBtn');
+  btn.disabled = true;
+  btn.textContent = 'Resetting…';
+  try {
+    await Store.resetEverything();
+    showToast('Everything reset — reloading');
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Reset everything';
+    showAdminToast({ title: 'Reset failed — see console', variant: 'danger' });
+    console.error('[reset] failed', e);
+  }
 });
 
 /* ==========================================================

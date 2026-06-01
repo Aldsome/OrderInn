@@ -647,6 +647,49 @@ const Store = {
     return true;
   },
 
+  /* Modify the items on an order that hasn't started yet. Allowed
+     only while still 'pending' (before the kitchen marks it
+     preparing). Recomputes the total and re-syncs. Used by both the
+     customer "Modify" flow (within the grace window) and the admin
+     order editor. */
+  updateOrderItems(orderId, items, notes) {
+    const orders = Store.getOrders();
+    const o = orders.find(x => x.id === orderId);
+    if (!o)                     return { ok: false, reason: 'not_found' };
+    if (o.status !== 'pending') return { ok: false, reason: 'already_started' };
+    if (!Array.isArray(items) || !items.length) return { ok: false, reason: 'empty' };
+    o.items = items;
+    o.total = items.reduce((s, i) => s + i.unitPrice * i.qty, 0);
+    if (notes !== undefined) o.notes = notes;
+    Store.setOrders(orders);
+    remoteUpsert('bb_orders', ORDER_TO_ROW(o));
+    Store.pushLog({
+      type:    'order_modified',
+      message: `Order #${o.number} modified`,
+      orderId: o.id,
+    });
+    return { ok: true, order: o };
+  },
+
+  /* Re-label a set of orders onto a new table/name (the customer
+     "move table" flow — the orders follow the person). Returns the
+     count moved. */
+  moveOrders(orderIds, newLabel) {
+    if (!Array.isArray(orderIds) || !orderIds.length) return 0;
+    const ids = new Set(orderIds);
+    const orders = Store.getOrders();
+    let moved = 0;
+    for (const o of orders) {
+      if (ids.has(o.id)) {
+        o.tableNumber = newLabel || null;
+        remoteUpsert('bb_orders', ORDER_TO_ROW(o));
+        moved++;
+      }
+    }
+    if (moved) Store.setOrders(orders);
+    return moved;
+  },
+
   /* Customer-initiated cancel. Only succeeds while the order is
      still pending AND within the grace window. Returns the order
      so the caller can restore the items into the cart. */
@@ -1397,6 +1440,37 @@ const Store = {
 
   factoryReset() {
     Object.values(STORE_KEYS).forEach(k => localStorage.removeItem(k));
+  },
+
+  /* Full "reset everything to default" — a blank slate. Wipes orders,
+     chat, activity, sessions, products, accounts, and config BOTH
+     remotely (Supabase) and locally, then reseeds the default admin +
+     default menu on the next boot. More thorough than factoryReset
+     (which only clears this browser's localStorage); this also clears
+     the shared backend so every device starts fresh. */
+  async resetEverything() {
+    if (REMOTE_MODE && navigator.onLine) {
+      // PostgREST requires a filter on delete; `.neq(col,'')` matches
+      // every row since no id/client_id is the empty string.
+      const wipe = [
+        sb.from('bb_orders').delete().neq('id', ''),
+        sb.from('bb_messages').delete().neq('id', ''),
+        sb.from('bb_activity').delete().neq('id', ''),
+        sb.from('bb_sessions').delete().neq('client_id', ''),
+        sb.from('bb_products').delete().neq('id', ''),
+        sb.from('bb_accounts').delete().neq('id', ''),
+        sb.from('bb_config').update({ data: {}, updated_at: new Date().toISOString() }).eq('id', 1),
+      ];
+      const results = await Promise.allSettled(wipe);
+      results.forEach(r => { if (r.status === 'rejected') console.warn('[Store] reset remote step failed', r.reason); });
+    }
+    // Local: every tracked key plus the non-STORE_KEYS odds and ends.
+    Object.values(STORE_KEYS).forEach(k => localStorage.removeItem(k));
+    ['bb_chat_local', 'bossb_active_order', 'bb_chat_seen', 'bb_pin_hint_seen', 'bb_dismissed_orders']
+      .forEach(k => localStorage.removeItem(k));
+    // Reseed the default admin (and default menu in local mode) so the
+    // shop is usable immediately after the reset.
+    await Store.bootSeed();
   },
 };
 

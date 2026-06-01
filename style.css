@@ -2132,6 +2132,59 @@ body.cart-open .fab-cart {
   font-size: .82rem;
 }
 
+/* My-orders toolbar (cancel-all / select-to-clear) */
+.myorders-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.myo-select { margin-right: 6px; }
+.myo-select input { width: 16px; height: 16px; vertical-align: middle; }
+.btn-modify-grace { font-size: .82rem; }
+
+/* Placed-modal Table PIN + reminder */
+.placed-pin {
+  margin: 10px 0 4px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--brown-100);
+  border: 1px dashed var(--brown-200);
+  text-align: center;
+}
+.placed-pin-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.placed-pin-main span { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); font-weight: 600; }
+.placed-pin-main strong { font-family: var(--font-display); font-size: 1.35rem; letter-spacing: .12em; color: var(--primary-deep); }
+.placed-pin small { display: block; margin-top: 6px; }
+
+/* Admin: order/menu multi-select checkboxes */
+.order-select { margin-right: 8px; }
+.order-select input,
+.menu-select { width: 18px; height: 18px; vertical-align: middle; }
+
+/* Admin: order modify modal rows */
+.admin-edit-items { display: grid; gap: 8px; margin-bottom: 12px; }
+.admin-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.admin-edit-row .admin-edit-name { flex: 1; min-width: 0; }
+.admin-edit-row .admin-edit-name small { color: var(--ink-soft); }
+.admin-edit-row .admin-edit-price { font-weight: 600; min-width: 64px; text-align: right; }
+.admin-edit-row .qty-stepper { flex: none; }
+
+/* Stronger emphasis for the "reset everything" danger card */
+.danger-card-strong { border-color: var(--danger, #c0392b); }
+
 /* Admin order-card chat button: unread-message dot */
 .chat-act-btn { position: relative; }
 .chat-act-dot {
