@@ -23,6 +23,11 @@ const STORE_KEYS = {
   session:        'bb_session',
   client:         'bb_client_id',       // per-browser anonymous id, lets us track
                                           // "my orders" for the customer without accounts
+  clientHistory:  'bb_client_id_history', // capped list of this browser's PAST client ids.
+                                          // "Is this mine?" checks consult current + history
+                                          // so a soft reset (visit-end, inactivity, login/out)
+                                          // doesn't make the same device look like a new person
+                                          // or flip its own chat ownership.
   log:            'bb_activity_log',    // admin-facing changelog (last 50 entries)
   logSeen:        'bb_log_seen',        // last activity id the admin has seen
   sessionTable:   'bb_session_table',   // { name, ts, clientId } — 24h guest persistence
@@ -665,12 +670,30 @@ const Store = {
   /* Mint a fresh clientId. Old orders stamped with the previous
      id are still in the store (admin can see them) but they no
      longer match Store.getMyOrders() for this browser — so the
-     next customer at this device gets a clean "My orders" list. */
+     next customer at this device gets a clean "My orders" list.
+     The outgoing id is remembered in a capped history so other
+     "is this mine?" checks (chat ownership, table headcount,
+     room reclaim) can still recognise this physical device across
+     the reset, even though the per-visit "My orders" scope above
+     intentionally narrows to the new id only. */
   resetClientId() {
+    const old = localStorage.getItem(STORE_KEYS.client);
+    if (old) {
+      const hist = Store.getClientIdHistory().filter(h => h !== old);
+      hist.unshift(old);
+      if (hist.length > 10) hist.length = 10;
+      writeJSON(STORE_KEYS.clientHistory, hist);
+    }
     const id = 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
     localStorage.setItem(STORE_KEYS.client, id);
     return id;
   },
+  /* Past client ids for THIS browser (newest first), capped at 10. */
+  getClientIdHistory() { return readJSON(STORE_KEYS.clientHistory, []); },
+  /* Current id plus every past id this browser has held — the set
+     that all "is this the same device/person?" checks should use
+     (everything except getMyOrders, which stays scoped to current). */
+  getMyClientIds() { return [Store.getClientId(), ...Store.getClientIdHistory()]; },
 
   /* ==========================================================
      SESSION TABLE  (24h guest label persistence)
@@ -875,6 +898,29 @@ const Store = {
     // Still over? Drop oldest messages outright.
     while (size(all) > LOCAL_CAP && all.length) all.shift();
     return all;
+  },
+  /* Abolish a table's chat thread when its visit ends, so the next
+     customer who reuses the same label starts with an empty room
+     (and the previous customer's own messages can't reappear flipped
+     to the wrong side after a clientId reset). Clears both the local
+     fallback blob and, in remote mode, the synced rows. The realtime
+     DELETE subscription fans the removals out to any other device
+     still showing the thread. */
+  async clearThread(label) {
+    if (!label) return;
+    // Local fallback store.
+    const all = readJSON('bb_chat_local', []);
+    const kept = all.filter(m => m.thread !== label);
+    if (kept.length !== all.length) writeJSON('bb_chat_local', kept);
+    // Remote rows.
+    if (REMOTE_MODE && navigator.onLine) {
+      try {
+        const { error } = await sb.from('bb_messages').delete().eq('table_label', label);
+        if (error) console.warn('[Store] clearThread remote delete failed', error);
+      } catch (e) {
+        console.warn('[Store] clearThread network err', e);
+      }
+    }
   },
 
   /* ==========================================================

@@ -229,12 +229,16 @@ async function checkDuplicateTable(label, onAccept) {
   // otherwise trip Layer 2 and make joining impossible).
   const matches = Store.findActiveOrdersByTable(label);
   if (matches.length > 0) {
-    const myId = Store.getClientId();
+    const myIds = Store.getMyClientIds();
     // "Member" = this device already has an active order at this
     // label (the table owner, or someone who joined earlier on
-    // this device). Members continue freely. Everyone else is a
-    // would-be joiner and must pass the table PIN.
-    const isMember = matches.some(o => o.clientId === myId);
+    // this device). We match against this browser's CURRENT *and
+    // past* client ids so a soft reset (visit-end, inactivity,
+    // staff login/out) doesn't lock the same device out of its own
+    // table. Members continue freely. Everyone else is a would-be
+    // joiner and must pass the table PIN — including a cache-cleared
+    // returnee, who reclaims via that PIN gate.
+    const isMember = matches.some(o => myIds.includes(o.clientId));
     if (isMember) {
       showDupModal({ mode: 'ownOrder', label, count: matches.length, onAccept });
     } else {
@@ -257,8 +261,17 @@ async function checkDuplicateTable(label, onAccept) {
   // person picks a different label.
   let conflictId = Store.findActiveSessionByName(label);
   if (!conflictId) conflictId = await Store.findActiveSessionByNameRemote(label);
+  // A "conflict" against one of THIS browser's own past client ids is
+  // just our own stale session after a soft reset — not a real clash.
+  // Accept straight through (setTableLabel re-bumps the session under
+  // the current id).
+  if (conflictId && Store.getMyClientIds().includes(conflictId)) conflictId = null;
   if (conflictId) {
-    showDupModal({ mode: 'nameTaken', label });
+    // Another live device holds this exact name and there's no order
+    // to join. Default action is still "choose another name", but we
+    // offer a reclaim escape hatch ("It's me — use this name") for the
+    // returning customer who e.g. cleared their browser — see BUG2.
+    showDupModal({ mode: 'nameTaken', label, onAccept });
     return;
   }
 
@@ -321,10 +334,15 @@ function showDupModal({ mode, label, count = 1, onAccept = null, pin = null }) {
   } else if (mode === 'nameTaken') {
     if (title) title.textContent = 'That name is taken';
     if (desc) desc.textContent =
-      `The name "${label}" is already in use on another device. Please choose a different name or number so staff don't mix up your orders.`;
-    joinBtn.hidden = true;                       // no "join" for a name clash
+      `The name "${label}" looks like it's in use on another device. If that's not you, pick a different name so staff don't mix up your orders. If you're the same person returning (for example you cleared your browser), you can take it back.`;
+    // Default, safe action stays "choose another name". The reclaim
+    // button is the escape hatch for a returning customer (BUG2): no
+    // active order exists at this label, so there's nothing to mix up
+    // by letting them retake the name.
     elseBtn.textContent = 'Choose another name';
-    pendingTableAccept = null;                   // never auto-accept a clash
+    joinBtn.hidden = false;
+    joinBtn.textContent = "It's me — use this name";
+    pendingTableAccept = onAccept;               // reclaim accepts the label
   } else if (mode === 'ownOrder') {
     if (title) title.textContent = 'Already an open order here';
     joinBtn.hidden = false;
@@ -1043,8 +1061,22 @@ function getMyActiveOrders() {
   return Store.getMyOrders().filter(o => o.status === 'pending' || o.status === 'preparing');
 }
 
+/* My active orders at the CURRENT table only. Used for the floating
+   "My orders" bubble so that, after changing rooms, an order left
+   behind under the old label doesn't keep lighting up the badge
+   (FIX1 — false order notification). Falls back to all my active
+   orders when no table label is set. */
+function getMyActiveOrdersHere() {
+  const here = state.tableNumber;
+  if (!here) return getMyActiveOrders();
+  const needle = String(here).trim().toLowerCase();
+  return getMyActiveOrders().filter(o =>
+    String(o.tableNumber || '').trim().toLowerCase() === needle
+  );
+}
+
 function refreshMyOrdersFab() {
-  const active = getMyActiveOrders().length;
+  const active = getMyActiveOrdersHere().length;
   const fab = $('#fabMyOrdersBtn');
   fab.hidden = (active === 0);
   $('#fabMyOrdersBadge').textContent = active;
@@ -1191,9 +1223,20 @@ function renderMyOrdersList() {
     : '';
 
   // People at this table = distinct devices with a non-cancelled
-  // order. Shows up to 5 person icons, then a "+" if more.
-  const peopleIds = new Set(orders.filter(o => o.status !== 'cancelled').map(o => o.clientId));
-  const headcount = peopleIds.size;
+  // order. All of THIS browser's ids (current + past) collapse into a
+  // single person so a soft reset on the same device doesn't inflate
+  // the count (FIX2); every other distinct clientId counts once.
+  // (A full browser cache wipe loses the id history and is the one
+  // case this can't collapse — it looks like a genuinely new device.)
+  const myIds = new Set(Store.getMyClientIds());
+  const otherIds = new Set();
+  let meCounted = false;
+  for (const o of orders) {
+    if (o.status === 'cancelled') continue;
+    if (myIds.has(o.clientId)) meCounted = true;
+    else otherIds.add(o.clientId);
+  }
+  const headcount = otherIds.size + (meCounted ? 1 : 0);
   const peopleHtml = headcount > 0
     ? `<div class="myorders-people">
          <span class="people-icons">${'<span class="person">👤</span>'.repeat(Math.min(headcount, 5))}${headcount > 5 ? '<span class="person plus">＋</span>' : ''}</span>
@@ -1353,12 +1396,27 @@ function resetForNextCustomer() {
   // Forget this device's order history scope by clearing the
   // active-order pointer and the table label. Orders remain in
   // the store for the admin to clear/serve.
+  const leaving = state.tableNumber;     // capture before setTableLabel(null) wipes it
   clearActiveOrder();
   setTableLabel(null);
   Store.clearSessionTable();        // forget the 24h guest persistence
   clearCart();
   closeMyOrders();
   dismissThanks();
+  // Abolish the room: once the visit truly ends, wipe this table's
+  // chat thread so the next customer who reuses the label starts
+  // fresh — and the previous customer's own messages can't reappear
+  // flipped to the wrong side once the clientId below changes (BUG1).
+  // Guarded so we never nuke a SHARED table's chat while a tablemate
+  // still has an order in flight.
+  if (leaving && Store.findActiveOrdersByTable(leaving).length === 0) {
+    Store.clearThread(leaving);
+    if (chatThread === leaving) {
+      chatMessages = [];
+      if (chatDrawer.classList.contains('open')) closeChat();
+      else renderChatMessages();
+    }
+  }
   // Mint a fresh clientId so the next customer at this device
   // sees a clean "My orders" list — the previous customer's
   // orders remain in the store (visible to admin) but stop
