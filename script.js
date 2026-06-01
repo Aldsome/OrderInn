@@ -507,13 +507,29 @@ function updateInCartBadges() {
   });
 }
 
-$$('.chip').forEach(chip => {
-  chip.addEventListener('click', () => {
-    $$('.chip').forEach(c => c.classList.remove('active'));
-    chip.classList.add('active');
-    state.category = chip.dataset.category;
-    renderMenu();
-  });
+/* Customer category chips — rendered from the data-driven category
+   list so any category an admin adds shows up here too. "All" is
+   always first. Uses event delegation on the container so it keeps
+   working across re-renders (e.g. after a category is added). */
+function renderCategoryChips() {
+  const nav = $('#categoryChips');
+  if (!nav) return;
+  const cats = Store.getCategories();
+  // Drop a stale selection if its category was removed.
+  if (state.category !== 'all' && !cats.some(c => c.id === state.category)) {
+    state.category = 'all';
+  }
+  const chip = (id, label) =>
+    `<button class="chip${state.category === id ? ' active' : ''}" data-category="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
+  nav.innerHTML = chip('all', 'All') + cats.map(c => chip(c.id, c.label)).join('');
+}
+$('#categoryChips').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  $$('.chip', $('#categoryChips')).forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  state.category = chip.dataset.category;
+  renderMenu();
 });
 
 menuGrid.addEventListener('click', (e) => {
@@ -1719,7 +1735,7 @@ function switchAdminTab(tab) {
   $$('.admin-tab').forEach(t => t.classList.toggle('active', t.dataset.adminTab === tab));
   $$('.admin-pane').forEach(p => p.hidden = (p.dataset.adminPane !== tab));
   if (tab === 'orders')   renderOrders();
-  if (tab === 'menu')     renderMenuTable();
+  if (tab === 'menu')   { renderMenuCatFilter(); renderMenuTable(); }
   if (tab === 'settings') loadSettingsForm();
 }
 $$('.admin-tab').forEach(t => t.addEventListener('click', () => switchAdminTab(t.dataset.adminTab)));
@@ -1897,21 +1913,74 @@ setInterval(() => {
 }, 1000);
 
 /* ----- Menu admin table ----- */
+/* Admin menu view state: which category is filtered, whether rows
+   are grouped under category headers, and the active column sort. */
+let adminMenuCategory = 'all';
+let menuGroupBy = true;
+let menuSort = { key: 'name', dir: 'asc' };
+
+/* Category filter chips above the menu table (data-driven). */
+function renderMenuCatFilter() {
+  const host = $('#menuCatFilter');
+  if (!host) return;
+  const cats = Store.getCategories();
+  if (adminMenuCategory !== 'all' && !cats.some(c => c.id === adminMenuCategory)) {
+    adminMenuCategory = 'all';
+  }
+  const chip = (id, label) =>
+    `<button class="chip${adminMenuCategory === id ? ' active' : ''}" data-cat="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
+  host.innerHTML = chip('all', 'All') + cats.map(c => chip(c.id, c.label)).join('');
+}
+
+function categoryLabel(id) {
+  return (Store.getCategories().find(c => c.id === id)?.label) || id || '—';
+}
+
+function updateMenuSortIndicators() {
+  $$('#menuTable thead th.sortable').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (!arrow) return;
+    arrow.textContent = (th.dataset.sort === menuSort.key)
+      ? (menuSort.dir === 'asc' ? '▲' : '▼')
+      : '';
+    th.classList.toggle('sorted', th.dataset.sort === menuSort.key);
+  });
+}
+
 function renderMenuTable() {
   const search = $('#menuSearch').value.trim().toLowerCase();
-  const items = Store.getMenu().filter(it =>
-    !search || `${it.name} ${it.category}`.toLowerCase().includes(search)
+  let items = Store.getMenu().filter(it =>
+    (!search || `${it.name} ${categoryLabel(it.category)}`.toLowerCase().includes(search)) &&
+    (adminMenuCategory === 'all' || it.category === adminMenuCategory)
   );
+
+  // Column sort.
+  const dir = menuSort.dir === 'desc' ? -1 : 1;
+  const keyOf = (it) => {
+    switch (menuSort.key) {
+      case 'price':    return Number(it.price) || 0;
+      case 'category': return categoryLabel(it.category).toLowerCase();
+      case 'tag':      return (it.tag || '').toLowerCase();
+      default:         return (it.name || '').toLowerCase();
+    }
+  };
+  items.sort((a, b) => {
+    const av = keyOf(a), bv = keyOf(b);
+    return av < bv ? -1 * dir : av > bv ? 1 * dir : 0;
+  });
+
   const body = $('#menuTableBody');
   if (items.length === 0) {
     body.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--ink-soft)">No items.</td></tr>`;
+    updateMenuSortIndicators();
     return;
   }
-  body.innerHTML = items.map(it => `
+
+  const rowHtml = (it) => `
     <tr data-id="${it.id}">
       <td><img class="thumb" src="${it.img || ''}" alt="" onerror="this.style.display='none'"></td>
       <td><strong>${escapeHtml(it.name)}</strong></td>
-      <td>${it.category}</td>
+      <td>${escapeHtml(categoryLabel(it.category))}</td>
       <td>${peso(it.price)}</td>
       <td>${it.tag ? `<span class="tag">${escapeHtml(it.tag)}</span>` : '<span class="muted">—</span>'}</td>
       <td class="right">
@@ -1920,10 +1989,62 @@ function renderMenuTable() {
           <button class="btn btn-danger" data-act="delete" data-id="${it.id}">Delete</button>
         </div>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
+
+  if (menuGroupBy) {
+    // Group rows under category headers, ordered by the category
+    // list (then any orphaned/unknown category last).
+    const groups = new Map();
+    for (const it of items) {
+      const key = it.category || '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    }
+    const cats = Store.getCategories();
+    const ordered = cats.map(c => c.id).filter(id => groups.has(id))
+      .concat([...groups.keys()].filter(k => !cats.some(c => c.id === k)));
+    body.innerHTML = ordered.map(key => {
+      const rows = groups.get(key).map(rowHtml).join('');
+      return `<tr class="menu-group-row"><td colspan="6">${escapeHtml(categoryLabel(key))} <span class="muted">(${groups.get(key).length})</span></td></tr>` + rows;
+    }).join('');
+  } else {
+    body.innerHTML = items.map(rowHtml).join('');
+  }
+  updateMenuSortIndicators();
 }
 $('#menuSearch').addEventListener('input', renderMenuTable);
+$('#menuCatFilter').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  adminMenuCategory = chip.dataset.cat;
+  renderMenuCatFilter();
+  renderMenuTable();
+});
+$('#menuGroupToggle').addEventListener('change', (e) => {
+  menuGroupBy = e.target.checked;
+  renderMenuTable();
+});
+$('#menuTable').querySelector('thead').addEventListener('click', (e) => {
+  const th = e.target.closest('th[data-sort]');
+  if (!th) return;
+  const key = th.dataset.sort;
+  if (menuSort.key === key) menuSort.dir = (menuSort.dir === 'asc') ? 'desc' : 'asc';
+  else { menuSort.key = key; menuSort.dir = 'asc'; }
+  renderMenuTable();
+});
+$('#addCategoryBtn').addEventListener('click', () => {
+  const label = (prompt('New category name (e.g. Smoothies, Sandwiches):') || '').trim();
+  if (!label) return;
+  const { category, created } = Store.addCategory(label);
+  if (!category) return;
+  CONFIG = Store.getConfig();
+  renderCategoryChips();
+  renderMenuCatFilter();
+  showAdminToast({
+    title: created ? `Category "${category.label}" added` : `Category "${category.label}" already exists`,
+    variant: created ? 'success' : 'info',
+  });
+});
 $('#menuTableBody').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
@@ -1960,16 +2081,48 @@ $('#addMenuItemBtn').addEventListener('click', () => openItemModal(null));
 
 /* ----- Item edit modal ----- */
 let editingItemId = null;
+
+/* Slugify a name into a menu-item id, and guarantee uniqueness so a
+   blank ID field can be auto-filled (the ID is no longer a manual
+   requirement — admins just type the name). */
+function slugifyId(s) {
+  return String(s || '').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+function uniqueItemId(base) {
+  const menu = Store.getMenu();
+  const root = base || ('item-' + Date.now());
+  if (!menu.some(m => m.id === root)) return root;
+  let n = 2;
+  while (menu.some(m => m.id === `${root}-${n}`)) n++;
+  return `${root}-${n}`;
+}
+
+/* Populate the item modal's category <select> from the data-driven
+   list, plus a trailing "+ New category…" sentinel option. */
+const NEW_CATEGORY_SENTINEL = '__new__';
+function fillItemCategorySelect(selectedId) {
+  const sel = $('#itemCategorySelect');
+  if (!sel) return;
+  const cats = Store.getCategories();
+  sel.innerHTML =
+    cats.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`).join('') +
+    `<option value="${NEW_CATEGORY_SENTINEL}">➕ New category…</option>`;
+  const fallback = cats[0] ? cats[0].id : '';
+  sel.value = (selectedId && cats.some(c => c.id === selectedId)) ? selectedId : fallback;
+  sel.dataset.prev = sel.value;            // remembered so we can revert a cancelled "+ New"
+}
+
 function openItemModal(item) {
   editingItemId = item?.id || null;
   $('#itemModalTitle').textContent = item ? 'Edit item' : 'Add item';
   $('#itemFormError').hidden = true;
   const f = $('#itemForm');
   f.reset();
+  fillItemCategorySelect(item ? item.category : null);
   if (item) {
     f.id.value       = item.id;       f.id.disabled = true;
     f.name.value     = item.name;
-    f.category.value = item.category;
     f.price.value    = item.price;
     f.emoji.value    = item.emoji || '';
     f.tag.value      = item.tag   || '';
@@ -1990,10 +2143,35 @@ function closeItemModal() { closeModal('#itemModal'); editingItemId = null; }
 $('#closeItemModalBtn').addEventListener('click', closeItemModal);
 $('#cancelItemBtn').addEventListener('click', closeItemModal);
 
+/* "+ New category…" in the item-modal select: prompt for a name,
+   add it to the data-driven list, then re-select it (and refresh
+   the customer chips + admin filter so it shows everywhere). */
+$('#itemCategorySelect').addEventListener('change', (e) => {
+  const sel = e.target;
+  if (sel.value !== NEW_CATEGORY_SENTINEL) { sel.dataset.prev = sel.value; return; }
+  const label = (prompt('New category name (e.g. Smoothies, Sandwiches):') || '').trim();
+  if (!label) { sel.value = sel.dataset.prev || ''; return; }   // cancelled — revert
+  const { category, created } = Store.addCategory(label);
+  if (!category) { sel.value = sel.dataset.prev || ''; return; }
+  CONFIG = Store.getConfig();
+  fillItemCategorySelect(category.id);     // rebuild options + select the new/existing one
+  renderCategoryChips();                   // customer-facing chips
+  if (!adminPanel.hidden) renderMenuCatFilter();
+  showAdminToast({
+    title: created ? `Category "${category.label}" added` : `Category "${category.label}" already exists`,
+    variant: created ? 'success' : 'info',
+  });
+});
+
 $('#itemForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const f  = $('#itemForm');
-  const id = f.id.value.trim().toLowerCase();
+  // ID is now auto-generated from the name when left blank. An admin
+  // can still type one to override; editing keeps the existing id.
+  let id = f.id.value.trim().toLowerCase();
+  if (!id) {
+    id = editingItemId || uniqueItemId(slugifyId(f.name.value));
+  }
   if (!id) return;
   const existing = Store.getMenu().find(m => m.id === id);
   if (existing && existing.id !== editingItemId) {
@@ -2741,6 +2919,14 @@ window.addEventListener('storage', (e) => {
   } else if (e.key === 'bb_config') {
     CONFIG = Store.getConfig();
     applyConfigToDOM();
+    // Categories live in config — a new one added on another device
+    // should appear in this tab's chips (and admin filter) too.
+    renderCategoryChips();
+    renderMenu();
+    if (!adminPanel.hidden && $('.admin-tab.active')?.dataset.adminTab === 'menu') {
+      renderMenuCatFilter();
+      renderMenuTable();
+    }
   } else if (e.key === 'bb_activity_log') {
     refreshAdminActivity();
   }
@@ -3050,6 +3236,7 @@ async function boot() {
   } else {
     ensureTable();
   }
+  renderCategoryChips();
   renderMenu();
   updateCart();
   refreshOrdersBadge();

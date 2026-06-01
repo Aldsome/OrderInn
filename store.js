@@ -79,6 +79,17 @@ const DEFAULT_CONFIG = {
      this monotonic counter (synced via bb_config) is how the CSV
      reports "orders since opening". */
   lifetimeOrders: 0,
+  /* Menu categories — data-driven so admins can add their own
+     instead of being stuck with the original hardcoded set. Each
+     entry is { id, label }. Menu items reference a category by its
+     id. Rides the same bb_config sync path as the rest of settings,
+     so a new category appears on every device. */
+  categories: [
+    { id: 'coffee', label: 'Coffee' },
+    { id: 'tea',    label: 'Tea' },
+    { id: 'cold',   label: 'Cold' },
+    { id: 'pastry', label: 'Pastries' },
+  ],
 };
 
 const img = (topic, lock, w = 600, h = 420) =>
@@ -480,6 +491,28 @@ const Store = {
     return true;
   },
   resetConfig()     { localStorage.removeItem(STORE_KEYS.config); },
+
+  /* ----- Categories (data-driven menu groups) ----- */
+  getCategories() {
+    const cats = Store.getConfig().categories;
+    return Array.isArray(cats) && cats.length ? cats : DEFAULT_CONFIG.categories;
+  },
+  /* Add a category from a free-text label. Slugifies the label into
+     an id, dedupes (by id or label, case-insensitive), persists via
+     setConfig so it syncs, and returns { category, created }. */
+  addCategory(label) {
+    label = String(label || '').trim();
+    if (!label) return { category: null, created: false };
+    const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || ('cat-' + Date.now());
+    const cats = Store.getCategories().slice();
+    const existing = cats.find(c =>
+      c.id === id || c.label.trim().toLowerCase() === label.toLowerCase());
+    if (existing) return { category: existing, created: false };
+    const category = { id, label };
+    cats.push(category);
+    Store.setConfig({ categories: cats });
+    return { category, created: true };
+  },
 
   /* ==========================================================
      ORDERS

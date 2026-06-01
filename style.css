@@ -1722,6 +1722,35 @@ body.admin-open { overflow: hidden; }
 .row-actions { display: inline-flex; gap: 6px; }
 .row-actions .btn { padding: 5px 10px; font-size: .8rem; }
 
+/* Admin menu: category filter chips, sortable headers, group rows */
+.menu-cat-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+}
+.menu-group-toggle { white-space: nowrap; }
+.data-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.data-table th.sortable:hover { color: var(--ink); }
+.data-table th.sortable.sorted { color: var(--primary); }
+.data-table th .sort-arrow {
+  font-size: .7rem;
+  margin-left: 2px;
+}
+.data-table tr.menu-group-row td {
+  background: var(--brown-100, var(--brown-50));
+  font-weight: 700;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--ink-soft);
+}
+.data-table tr.menu-group-row:hover td { background: var(--brown-100, var(--brown-50)); }
+
 /* ----- Settings ----- */
 .settings-form {
   background: var(--white);

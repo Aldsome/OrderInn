@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=24" />
+  <link rel="stylesheet" href="style.css?v=25" />
 
   <script>
     (function () {
@@ -91,11 +91,7 @@
 
     <!-- Category chips -->
     <nav class="chips container" id="categoryChips" aria-label="Menu categories">
-      <button class="chip active" data-category="all">All</button>
-      <button class="chip" data-category="coffee">Coffee</button>
-      <button class="chip" data-category="tea">Tea</button>
-      <button class="chip" data-category="cold">Cold</button>
-      <button class="chip" data-category="pastry">Pastries</button>
+      <!-- chips injected via script.js from the data-driven category list -->
     </nav>
 
     <!-- Menu grid -->
@@ -526,15 +522,31 @@
       <section class="admin-pane" data-admin-pane="menu" hidden>
         <div class="pane-head">
           <h2>Menu</h2>
-          <button class="btn btn-primary" id="addMenuItemBtn">+ Add item</button>
+          <div class="row-gap">
+            <button class="btn btn-ghost" id="addCategoryBtn">+ Category</button>
+            <button class="btn btn-primary" id="addMenuItemBtn">+ Add item</button>
+          </div>
         </div>
         <div class="toolbar">
           <input type="search" id="menuSearch" placeholder="Search…" />
+          <label class="check-inline menu-group-toggle">
+            <input type="checkbox" id="menuGroupToggle" checked />
+            <span>Group by category</span>
+          </label>
         </div>
+        <!-- Category filter chips (data-driven) -->
+        <nav class="chips menu-cat-filter" id="menuCatFilter" aria-label="Filter menu by category"></nav>
         <div class="table-wrap">
-          <table class="data-table">
+          <table class="data-table" id="menuTable">
             <thead>
-              <tr><th></th><th>Name</th><th>Category</th><th>Price</th><th>Tag</th><th class="right">Actions</th></tr>
+              <tr>
+                <th></th>
+                <th class="sortable" data-sort="name">Name <span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="category">Category <span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="price">Price <span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="tag">Tag <span class="sort-arrow"></span></th>
+                <th class="right">Actions</th>
+              </tr>
             </thead>
             <tbody id="menuTableBody"></tbody>
           </table>
@@ -630,17 +642,16 @@
       </header>
       <form id="itemForm" class="settings-form">
         <div class="grid-2">
-          <label>ID <input type="text" name="id" required pattern="[a-z0-9_-]+" /></label>
+          <label>ID <small class="hint muted">(auto from name — leave blank)</small>
+            <input type="text" name="id" pattern="[a-z0-9_-]+" placeholder="auto-generated" />
+          </label>
           <label>Name <input type="text" name="name" required /></label>
         </div>
         <div class="grid-2">
           <label>Category
-            <select name="category" required>
-              <option value="coffee">Coffee</option>
-              <option value="tea">Tea</option>
-              <option value="cold">Cold</option>
-              <option value="pastry">Pastries</option>
-            </select>
+            <!-- options injected from the data-driven category list;
+                 the last option "+ New category…" lets an admin add one -->
+            <select name="category" id="itemCategorySelect" required></select>
           </label>
           <label>Price <input type="number" name="price" required min="0" step="1" /></label>
         </div>
@@ -727,7 +738,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=16"></script>
-  <script src="script.js?v=37"></script>
+  <script src="store.js?v=17"></script>
+  <script src="script.js?v=38"></script>
 </body>
 </html>
