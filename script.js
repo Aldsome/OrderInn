@@ -1511,6 +1511,15 @@ $('#staffLoginForm').addEventListener('submit', async (e) => {
     // label with their authenticated name so any order they
     // place from the customer view is attributed to them.
     closeTableModal();
+    // Sever the guest persona: a fresh clientId means the staff
+    // member doesn't inherit ownership of orders placed earlier
+    // on this device as a guest (those stay visible in the admin
+    // panel, just not in the admin's customer "My orders"). Also
+    // drop the tracked active order + refresh the customer
+    // surfaces so the guest's banner/FAB don't linger.
+    Store.resetClientId();
+    clearActiveOrder();
+    refreshMyOrdersFab();
     setTableLabel(session.name || session.email);
     enterAdminPanel(session);
   } catch (err) {
@@ -1610,6 +1619,11 @@ function adminSignOut() {
   Store.logout();
   exitAdminPanel();
   refreshAdminHeaderBtn();
+  // Fresh clientId again, so the next guest on this device starts
+  // with a clean customer "My orders" (no bleed from staff orders).
+  Store.resetClientId();
+  clearActiveOrder();
+  refreshMyOrdersFab();
   // The auto-stamped admin-name table belongs to that session.
   // Clearing it on sign-out drops the visitor back to the
   // unauthenticated customer flow (forced table prompt).
