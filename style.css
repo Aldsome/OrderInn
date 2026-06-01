@@ -396,20 +396,6 @@ select option,
   font-size: .88rem;
   color: var(--ink-soft);
 }
-.seat-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--ink-soft);
-  font-size: .84rem;
-}
-.seat-chip strong {
-  padding: 2px 8px !important;
-  font-size: .84rem !important;
-  background: var(--brown-100) !important;
-  color: var(--ink) !important;
-}
-
 /* Join-by-PIN section in the table modal */
 .table-join { margin-bottom: 4px; }
 .or-divider {
@@ -1718,8 +1704,6 @@ body.admin-open { overflow: hidden; }
   letter-spacing: 0;
 }
 [data-theme="dark"] .table-tag { color: #0E1419; }
-/* Seat tag (location) — distinct from the identity Name tag. */
-.table-tag.seat-tag { background: var(--brown-300, #A0855E); }
 
 /* ----- Admin tables ----- */
 .toolbar {

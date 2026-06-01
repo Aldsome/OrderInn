@@ -31,9 +31,6 @@ const STORE_KEYS = {
   log:            'bb_activity_log',    // admin-facing changelog (last 50 entries)
   logSeen:        'bb_log_seen',        // last activity id the admin has seen
   sessionTable:   'bb_session_table',   // { name, ts, clientId } — 24h guest persistence
-  seat:           'bb_seat',            // optional physical table/seat location — DECOUPLED
-                                          // from the identity label so a guest can move
-                                          // seats without changing their name/room.
   activeSessions: 'bb_active_sessions', // { [clientId]: { name, lastActive } } — collision check
   pendingWrites:  'bb_pending_writes',  // queue of remote writes that haven't been flushed yet
 };
@@ -238,7 +235,6 @@ const ROW_TO_ORDER = (r) => r && ({
   id:          r.id,
   number:      r.number,
   tableNumber: r.table_number,
-  seat:        r.seat || null,           // physical location (decoupled from identity)
   clientId:    r.client_id,
   items:       r.items,
   total:       Number(r.total),
@@ -254,7 +250,6 @@ const ORDER_TO_ROW = (o) => ({
   id:           o.id,
   number:       o.number,
   table_number: o.tableNumber || null,
-  seat:         o.seat || null,
   client_id:    o.clientId,
   items:        o.items,
   total:        o.total,
@@ -425,9 +420,9 @@ function remoteUpsert(table, row) {
   return sb.from(table).upsert(row).then(({ error }) => {
     if (error) {
       // Self-heal for an additive column the backend doesn't have yet
-      // (e.g. `seat` before its migration is run): strip the offending
-      // column and retry once so the rest of the row still syncs and
-      // existing order flow never breaks.
+      // (a newer client field whose migration hasn't been run): strip
+      // the offending column and retry once so the rest of the row
+      // still syncs and existing flow never breaks.
       const missing = missingColumnFrom(error, row);
       if (missing) {
         const { [missing]: _omit, ...rest } = row;
@@ -596,7 +591,7 @@ const Store = {
   getOrders()      { return readJSON(STORE_KEYS.orders, []); },
   setOrders(o)     { return writeJSON(STORE_KEYS.orders, o); },
 
-  async placeOrder({ tableNumber, items, notes, seat }) {
+  async placeOrder({ tableNumber, items, notes }) {
     // Server-aware, DAILY-RESETTING order numbering. Numbers
     // restart at #1 each calendar day so they don't grow without
     // bound (the lifetime tally lives in config + the CSV export).
@@ -646,7 +641,6 @@ const Store = {
       id:          'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       number,
       tableNumber: tableNumber || null,
-      seat:        seat || null,              // physical location (optional, decoupled)
       clientId:    Store.getClientId(),       // ties this order to the browser that placed it
       items,                                  // each: { itemId, name, qty, unitPrice, config }
       total:       items.reduce((s, i) => s + i.unitPrice * i.qty, 0),
@@ -726,21 +720,6 @@ const Store = {
     }
     if (moved) Store.setOrders(orders);
     return moved;
-  },
-
-  /* Update the seat/location on a set of orders without touching
-     their identity (table_number) — the customer changed where they
-     are sitting, not who they are. */
-  updateOrdersSeat(orderIds, seat) {
-    if (!Array.isArray(orderIds) || !orderIds.length) return 0;
-    const ids = new Set(orderIds);
-    const orders = Store.getOrders();
-    let n = 0;
-    for (const o of orders) {
-      if (ids.has(o.id)) { o.seat = seat || null; remoteUpsert('bb_orders', ORDER_TO_ROW(o)); n++; }
-    }
-    if (n) Store.setOrders(orders);
-    return n;
   },
 
   /* Customer-initiated cancel. Only succeeds while the order is
@@ -912,13 +891,6 @@ const Store = {
     localStorage.removeItem(STORE_KEYS.sessionTable);
   },
 
-  /* Optional seat/location — persisted per device so it survives a
-     refresh, like the identity label. Decoupled from the name. */
-  getSeat()      { return localStorage.getItem(STORE_KEYS.seat) || ''; },
-  setSeat(seat)  {
-    if (seat) localStorage.setItem(STORE_KEYS.seat, seat);
-    else      localStorage.removeItem(STORE_KEYS.seat);
-  },
 
   /* ==========================================================
      ACTIVE SESSIONS REGISTRY  (live name-collision check)

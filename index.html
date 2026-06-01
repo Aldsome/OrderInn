@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=31" />
+  <link rel="stylesheet" href="style.css?v=32" />
 
   <script>
     (function () {
@@ -71,11 +71,9 @@
 
       <!-- Table strip — shows the table name (from ?table= URL) -->
       <div class="table-strip container">
-        <span>Name</span>
+        <span>Table</span>
         <strong id="tableNumberDisplay">—</strong>
         <button class="link-mini" id="changeTableBtn">change</button>
-        <span class="seat-chip" id="seatChip" hidden>🪑 <strong id="seatDisplay"></strong></span>
-        <button class="link-mini" id="changeSeatBtn">add seat</button>
       </div>
 
       <!-- Customer's active-order status banner (poll-driven) -->
@@ -397,13 +395,9 @@
         <p class="muted small" style="margin: 0;">
           Helps our staff find you when your order is ready.
         </p>
-        <label>Your name or label
+        <label>Table number (or name)
           <input type="text" id="tableInput" maxlength="40" required
-                 placeholder="e.g. Art, Booth A, Window 2" />
-        </label>
-        <label>Table / seat <small class="muted">(optional — where you're sitting)</small>
-          <input type="text" id="seatInput" maxlength="40"
-                 placeholder="e.g. Table 7, Patio" />
+                 placeholder="e.g. Table 7, Booth A, Window 2" />
         </label>
         <button type="submit" class="btn btn-primary btn-block">Continue</button>
       </form>
@@ -838,7 +832,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=21"></script>
-  <script src="script.js?v=43"></script>
+  <script src="store.js?v=22"></script>
+  <script src="script.js?v=44"></script>
 </body>
 </html>

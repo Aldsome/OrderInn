@@ -23,16 +23,22 @@ Phase 2 builds the feature backlog on top of a foundational data-model change.
 - #7 Table PIN + write-it-down reminder on the placed modal.
 - #9 Reset everything to default (cloud + local).
 
-**#0 decouple — shipped (commit `2966ae0`), low-risk variant.** Rather than
-rekeying everything, the typed label stays the IDENTITY (room/tab key — chat,
-sessions, PIN, order scoping unchanged) and a separate optional **`seat`**
-(physical location) was added: captured in the name modal, editable any time
-from the table strip without changing the room, shown on the admin order card +
-receipt, and self-healing if its Supabase column (`data/supabase-seat.sql`)
-isn't migrated yet. This delivers the practical decouple (location changes
-freely; orders never orphan) without the regression risk of a full identity
-rekey. A full rename of `tableNumber` → `name` everywhere remains optional
-cleanup, not a functional need.
+**#0 — resolved by simplification (not a separate seat field).** A standalone
+`seat` field was tried (commit `2966ae0`) then **removed** — being optional, it
+mostly sat empty and gave staff no reliable location, so it added a field
+without a clear job. The cleaner model adopted instead:
+
+- **The label IS the table** — the entry field leads with "Table number (or
+  name)". It's both the room/tab key AND the delivery target, so staff always
+  know where to go.
+- **Join by PIN** ([store.js `findTableByPin`], commit `4d73ff3`) is the
+  tablemate path: enter the table's PIN, get dropped into the room — no name
+  typed, no collision. PINs are minted unique per active table.
+
+Net: location and grouping are handled by the table label + PIN join; the
+"same device, different table" worry is moot because moving to a different
+table is just a new label (orders follow via the move feature) or a PIN join.
+No `tableNumber`→`name` rekey needed.
 
 ---
 

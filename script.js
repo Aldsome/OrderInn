@@ -42,7 +42,6 @@ const state = {
   cart:        [],
   category:    'all',
   tableNumber: null,
-  seat:        '',        // optional physical location, decoupled from the identity label
   editingLineKey: null,
   pendingQty:  1,
   editingOrderId: null,   // when set, placing the cart UPDATES this order
@@ -196,41 +195,6 @@ function setTableLabel(label) {
   if (typeof refreshOrderStatusBanner === 'function') refreshOrderStatusBanner();
   if (typeof refreshMyOrdersFab === 'function') refreshMyOrdersFab();
 }
-/* Seat / location — decoupled from the identity label. Rendered as a
-   chip in the table strip; changing it never changes the room. */
-function renderSeatStrip() {
-  const chip = $('#seatChip');
-  const disp = $('#seatDisplay');
-  const btn  = $('#changeSeatBtn');
-  if (!chip || !btn) return;
-  if (state.seat) {
-    if (disp) disp.textContent = state.seat;
-    chip.hidden = false;
-    btn.textContent = 'change seat';
-  } else {
-    chip.hidden = true;
-    btn.textContent = 'add seat';
-  }
-}
-function setSeat(seat) {
-  state.seat = (seat || '').trim();
-  Store.setSeat(state.seat);
-  renderSeatStrip();
-  // Propagate to this device's active orders so staff see the new
-  // location on orders already placed (identity/room is untouched).
-  const mineActive = Store.getMyOrders().filter(o => o.status === 'pending' || o.status === 'preparing');
-  if (mineActive.length) {
-    Store.updateOrdersSeat(mineActive.map(o => o.id), state.seat);
-    if (!adminPanel.hidden && $('.admin-tab.active')?.dataset.adminTab === 'orders') renderOrders();
-  }
-}
-$('#changeSeatBtn').addEventListener('click', () => {
-  const v = prompt('Where are you sitting? (table / seat — optional)', state.seat || '');
-  if (v === null) return;            // cancelled
-  setSeat(v);
-  if (state.seat) showToast(`Seat set to "${state.seat}"`, 'success');
-});
-
 function ensureTable() {
   // QR-code path: URL ?table= overrides everything and always
   // wins (it's how customers arrive at a specific table).
@@ -269,7 +233,6 @@ function openTableModalPrefilled(name) {
   openTableModal();
 }
 function openTableModal()  {
-  const si = $('#seatInput');   if (si) si.value = state.seat || '';
   const jp = $('#joinPinInput'); if (jp) jp.value = '';
   const je = $('#joinPinError'); if (je) je.hidden = true;
   openModal('#tableModal');
@@ -528,7 +491,6 @@ $('#tableForm').addEventListener('submit', async (e) => {
     input.setCustomValidity('');
     return;
   }
-  const seat = $('#seatInput') ? $('#seatInput').value.trim() : '';
   // Brief disable while the (async) remote collision check runs.
   const submitBtn = e.target.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.disabled = true;
@@ -536,7 +498,6 @@ $('#tableForm').addEventListener('submit', async (e) => {
     await checkDuplicateTable(label, () => {
       moveOrdersOnTableChange(label);   // carry / cancel active orders when moving
       setTableLabel(label);
-      setSeat(seat);                    // optional location, independent of identity
       closeTableModal();
       bumpInactivity();
     });
@@ -1042,7 +1003,6 @@ $('#placeOrderBtn').addEventListener('click', async () => {
     // for the authoritative max order number to avoid collisions).
     order = await Store.placeOrder({
       tableNumber: state.tableNumber,
-      seat:        state.seat,
       items,
     });
   } catch (e) {
@@ -1745,9 +1705,6 @@ function resetForNextCustomer() {
   clearActiveOrder();
   finishEditingOrder();             // drop any in-progress order edit
   setTableLabel(null);
-  state.seat = '';                  // forget the seat for the next customer
-  Store.setSeat('');
-  renderSeatStrip();
   Store.clearSessionTable();        // forget the 24h guest persistence
   clearCart();
   closeMyOrders();
@@ -2135,14 +2092,10 @@ function renderOrders() {
           <div class="order-head-id">
             ${orderSelectMode ? `<label class="order-select"><input type="checkbox" data-order-select="${o.id}"${selectedOrders.has(o.id) ? ' checked' : ''} aria-label="Select order"></label>` : ''}
             <h3>#${o.number}</h3>
-            <span class="table-tag" title="Customer name / label">
-              <span class="table-tag-label">Name</span>
+            <span class="table-tag" title="Table">
+              <span class="table-tag-label">Table</span>
               <strong>${tableLabel}</strong>
             </span>
-            ${o.seat ? `<span class="table-tag seat-tag" title="Where they're sitting">
-              <span class="table-tag-label">Seat</span>
-              <strong>${escapeHtml(String(o.seat))}</strong>
-            </span>` : ''}
           </div>
           <div class="order-head-status">
             <span class="status-pill status-${o.status}">${o.status}</span>
@@ -3122,8 +3075,7 @@ function buildReceiptHtml(order) {
       </header>
       <hr>
       <div class="rec-row"><span>Order</span><strong>#${order.number}</strong></div>
-      <div class="rec-row"><span>Name</span><strong>${escapeHtml(String(order.tableNumber || '—'))}</strong></div>
-      ${order.seat ? `<div class="rec-row"><span>Seat</span><strong>${escapeHtml(String(order.seat))}</strong></div>` : ''}
+      <div class="rec-row"><span>Table</span><strong>${escapeHtml(String(order.tableNumber || '—'))}</strong></div>
       <div class="rec-row"><span>Placed</span><strong>${placed.toLocaleString()}</strong></div>
       ${served ? `<div class="rec-row"><span>Served</span><strong>${served.toLocaleString()}</strong></div>` : ''}
       <hr>
@@ -3209,8 +3161,7 @@ $('#downloadReceiptBtn').addEventListener('click', () => {
     CONFIG.businessTin ? 'TIN: ' + CONFIG.businessTin : '',
     '-------------------------------',
     `Order #${o.number}`,
-    `Name:   ${o.tableNumber || '-'}`,
-    o.seat ? `Seat:   ${o.seat}` : '',
+    `Table:  ${o.tableNumber || '-'}`,
     `Placed: ${new Date(o.placedAt).toLocaleString()}`,
     o.servedAt ? `Served: ${new Date(o.servedAt).toLocaleString()}` : '',
     '-------------------------------',
@@ -3834,8 +3785,6 @@ async function boot() {
   } else {
     ensureTable();
   }
-  state.seat = Store.getSeat();
-  renderSeatStrip();
   renderCategoryChips();
   renderMenu();
   updateCart();
