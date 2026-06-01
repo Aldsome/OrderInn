@@ -23,13 +23,16 @@ Phase 2 builds the feature backlog on top of a foundational data-model change.
 - #7 Table PIN + write-it-down reminder on the placed modal.
 - #9 Reset everything to default (cloud + local).
 
-**Deferred (deliberately): #0 full identity/location schema decouple.** The
-practical goal — orders follow the person when they move tables — is already met
-by the #2 move feature. A *full* schema split (a dedicated identity field
-distinct from `tableNumber`, plus rekeying chat threads, sessions, collision
-logic, admin display, and receipts/CSV) would touch nearly everything just
-shipped and risk regressions, so it is best done as its own focused effort
-rather than folded into this sweep. Details below remain the design of record.
+**#0 decouple — shipped (commit `2966ae0`), low-risk variant.** Rather than
+rekeying everything, the typed label stays the IDENTITY (room/tab key — chat,
+sessions, PIN, order scoping unchanged) and a separate optional **`seat`**
+(physical location) was added: captured in the name modal, editable any time
+from the table strip without changing the room, shown on the admin order card +
+receipt, and self-healing if its Supabase column (`data/supabase-seat.sql`)
+isn't migrated yet. This delivers the practical decouple (location changes
+freely; orders never orphan) without the regression risk of a full identity
+rekey. A full rename of `tableNumber` → `name` everywhere remains optional
+cleanup, not a functional need.
 
 ---
 
