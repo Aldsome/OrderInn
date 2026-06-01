@@ -70,6 +70,10 @@ const DEFAULT_CONFIG = {
   businessName:'BossB Coffee Shop',
   businessAddr:'123 Sample St, Quezon City',
   businessTin: '',             // PH BIR Tax Identification Number
+  /* Lifetime order tally — daily order numbers reset to #1, so
+     this monotonic counter (synced via bb_config) is how the CSV
+     reports "orders since opening". */
+  lifetimeOrders: 0,
 };
 
 const img = (topic, lock, w = 600, h = 420) =>
@@ -483,19 +487,25 @@ const Store = {
   setOrders(o)     { return writeJSON(STORE_KEYS.orders, o); },
 
   async placeOrder({ tableNumber, items, notes }) {
-    // S3 fix — server-aware order numbering. In remote mode we
-    // ALSO ask Supabase for the current max(number) so two
-    // devices placing simultaneously don't both pick the same N
-    // off their stale local caches. We take max(local, server) +
-    // 1 so a brief network blip can't produce a number lower
-    // than what we already have locally.
-    const localMax = Math.max(0, ...Store.getOrders().map(o => o.number || 0));
+    // Server-aware, DAILY-RESETTING order numbering. Numbers
+    // restart at #1 each calendar day so they don't grow without
+    // bound (the lifetime tally lives in config + the CSV export).
+    // We scope both the local and server max to orders placed
+    // since local midnight, then take max(local, server) + 1 so
+    // two devices ordering at once can't collide and a network
+    // blip can't produce a number below what we already hold.
+    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+    const isToday  = (iso) => iso && new Date(iso) >= startOfDay;
+    const localMax = Math.max(0, ...Store.getOrders()
+      .filter(o => isToday(o.placedAt))
+      .map(o => o.number || 0));
     let serverMax = 0;
     if (REMOTE_MODE && navigator.onLine) {
       try {
         const { data, error } = await sb
           .from('bb_orders')
           .select('number')
+          .gte('placed_at', startOfDay.toISOString())
           .order('number', { ascending: false })
           .limit(1);
         if (!error && data && data[0]) serverMax = Number(data[0].number) || 0;
@@ -531,6 +541,8 @@ const Store = {
     orders.unshift(order);                    // newest first
     Store.setOrders(orders);
     remoteUpsert('bb_orders', ORDER_TO_ROW(order));
+    // Monotonic lifetime tally (daily numbers reset; this doesn't).
+    Store.setConfig({ lifetimeOrders: (Store.getConfig().lifetimeOrders || 0) + 1 });
     Store.pushLog({
       type:    'order_placed',
       message: `Order #${order.number} placed at ${order.tableNumber || '—'}`,

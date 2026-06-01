@@ -2455,6 +2455,7 @@ function buildDailyCsv() {
   lines.push(['Currency',   CONFIG.currency].map(csvEscape).join(','));
   lines.push(['Tax',        `${CONFIG.taxLabel} ${CONFIG.taxRate}% (${CONFIG.taxInclusive ? 'inclusive' : 'exclusive'})`].map(csvEscape).join(','));
   lines.push(['Orders today', todays.length].map(csvEscape).join(','));
+  lines.push([`${(CONFIG.lifetimeOrders || 0).toLocaleString()} orders since opening!`].map(csvEscape).join(','));
   lines.push('');                              // blank spacer
 
   // Header row sits at this 1-based spreadsheet row number;
