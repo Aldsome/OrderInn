@@ -63,7 +63,8 @@ insert into public.bb_config (id, data)
 create table if not exists public.bb_orders (
   id             text primary key,
   number         int not null,
-  table_number   text,
+  table_number   text,                     -- IDENTITY label (name / room / tab)
+  seat           text,                     -- optional physical location, decoupled from identity
   client_id      text not null,            -- per-device anonymous id
   items          jsonb not null,           -- array of { itemId, name, qty, unitPrice, summary, config }
   total          numeric not null,
