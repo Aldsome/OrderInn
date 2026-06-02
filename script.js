@@ -8,6 +8,23 @@
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+/* Run a re-render without letting it shift the scroll position.
+   Category/sort switches rebuild list HTML whose height changes,
+   which would otherwise jump the page (window) or the admin scroll
+   box. We snapshot the scroll offset, re-render, then restore it.
+   Direct scrollTop assignment is instant (CSS scroll-behavior:smooth
+   only affects scrollTo/scrollIntoView), so there's no animation. */
+function withScrollAnchor(el, fn) {
+  const win = !el || el === window;
+  const node = win ? document.scrollingElement || document.documentElement : el;
+  const top = node.scrollTop;
+  fn();
+  // Restore on the next frame too, in case async layout (images)
+  // nudged it; the synchronous set covers the common case.
+  node.scrollTop = top;
+  requestAnimationFrame(() => { node.scrollTop = top; });
+}
+
 /* ==========================================================
    OPTION CATALOG  (shared)
    ========================================================== */
@@ -638,13 +655,31 @@ function renderCategoryChips() {
     `<button class="chip${state.category === id ? ' active' : ''}" data-category="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
   nav.innerHTML = chip('all', 'All') + cats.map(c => chip(c.id, c.label)).join('');
 }
+/* Align the menu so its first item sits just BELOW the sticky chips
+   bar (instead of hidden behind it). Target scroll = the point where
+   the chips become pinned; the grid then starts right under them.
+   Only scrolls up when the list is currently cut off under the bar,
+   so a category switch never yanks the page around needlessly. */
+function alignMenuUnderChips() {
+  const chips = $('#categoryChips');
+  const grid  = $('#menuGrid');
+  if (!chips || !grid) return;
+  const stickyTop  = parseFloat(getComputedStyle(chips).top) || 0;
+  const chipsH     = chips.offsetHeight;
+  const gridDocTop = grid.getBoundingClientRect().top + window.scrollY;
+  const target     = Math.max(0, gridDocTop - stickyTop - chipsH);
+  // Only correct if the grid top is currently tucked under the bar.
+  if (window.scrollY > target) window.scrollTo({ top: target, behavior: 'smooth' });
+}
 $('#categoryChips').addEventListener('click', (e) => {
   const chip = e.target.closest('.chip');
   if (!chip) return;
+  if (chip.dataset.category === state.category) return;   // no-op, no reflow
   $$('.chip', $('#categoryChips')).forEach(c => c.classList.remove('active'));
   chip.classList.add('active');
   state.category = chip.dataset.category;
   renderMenu();
+  alignMenuUnderChips();
 });
 
 menuGrid.addEventListener('click', (e) => {
@@ -2091,6 +2126,8 @@ $('#adminLogoutBtn').addEventListener('click', adminSignOut);
 function switchAdminTab(tab) {
   $$('.admin-tab').forEach(t => t.classList.toggle('active', t.dataset.adminTab === tab));
   $$('.admin-pane').forEach(p => p.hidden = (p.dataset.adminPane !== tab));
+  const menuFilter = $('#menuCatFilter');
+  if (menuFilter) menuFilter.hidden = (tab !== 'menu');
   if (tab === 'orders')   renderOrders();
   if (tab === 'menu')   { renderMenuCatFilter(); renderMenuTable(); }
   if (tab === 'settings') loadSettingsForm();
@@ -2462,13 +2499,14 @@ $('#menuSearch').addEventListener('input', renderMenuTable);
 $('#menuCatFilter').addEventListener('click', (e) => {
   const chip = e.target.closest('.chip');
   if (!chip) return;
+  if (chip.dataset.cat === adminMenuCategory) return;     // no-op, no reflow
   adminMenuCategory = chip.dataset.cat;
-  renderMenuCatFilter();
-  renderMenuTable();
+  // Anchor the admin scroll box so filtering doesn't jump the list.
+  withScrollAnchor($('.admin-content'), () => { renderMenuCatFilter(); renderMenuTable(); });
 });
 $('#menuGroupToggle').addEventListener('change', (e) => {
   menuGroupBy = e.target.checked;
-  renderMenuTable();
+  withScrollAnchor($('.admin-content'), renderMenuTable);
 });
 $('#menuTable').querySelector('thead').addEventListener('click', (e) => {
   const th = e.target.closest('th[data-sort]');
@@ -2476,7 +2514,7 @@ $('#menuTable').querySelector('thead').addEventListener('click', (e) => {
   const key = th.dataset.sort;
   if (menuSort.key === key) menuSort.dir = (menuSort.dir === 'asc') ? 'desc' : 'asc';
   else { menuSort.key = key; menuSort.dir = 'asc'; }
-  renderMenuTable();
+  withScrollAnchor($('.admin-content'), renderMenuTable);
 });
 $('#addCategoryBtn').addEventListener('click', () => {
   const label = (prompt('New category name (e.g. Smoothies, Sandwiches):') || '').trim();
@@ -4435,6 +4473,7 @@ async function boot() {
   } else {
     ensureTable();
   }
+  syncTopbarHeight();
   renderCategoryChips();
   renderMenu();
   updateCart();
@@ -4464,5 +4503,74 @@ async function boot() {
 
   $('#year').textContent = new Date().getFullYear();
 }
+
+/* Keep --topbar-h synced to the *actual* sticky topbar height so
+   the category chips pin flush below it. The topbar grows/shrinks
+   when the table-strip wraps or the order-status banner toggles, so
+   a hardcoded offset (the old top:87px) let the topbar's lower edge
+   cover the chips. ResizeObserver tracks every height change. */
+function syncTopbarHeight() {
+  const topbar = $('.topbar');
+  if (!topbar) return;
+  const h = Math.round(topbar.getBoundingClientRect().height);
+  document.documentElement.style.setProperty('--topbar-h', h + 'px');
+}
+if (typeof ResizeObserver !== 'undefined') {
+  const ro = new ResizeObserver(syncTopbarHeight);
+  document.addEventListener('DOMContentLoaded', () => {
+    const topbar = $('.topbar');
+    if (topbar) ro.observe(topbar);
+  });
+}
+window.addEventListener('resize', syncTopbarHeight);
+
+/* Customer topbar → pull-down on deep scroll.
+   Past 30vh the topbar slides up out of view and a small handle tab
+   appears; tapping it pulls the real topbar (shop name + table strip)
+   back down as an overlay. Near the top it reverts (hysteresis avoids
+   boundary flicker), and the open state resets. A separate right-side
+   back-to-top button appears on deeper scrolls. All fixed transforms,
+   so document flow never shifts. */
+(function wireScrollNav() {
+  const view   = $('#customerView');
+  const handle = $('#navHandle');
+  const toTop  = $('#backToTop');
+  if (!view || !handle) return;
+  let docked = false, open = false, ticking = false, lastY = window.scrollY;
+  const dockAt = () => window.innerHeight * 0.30;
+  const topAt  = () => window.innerHeight * 0.60;
+
+  function setOpen(on) {
+    open = on;
+    view.classList.toggle('nav-open', on);
+    handle.setAttribute('aria-expanded', String(on));
+    handle.setAttribute('aria-label', on ? 'Hide navigation bar' : 'Show navigation bar');
+  }
+  function setDocked(on) {
+    if (on === docked) return;
+    docked = on;
+    view.classList.toggle('nav-docked', on);
+    if (!on) setOpen(false);        // reset the pulled-open override on revert
+  }
+  function apply() {
+    ticking = false;
+    const y = window.scrollY;
+    if (!docked && y > dockAt())            setDocked(true);
+    else if (docked && y < dockAt() * 0.8)  setDocked(false);   // hysteresis
+    // The pulled-open topbar is a peek — any real scroll tucks it back.
+    if (open && Math.abs(y - lastY) > 4)    setOpen(false);
+    if (toTop) toTop.classList.toggle('show', y > topAt());
+    lastY = y;
+  }
+  window.addEventListener('scroll', () => {
+    if (!ticking) { ticking = true; requestAnimationFrame(apply); }
+  }, { passive: true });
+  window.addEventListener('resize', apply);
+
+  handle.addEventListener('click', () => setOpen(!open));
+  if (toTop) toTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+
+  apply();
+})();
 
 document.addEventListener('DOMContentLoaded', boot);

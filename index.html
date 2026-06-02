@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=40" />
+  <link rel="stylesheet" href="style.css?v=42" />
 
   <script>
     (function () {
@@ -88,6 +88,23 @@
         </button>
       </div>
     </header>
+
+    <!-- Pull-down handle — when scrolled past 30vh the topbar slides
+         up out of view and this small tab appears. Tapping it pulls the
+         full topbar (shop name, table strip) back down as an overlay;
+         tapping again pushes it back up. (See wireScrollNav in script.js.) -->
+    <button class="nav-handle" id="navHandle" aria-label="Show navigation bar" aria-expanded="false">
+      <span class="nav-handle-arrow" aria-hidden="true"></span>
+    </button>
+
+    <!-- Back-to-top — fixed on the right, appears only when scrolled
+         well down the page. -->
+    <button class="back-to-top" id="backToTop" aria-label="Back to top" title="Back to top">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none"
+           stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 19V6"/><path d="M5 12l7-7 7 7"/>
+      </svg>
+    </button>
 
     <!-- Category chips -->
     <nav class="chips container" id="categoryChips" aria-label="Menu categories">
@@ -559,6 +576,13 @@
       <button class="admin-tab" data-admin-tab="settings">Settings</button>
     </nav>
 
+    <!-- Admin menu category filter — pinned as a non-scrolling sibling
+         directly below the tabs (same pattern as .admin-tabs itself),
+         so it always sits flush under the tabs instead of relying on
+         position:sticky inside the scroll box. Shown only on the Menu
+         tab (JS toggles [hidden]). -->
+    <nav class="chips menu-cat-filter" id="menuCatFilter" aria-label="Filter menu by category" hidden></nav>
+
     <main class="admin-content">
       <!-- ----- Orders ----- -->
       <section class="admin-pane" data-admin-pane="orders">
@@ -616,8 +640,6 @@
             <span>Group by category</span>
           </label>
         </div>
-        <!-- Category filter chips (data-driven) -->
-        <nav class="chips menu-cat-filter" id="menuCatFilter" aria-label="Filter menu by category"></nav>
         <div class="table-wrap">
           <table class="data-table" id="menuTable">
             <thead>
@@ -892,6 +914,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
   <script src="store.js?v=29"></script>
-  <script src="script.js?v=55"></script>
+  <script src="script.js?v=57"></script>
 </body>
 </html>

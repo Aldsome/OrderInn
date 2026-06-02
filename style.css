@@ -51,6 +51,11 @@
      margin, whether the body is a <form> or plain content. */
   --modal-pad-x: 20px;
   --modal-pad-y: 18px;
+  /* Live sticky-topbar height; kept in sync by syncTopbarHeight()
+     in script.js. The category chips pin to top: var(--topbar-h)
+     so the topbar's table-strip never covers them. The value here
+     is just a pre-JS fallback. */
+  --topbar-h: 87px;
 
   --container: 720px;
   --gutter: clamp(16px, 4vw, 28px);
@@ -113,6 +118,27 @@ button { font: inherit; cursor: pointer; }
 input, select, textarea { font: inherit; color: var(--ink); }
 .muted { color: var(--ink-soft); }
 .small { font-size: .85rem; }
+
+/* ==========================================================
+   MODERN SCROLLBARS — thin, minimal, subtle hover feedback.
+   Applied globally; opt-out helpers (.chips, .admin-tabs) keep
+   their own `scrollbar-width: none` to stay invisible.
+   ========================================================== */
+* {
+  scrollbar-width: thin;                       /* Firefox */
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;               /* inset look */
+  background-clip: padding-box;
+  transition: background-color .15s ease;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
 
 /* ==========================================================
    UNIVERSAL FORM CONTROLS
@@ -294,6 +320,19 @@ select option,
   backdrop-filter: saturate(160%) blur(10px);
   border-bottom: 1px solid var(--line);
   z-index: 30;
+  transition: transform .32s cubic-bezier(.4, .2, .2, 1), opacity .26s ease;
+}
+/* Docked: the topbar slides up out of view, leaving just the pull
+   handle. transform keeps it in flow (no layout jump). */
+.nav-docked .topbar {
+  transform: translateY(-100%);
+  pointer-events: none;
+}
+/* Pulled open: the real topbar (shop name + table strip) slides back
+   down as an overlay above the category chips. */
+.nav-docked.nav-open .topbar {
+  transform: translateY(0);
+  pointer-events: auto;
 }
 [data-theme="dark"] .topbar { background: rgba(26, 20, 14, .92); }
 .topbar-row {
@@ -555,10 +594,19 @@ select option,
   scrollbar-width: none;
   padding-block: 14px 8px;
   position: sticky;
-  top: 87px;            /* below topbar */
+  /* Pin flush below the *actual* topbar. --topbar-h is kept in sync
+     with the sticky topbar's real height by syncTopbarHeight() in
+     script.js — it changes when the table-strip wraps or the
+     order-status banner toggles. The old hardcoded 87px was smaller
+     than the real topbar, so the table-strip covered the chips. */
+  top: var(--topbar-h, 87px);
   background: var(--cream);
   z-index: 20;
+  transition: top .3s cubic-bezier(.4, .2, .2, 1);
 }
+/* When docked the topbar is hidden, so the chips pin to the very top.
+   The revealed topbar (z-index 30) overlays them when pulled open. */
+.nav-docked .chips { top: 0; }
 .chips::-webkit-scrollbar { display: none; }
 .chip {
   flex-shrink: 0;
@@ -581,6 +629,80 @@ select option,
   background: var(--brown-200);
   color: var(--ink);
   border-color: var(--brown-200);
+}
+
+/* ==========================================================
+   PULL-DOWN HANDLE + BACK-TO-TOP
+   When scrolled past 30vh the topbar hides and .nav-handle (a small
+   centred tab) appears; tapping it pulls the real topbar back down.
+   .back-to-top is a separate right-side button for deep scrolls.
+   ========================================================== */
+.nav-handle {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%) translateY(-100%);  /* tucked away */
+  z-index: 31;                                     /* above topbar (30) */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 0 0 13px 13px;
+  background: rgba(255, 253, 248, .96);
+  backdrop-filter: saturate(160%) blur(10px);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform .3s cubic-bezier(.4, .2, .2, 1), opacity .22s ease, color .15s;
+}
+[data-theme="dark"] .nav-handle { background: rgba(26, 20, 14, .96); }
+.nav-handle:hover { color: var(--ink); }
+/* Docked: slide the tab down into view at the very top. */
+.nav-docked .nav-handle {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Pulled open: ride down to sit just under the revealed topbar. */
+.nav-docked.nav-open .nav-handle {
+  transform: translateX(-50%) translateY(var(--topbar-h, 87px));
+}
+/* Arrow reflects the action: ▾ = pull down to open, ▴ = push up to close. */
+.nav-handle-arrow::before { content: '▾'; font-size: .82rem; line-height: 1; }
+.nav-docked.nav-open .nav-handle-arrow::before { content: '▴'; }
+
+.back-to-top {
+  position: fixed;
+  right: clamp(12px, 4vw, 24px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);  /* clear the cart bar */
+  z-index: 35;
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--white);
+  color: var(--primary-deep);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(12px) scale(.9);
+  pointer-events: none;
+  transition: opacity .22s ease, transform .22s cubic-bezier(.4, .2, .2, 1);
+}
+.back-to-top.show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+.back-to-top:hover { border-color: var(--brown-300); }
+
+@media (prefers-reduced-motion: reduce) {
+  .topbar, .chips, .nav-handle, .back-to-top { transition: none; }
 }
 
 /* ==========================================================
@@ -893,6 +1015,7 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
 .chat-body {
   flex: 1 1 auto;
   overflow-y: auto;
+  overflow-x: hidden;            /* never scroll sideways — wrap instead */
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
@@ -903,6 +1026,7 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
   display: flex;
   flex-direction: column;
   max-width: 78%;
+  min-width: 0;                  /* allow flex child to shrink + wrap */
 }
 .chat-msg.mine   { align-self: flex-end; align-items: flex-end; }
 .chat-msg.theirs { align-self: flex-start; align-items: flex-start; }
@@ -915,8 +1039,17 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
   border: 1px solid var(--line);
   font-size: .9rem;
   line-height: 1.35;
+  /* Wrap aggressively so long URLs, tokens and code strings break
+     mid-string instead of forcing horizontal scroll. min-width:0 +
+     max-width:100% keep the bubble inside its (78%) column. */
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
+/* The plain-text span inside a bubble is the actual long-string
+   carrier — let it break and stay inside the bubble. */
+.chat-bubble > span { display: block; min-width: 0; overflow-wrap: anywhere; }
 .chat-msg.mine .chat-bubble {
   background: var(--primary);
   color: #fff;
@@ -1882,27 +2015,37 @@ body.admin-open { overflow: hidden; }
 /* Admin menu: category filter chips, sortable headers, group rows */
 .menu-cat-filter {
   display: flex;
-  /* Keep a stable single-row sticky height; multi-row wrapping can
-     get pushed upward near the scroll boundary and appear detached
-     from .admin-tabs at the very bottom of long pages. */
   flex-wrap: nowrap;
   overflow-x: auto;
   overflow-y: hidden;
   align-items: center;
   gap: 8px;
-  /* Override the customer .chips sticky offset (top:87px, sized for
-     the customer topbar). In the admin pane the tabs are pinned
-     outside the scroll box, so the filter pins to the top of the
-     scroll viewport — right below the tabs — instead of floating at
-     an 87px gap. */
-  position: sticky;
-  top: 0;
+  /* Pinned as a non-scrolling sibling between .admin-tabs and the
+     scrolling .admin-content (see index.html). It is NOT sticky:
+     it physically sits below the tabs and above the scroll box, so
+     the menu list scrolls underneath it and it can never be covered
+     or detach. flex:none keeps it from shrinking; relative + z-index
+     keep it painting above the scrolled content's stacking context.
+     Override the customer .chips sticky/top inherited via .chips. */
+  position: relative;
+  top: auto;
+  flex: none;
   z-index: 6;                 /* under .admin-tabs (z-index 7) */
   background: var(--cream);
-  margin: 0 0 12px;
-  padding: 10px 0;
+  /* Align the chip track with the panes below. Panes are max-width
+     980 centered inside .admin-content's 18px side padding, so their
+     content left inset is 18px + (vw - 1016)/2. Mirroring that here
+     (outer 1016 = 980 + 2×18, centered, 18px padding) makes the chips
+     line up with the table at every width. */
+  width: 100%;
+  max-width: 1016px;
+  margin-inline: auto;
+  padding: 10px 18px 12px;
   border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
 }
+/* When hidden on non-Menu tabs it must take no layout space. */
+.menu-cat-filter[hidden] { display: none; }
 .menu-group-toggle { white-space: nowrap; }
 .data-table th.sortable {
   cursor: pointer;
