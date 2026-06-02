@@ -656,20 +656,31 @@ function renderCategoryChips() {
   nav.innerHTML = chip('all', 'All') + cats.map(c => chip(c.id, c.label)).join('');
 }
 /* Align the menu so its first item sits just BELOW the sticky chips
-   bar (instead of hidden behind it). Target scroll = the point where
-   the chips become pinned; the grid then starts right under them.
-   Only scrolls up when the list is currently cut off under the bar,
-   so a category switch never yanks the page around needlessly. */
+   bar (instead of hidden behind it). The tricky part: scrolling up
+   toward the menu start crosses back under the 30vh dock threshold,
+   which UN-docks the view — the topbar slides back in and the chips
+   drop below it. So we must aim at the resting state, not the current
+   one: predict whether we'll land docked (topbar hidden, stack = chips)
+   or un-docked (topbar shown, stack = topbar + chips) and offset by
+   the right amount. */
 function alignMenuUnderChips() {
   const chips = $('#categoryChips');
   const grid  = $('#menuGrid');
   if (!chips || !grid) return;
-  const stickyTop  = parseFloat(getComputedStyle(chips).top) || 0;
-  const chipsH     = chips.offsetHeight;
-  const gridDocTop = grid.getBoundingClientRect().top + window.scrollY;
-  const target     = Math.max(0, gridDocTop - stickyTop - chipsH);
-  // Only correct if the grid top is currently tucked under the bar.
-  if (window.scrollY > target) window.scrollTo({ top: target, behavior: 'smooth' });
+  const gridDocTop = grid.getBoundingClientRect().top + window.scrollY;  // stable (grid isn't sticky)
+  const chipsH  = chips.offsetHeight;
+  const topbarH = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')
+  ) || 0;
+  const undockBound = window.innerHeight * 0.30 * 0.8;   // matches the JS hysteresis
+  // Assume we'll land un-docked (the common case — the menu is near the
+  // top). If that target is still deep enough to stay docked, switch to
+  // the docked offset (chips only).
+  let target = gridDocTop - topbarH - chipsH;
+  if (target >= undockBound) target = gridDocTop - chipsH;
+  target = Math.max(0, target);
+  // Only correct when the first item is actually tucked under the bar.
+  if (window.scrollY > target + 1) window.scrollTo({ top: target, behavior: 'smooth' });
 }
 $('#categoryChips').addEventListener('click', (e) => {
   const chip = e.target.closest('.chip');
