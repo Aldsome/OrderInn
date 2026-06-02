@@ -474,6 +474,20 @@ select option,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* This name's share PIN chip, shown next to the table name. */
+.table-pin {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--yellow-100);
+  border: 1px solid var(--yellow-200);
+  color: var(--yellow-700);
+  font-size: .74rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
 
 /* ==========================================================
    CUSTOMER ORDER-STATUS BANNER  (under the topbar)

@@ -694,7 +694,15 @@ const Store = {
       const usedPins = new Set(Store.getOrders()
         .filter(o => (o.status === 'pending' || o.status === 'preparing') && o.joinPin)
         .map(o => String(o.joinPin)));
-      do { joinPin = String(Math.floor(1000 + Math.random() * 9000)); } while (usedPins.has(joinPin));
+      // Prefer this device's already-established name PIN (minted when
+      // the name was first claimed) so the table keeps ONE consistent
+      // code from claim → order. Fall back to a fresh unique pin.
+      const namePin = Store.getMyNamePin && Store.getMyNamePin();
+      if (namePin && !usedPins.has(String(namePin))) {
+        joinPin = String(namePin);
+      } else {
+        do { joinPin = String(Math.floor(1000 + Math.random() * 9000)); } while (usedPins.has(joinPin));
+      }
     }
     const order = {
       id:          'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
@@ -981,9 +989,19 @@ const Store = {
     const all    = Store._readSessions();
     for (const cid of Object.keys(all)) {
       if (cid === myId) continue;
-      if ((all[cid].name || '').trim().toLowerCase() === needle) return cid;
+      if ((all[cid].name || '').trim().toLowerCase() === needle) {
+        return { clientId: cid, pin: all[cid].pin || null };
+      }
     }
     return null;
+  },
+  /* This device's own name PIN — the 4-digit code minted when it
+     claimed its current name. Shared with friends so they can take/
+     merge the name from another device, and reused as the order join
+     PIN on the first order so a table keeps one code throughout. */
+  getMyNamePin() {
+    const s = Store._readSessions()[Store.getClientId()];
+    return (s && s.pin) || null;
   },
   /* Cross-device collision check via Supabase. Returns the
      conflicting client_id, or null. Only meaningful in remote
@@ -996,36 +1014,56 @@ const Store = {
     const myId    = Store.getClientId();
     const cutoff  = new Date(Date.now() - ACTIVE_SESSION_TTL_MS).toISOString();
     try {
-      const { data, error } = await sb
+      let { data, error } = await sb
         .from('bb_sessions')
-        .select('client_id, name, last_active')
+        .select('client_id, name, last_active, pin')
         .ilike('name', needle)
         .gt('last_active', cutoff);
+      // Graceful degradation: if the `pin` column hasn't been added yet
+      // the select errors — retry without it so collision detection
+      // still works (the modal just falls back to the legacy reclaim).
+      if (error) {
+        ({ data, error } = await sb
+          .from('bb_sessions')
+          .select('client_id, name, last_active')
+          .ilike('name', needle)
+          .gt('last_active', cutoff));
+      }
       if (error || !data) return null;
       const hit = data.find(r =>
         r.client_id !== myId &&
         String(r.name || '').trim().toLowerCase() === needle
       );
-      return hit ? hit.client_id : null;
+      return hit ? { clientId: hit.client_id, pin: hit.pin || null } : null;
     } catch (e) {
       return null;   // network hiccup — fail open, don't block ordering
     }
   },
-  bumpActiveSession(name) {
+  bumpActiveSession(name, forcePin) {
     if (!name) { Store.dropActiveSession(); return; }
     const all = Store._readSessions();
-    all[Store.getClientId()] = { name, lastActive: Date.now() };
+    const cid = Store.getClientId();
+    const prev = all[cid];
+    // Keep the PIN stable while the name is unchanged; mint a fresh
+    // 4-digit code when the name changes (or none exists yet). forcePin
+    // lets a device that just PIN-merged into an existing name ADOPT that
+    // name's PIN, so every device under one name shares a single code.
+    const sameName = prev && (prev.name || '').trim().toLowerCase() === String(name).trim().toLowerCase();
+    const pin = forcePin || ((sameName && prev.pin) ? prev.pin : String(Math.floor(1000 + Math.random() * 9000)));
+    all[cid] = { name, lastActive: Date.now(), pin };
     writeJSON(STORE_KEYS.activeSessions, all);
-    // Mirror to Supabase so other devices can see this claim.
-    // Best-effort presence data — no retry queue (a missed
-    // heartbeat just makes the row look stale, which is fine).
+    // Mirror to Supabase so other devices can see this claim + its PIN.
+    // Best-effort presence data — no retry queue (a missed heartbeat
+    // just makes the row look stale, which is fine). If the `pin` column
+    // isn't present yet, retry once without it so presence still works.
     if (REMOTE_MODE && navigator.onLine) {
-      sb.from('bb_sessions').upsert({
-        client_id:   Store.getClientId(),
-        name,
-        last_active: new Date().toISOString(),
-      }).then(({ error }) => {
-        if (error) console.warn('[Store] session upsert failed', error);
+      const row = { client_id: cid, name, last_active: new Date().toISOString(), pin };
+      sb.from('bb_sessions').upsert(row).then(({ error }) => {
+        if (error) {
+          console.warn('[Store] session upsert failed', error);
+          const { pin: _omit, ...noPin } = row;
+          sb.from('bb_sessions').upsert(noPin).then(() => {});
+        }
       });
     }
   },

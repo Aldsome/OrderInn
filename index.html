@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=43" />
+  <link rel="stylesheet" href="style.css?v=44" />
 
   <script>
     (function () {
@@ -73,6 +73,9 @@
       <div class="table-strip container">
         <span>Table</span>
         <strong id="tableNumberDisplay">—</strong>
+        <!-- This name's share PIN — a friend on another device must
+             enter it to use/merge this name (see checkDuplicateTable). -->
+        <span class="table-pin" id="tablePinDisplay" hidden></span>
         <button class="link-mini" id="changeTableBtn">change</button>
       </div>
 
@@ -919,7 +922,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=29"></script>
-  <script src="script.js?v=59"></script>
+  <script src="store.js?v=30"></script>
+  <script src="script.js?v=60"></script>
 </body>
 </html>

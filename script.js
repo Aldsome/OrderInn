@@ -213,15 +213,31 @@ function readTableFromURL() {
   const t = params.get('table');
   return t ? t.trim() : null;
 }
+// Set on a successful PIN merge so the joining device adopts the
+// existing name/table PIN instead of minting its own (one code per
+// table). Consumed + cleared by the next setTableLabel.
+let nextAdoptPin = null;
 function setTableLabel(label) {
   state.tableNumber = label;                 // kept as `tableNumber` for compat
   $('#tableNumberDisplay').textContent = label || '—';
   if (label) {
     Store.setSessionTable(label);
-    Store.bumpActiveSession(label);
+    Store.bumpActiveSession(label, nextAdoptPin);   // mints/keeps/adopts this name's PIN
+    nextAdoptPin = null;
   } else {
     Store.clearSessionTable();
     Store.dropActiveSession();
+  }
+  // Surface this name's share PIN so the owner can hand it to friends
+  // joining from another device. Hidden for staff (their label is their
+  // account identity, not a shareable guest name).
+  const pinEl = $('#tablePinDisplay');
+  if (pinEl) {
+    const sess    = Store.getSession();
+    const isStaff = sess && sess.role === 'admin';
+    const pin     = (label && !isStaff) ? Store.getMyNamePin() : null;
+    if (pin) { pinEl.textContent = `PIN ${pin}`; pinEl.hidden = false; }
+    else     { pinEl.hidden = true; }
   }
   // The status banner + My-orders bubble are linked to the current
   // room, so re-evaluate them whenever the room changes (e.g. the
@@ -367,19 +383,19 @@ async function checkDuplicateTable(label, onAccept) {
   // there's nothing to join yet, so two strangers shouldn't both
   // sit as the same name (staff would mix up orders). The second
   // person picks a different label.
-  let conflictId = Store.findActiveSessionByName(label);
-  if (!conflictId) conflictId = await Store.findActiveSessionByNameRemote(label);
+  let conflict = Store.findActiveSessionByName(label);
+  if (!conflict) conflict = await Store.findActiveSessionByNameRemote(label);
   // A "conflict" against one of THIS browser's own past client ids is
   // just our own stale session after a soft reset — not a real clash.
   // Accept straight through (setTableLabel re-bumps the session under
   // the current id).
-  if (conflictId && Store.getMyClientIds().includes(conflictId)) conflictId = null;
-  if (conflictId) {
-    // Another live device holds this exact name and there's no order
-    // to join. Default action is still "choose another name", but we
-    // offer a reclaim escape hatch ("It's me — use this name") for the
-    // returning customer who e.g. cleared their browser — see BUG2.
-    showDupModal({ mode: 'nameTaken', label, onAccept });
+  if (conflict && Store.getMyClientIds().includes(conflict.clientId)) conflict = null;
+  if (conflict) {
+    // Another live device holds this exact name and there's no order to
+    // join yet. Gate the take/merge behind that device's name PIN so a
+    // troll can't grab a name in use; the genuine owner shares their PIN.
+    // (Legacy sessions with no PIN fall back to the reclaim escape hatch.)
+    showDupModal({ mode: 'nameTaken', label, onAccept, pin: conflict.pin });
     return;
   }
 
@@ -440,17 +456,25 @@ function showDupModal({ mode, label, count = 1, onAccept = null, pin = null }) {
       `You're already in "${label}" — this is your current table and order list.`;
     pendingTableAccept = onAccept;
   } else if (mode === 'nameTaken') {
-    if (title) title.textContent = 'That name is taken';
-    if (desc) desc.textContent =
-      `The name "${label}" looks like it's in use on another device. If that's not you, pick a different name so staff don't mix up your orders. If you're the same person returning (for example you cleared your browser), you can take it back.`;
-    // Default, safe action stays "choose another name". The reclaim
-    // button is the escape hatch for a returning customer (BUG2): no
-    // active order exists at this label, so there's nothing to mix up
-    // by letting them retake the name.
+    if (title) title.textContent = 'That name is in use';
     elseBtn.textContent = 'Choose another name';
     joinBtn.hidden = false;
-    joinBtn.textContent = "It's me — use this name";
-    pendingTableAccept = onAccept;               // reclaim accepts the label
+    pendingTableAccept = onAccept;               // accept = take/merge the name
+    if (pin) {
+      // The name's owner has a PIN — require it to take/merge the name,
+      // so a troll can't grab a name that's in active use.
+      if (desc) desc.textContent =
+        `"${label}" is in use on another device. Enter that person's PIN to share the name and merge your orders, or pick a different name. The PIN shows on their screen under the table name.`;
+      joinBtn.textContent = 'Use this name';
+      pendingTablePin = pin;
+      if (pinRow) pinRow.hidden = false;
+    } else {
+      // Legacy session minted before the PIN feature (or the pin column
+      // isn't present yet) — keep the old reclaim escape hatch.
+      if (desc) desc.textContent =
+        `The name "${label}" looks like it's in use on another device. If that's not you, pick a different name so staff don't mix up your orders. If you're the same person returning (for example you cleared your browser), you can take it back.`;
+      joinBtn.textContent = "It's me — use this name";
+    }
   } else if (mode === 'ownOrder') {
     if (title) title.textContent = 'Already an open order here';
     joinBtn.hidden = false;
@@ -476,7 +500,7 @@ function showDupModal({ mode, label, count = 1, onAccept = null, pin = null }) {
   pendingTableLabel = label;
   closeTableModal();            // ensure the dup prompt isn't painted behind the table modal
   openModal('#dupTableModal');
-  if (mode === 'share' && pin && pinInp) setTimeout(() => pinInp.focus(), 50);
+  if ((mode === 'share' || mode === 'nameTaken') && pin && pinInp) setTimeout(() => pinInp.focus(), 50);
 }
 
 $('#dupTableJoinBtn').addEventListener('click', () => {
@@ -502,6 +526,9 @@ $('#dupTableJoinBtn').addEventListener('click', () => {
     }
   }
   const accept = pendingTableAccept;
+  // Adopt the PIN we just validated so this device shares the table's
+  // single code (consumed by setTableLabel via bumpActiveSession).
+  if (pendingTablePin) nextAdoptPin = pendingTablePin;
   closeModal('#dupTableModal');
   pendingTableLabel = null; pendingTableAccept = null; pendingTablePin = null; pinAttempts = 0;
   $('#dupTableJoinBtn').disabled = false;
@@ -746,8 +773,21 @@ function changeQty(key, delta) {
   const line = findLine(key);
   if (!line) return;
   line.qty += delta;
-  if (line.qty <= 0) state.cart = state.cart.filter(l => l.lineKey !== key);
-  updateCart();
+  if (line.qty <= 0) { state.cart = state.cart.filter(l => l.lineKey !== key); updateCart(); return; }
+  // Patch ONLY this row + the totals instead of rebuilding the whole
+  // list, so the cart drawer keeps its scroll position and the +/-
+  // button you're tapping stays put (no jump / lost focus).
+  const item = MENU.find(m => m.id === line.id);
+  const row  = [...cartItemsEl.querySelectorAll('.cart-item')].find(el => el.dataset.key === key);
+  if (item && row) {
+    const qtySpan = row.querySelector('.qty-row span');
+    if (qtySpan) qtySpan.textContent = line.qty;
+    const priceEl = row.querySelector('.item-price');
+    if (priceEl) priceEl.textContent = peso(unitPrice(item, line.config) * line.qty);
+    refreshCartChrome();
+  } else {
+    updateCart();                       // row not found — fall back to a full render
+  }
 }
 function removeLine(key) {
   state.cart = state.cart.filter(l => l.lineKey !== key);
@@ -758,15 +798,21 @@ function clearCart() {
   updateCart();
 }
 
-function updateCart() {
+/* FAB count/total + drawer total + place-order button + in-cart badges.
+   Split out so a single qty change can refresh these without rebuilding
+   the whole cart list (see changeQty). */
+function refreshCartChrome() {
   const { subtotal, count } = cartTotals();
-
-  // FAB
   $('#fabCartCount').textContent = count;
   $('#fabCartTotal').textContent = peso(subtotal);
   $('#fabCartBtn').classList.toggle('hidden-empty', count === 0);
+  cartTotalEl.textContent = peso(subtotal);
+  $('#placeOrderBtn').disabled = count === 0;
+  updateInCartBadges();
+}
 
-  // Drawer
+function updateCart() {
+  // Drawer list
   if (state.cart.length === 0) {
     cartItemsEl.innerHTML = `<p class="empty-state">Your cart is empty. Tap any item to add ☕</p>`;
   } else {
@@ -797,10 +843,7 @@ function updateCart() {
     }).join('');
   }
 
-  cartTotalEl.textContent = peso(subtotal);
-  $('#placeOrderBtn').disabled = count === 0;
-
-  updateInCartBadges();
+  refreshCartChrome();
 }
 
 cartItemsEl.addEventListener('click', (e) => {
@@ -864,6 +907,19 @@ document.addEventListener('click', (e) => {
     // the my-orders sheet — the customer's attention is moving
     // to a different surface.
     if (close) closeMyOrders();
+  }
+
+  // Chat: clicking away from the open chat closes it (same as the cart
+  // and my-orders sheets). Exclude the openers (so the tap that opens it
+  // doesn't immediately close it) and anything inside the drawer or a
+  // modal layered over it.
+  if (chatDrawer.classList.contains('open')) {
+    let close = true;
+    if (chatDrawer.contains(t))            close = false;
+    else if (t.closest('.fab-chat'))       close = false;   // customer opener
+    else if (t.closest('.chat-act-btn'))   close = false;   // admin "Chat" opener
+    else if (t.closest('.modal'))          close = false;   // dialog over the chat
+    if (close) closeChat();
   }
 });
 
