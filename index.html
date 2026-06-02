@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=42" />
+  <link rel="stylesheet" href="style.css?v=43" />
 
   <script>
     (function () {
@@ -76,15 +76,21 @@
         <button class="link-mini" id="changeTableBtn">change</button>
       </div>
 
-      <!-- Customer's active-order status banner (poll-driven) -->
+      <!-- Customer's active-order status banner (poll-driven).
+           After a few seconds it auto-collapses the status into a small
+           cube on the right and reveals an auto-scrolling best-seller
+           carousel in the freed space. Tapping the cube (‹) restores it. -->
       <div class="order-status-banner container" id="orderStatusBanner" hidden>
+        <div class="osb-carousel" id="osbCarousel" aria-label="Popular picks" aria-hidden="true">
+          <div class="osb-track" id="osbTrack"></div>
+        </div>
         <button type="button" class="status-banner-btn" id="orderStatusBtn">
           <span class="status-icon" id="bannerStatusIcon">⏳</span>
           <div class="status-text">
             <strong>Order #<span id="bannerOrderNumber">—</span></strong>
             <small id="bannerStatusText">Sent to kitchen</small>
           </div>
-          <span class="status-arrow">›</span>
+          <span class="status-arrow" aria-hidden="true"></span>
         </button>
       </div>
     </header>
@@ -914,6 +920,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
   <script src="store.js?v=29"></script>
-  <script src="script.js?v=58"></script>
+  <script src="script.js?v=59"></script>
 </body>
 </html>

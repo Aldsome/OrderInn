@@ -1195,14 +1195,23 @@ function refreshOrderStatusBanner() {
 
   if (!order) {
     banner.hidden = true;
+    osbReset();
     return;
   }
   const info = STATUS_INFO[order.status] || STATUS_INFO.pending;
+  const wasHidden = banner.hidden;
   banner.hidden = false;
   $('#orderStatusBtn').dataset.status = order.status;
   $('#bannerOrderNumber').textContent = order.number;
   $('#bannerStatusText').textContent  = info.text;
   $('#bannerStatusIcon').textContent  = info.icon;
+  // Start the collapse countdown when the banner first appears; pop it
+  // back out if the status changed while it was tucked into the cube.
+  if (wasHidden) { osbLastStatus = order.status; osbScheduleCollapse(); }
+  else if (order.status !== osbLastStatus) {
+    osbLastStatus = order.status;
+    if (banner.classList.contains('collapsed')) osbExpand();
+  }
 
   // If the placed modal is currently visible, sync its status too.
   if ($('#orderPlacedModal').classList.contains('open')) {
@@ -1293,12 +1302,120 @@ $('#placedCancelBtn').addEventListener('click', () => {
   if (fresh) updatePlacedModalForOrder(fresh);
 });
 
+/* ==========================================================
+   ORDER-STATUS BANNER — auto-collapse + best-seller carousel
+   A few seconds after the status banner appears it tucks itself
+   into a small cube on the right (arrow flips to ‹), freeing the
+   space for an auto-scrolling Top-10 best-seller carousel. Tapping
+   the cube restores the full status (and re-arms the countdown);
+   a status change also pops it back out so the customer sees it.
+   Tapping a carousel card opens that product.
+   ========================================================== */
+const OSB_COLLAPSE_MS = 5000;     // delay before the status tucks away
+const OSB_SLIDE_MS    = 3000;     // carousel auto-advance cadence
+let osbCollapseTimer = null;
+let osbAutoTimer     = null;
+let osbLastStatus    = null;
+
+function getBestSellers(limit = 10) {
+  const counts = new Map();
+  Store.getOrders().forEach(o => (o.items || []).forEach(it => {
+    if (!it.itemId) return;
+    counts.set(it.itemId, (counts.get(it.itemId) || 0) + (Number(it.qty) || 1));
+  }));
+  const ranked = MENU.slice()
+    .map(m => ({ m, n: counts.get(m.id) || 0 }))
+    .sort((a, b) => b.n - a.n);
+  let list = ranked.filter(r => r.n > 0).map(r => r.m);
+  if (list.length < limit) {                       // pad with the rest of the menu
+    const have = new Set(list.map(m => m.id));
+    list = list.concat(MENU.filter(m => !have.has(m.id)));
+  }
+  return list.slice(0, limit);
+}
+
+function renderBestSellerCarousel() {
+  const track = $('#osbTrack');
+  if (!track) return;
+  track.innerHTML = getBestSellers(10).map((m, i) => `
+    <button type="button" class="osb-card" data-id="${escapeHtml(m.id)}">
+      <span class="osb-thumb">${thumbMarkup(m, { alt: m.name })}</span>
+      <span class="osb-info">
+        <span class="osb-rank">#${i + 1} Best seller</span>
+        <span class="osb-name">${escapeHtml(m.name)}</span>
+      </span>
+      <span class="osb-price">${peso(m.price)}</span>
+    </button>`).join('');
+}
+
+function osbAutoplayStop() { if (osbAutoTimer) { clearInterval(osbAutoTimer); osbAutoTimer = null; } }
+function osbAutoplayStart() {
+  osbAutoplayStop();
+  const track = $('#osbTrack');
+  if (!track) return;
+  osbAutoTimer = setInterval(() => {
+    if (!track.children.length) return;
+    const card = track.querySelector('.osb-card');
+    const step = card ? card.offsetWidth + 8 : 160;
+    const max  = track.scrollWidth - track.clientWidth;
+    if (track.scrollLeft >= max - 4) track.scrollTo({ left: 0, behavior: 'smooth' });
+    else track.scrollBy({ left: step, behavior: 'smooth' });
+  }, OSB_SLIDE_MS);
+}
+
+function osbCollapse() {
+  const banner = $('#orderStatusBanner');
+  if (!banner || banner.hidden) return;
+  renderBestSellerCarousel();
+  banner.classList.add('collapsed');
+  const car = $('#osbCarousel');
+  if (car) car.setAttribute('aria-hidden', 'false');
+  osbAutoplayStart();
+}
+function osbExpand() {
+  const banner = $('#orderStatusBanner');
+  if (!banner) return;
+  banner.classList.remove('collapsed');
+  const car = $('#osbCarousel');
+  if (car) car.setAttribute('aria-hidden', 'true');
+  osbAutoplayStop();
+  osbScheduleCollapse();          // re-arm so it tucks away again shortly
+}
+function osbScheduleCollapse() {
+  clearTimeout(osbCollapseTimer);
+  osbCollapseTimer = setTimeout(osbCollapse, OSB_COLLAPSE_MS);
+}
+function osbReset() {
+  clearTimeout(osbCollapseTimer);
+  osbAutoplayStop();
+  osbLastStatus = null;
+  const banner = $('#orderStatusBanner');
+  if (banner) banner.classList.remove('collapsed');
+}
+
+/* Banner click: when tucked into the cube, restore it; otherwise open
+   the My-orders sheet (most customers have 2+ orders, so the popup is
+   the more useful default). */
 $('#orderStatusBtn').addEventListener('click', () => {
-  // Banner now opens the multi-order popup, not the single-order
-  // modal — most customers end up placing 2+ orders so the popup
-  // is the more useful default destination.
-  openMyOrders();
+  const banner = $('#orderStatusBanner');
+  if (banner && banner.classList.contains('collapsed')) osbExpand();
+  else openMyOrders();
 });
+
+/* Carousel card → open that product. Pause autoplay while the user is
+   hovering/touching so it doesn't slide out from under their tap. */
+const osbTrackEl = $('#osbTrack');
+if (osbTrackEl) {
+  osbTrackEl.addEventListener('click', (e) => {
+    const card = e.target.closest('.osb-card');
+    if (!card) return;
+    openCustomizer(card.dataset.id);
+  });
+  osbTrackEl.addEventListener('pointerenter', osbAutoplayStop);
+  osbTrackEl.addEventListener('pointerleave', () => {
+    if ($('#orderStatusBanner')?.classList.contains('collapsed')) osbAutoplayStart();
+  });
+}
 
 /* ==========================================================
    MY ORDERS  (multi-order popup + FAB + thank-you reset)
@@ -1334,6 +1451,8 @@ function refreshMyOrdersFab() {
   const active = getActiveOrdersHere().length;
   const fab = $('#fabMyOrdersBtn');
   fab.hidden = (active === 0);
+  // Let the back-to-top button lift above this pill when it's present.
+  document.body.classList.toggle('has-myorders-fab', !fab.hidden);
   $('#fabMyOrdersBadge').textContent = active;
   // Chat FAB only appears once this table has an order to talk about.
   const chatFab = $('#fabChatBtn');
@@ -4582,6 +4701,24 @@ window.addEventListener('resize', syncTopbarHeight);
   if (toTop) toTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 
   apply();
+})();
+
+/* During pinch-zoom / rotate the layout viewport recalculates and
+   fixed elements (FABs, topbar) can momentarily jut as positions
+   resolve. Suppress their transitions for the duration of the change
+   so nothing animates into/out of view; restore shortly after. */
+(function wireViewportAnimGuard() {
+  let t = null;
+  const onChange = () => {
+    document.body.classList.add('vp-resizing');
+    clearTimeout(t);
+    t = setTimeout(() => document.body.classList.remove('vp-resizing'), 280);
+  };
+  window.addEventListener('resize', onChange, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onChange, { passive: true });
+    window.visualViewport.addEventListener('scroll', onChange, { passive: true });
+  }
 })();
 
 document.addEventListener('DOMContentLoaded', boot);

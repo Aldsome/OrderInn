@@ -483,9 +483,17 @@ select option,
    ========================================================== */
 .order-status-banner {
   padding-block: 0 12px;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  /* Fixed row height so the collapse to a cube + carousel never shifts
+     the banner (and therefore the topbar height / chip offset). */
+  min-height: 76px;
 }
+.order-status-banner.collapsed { gap: 8px; }
 .status-banner-btn {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -498,9 +506,110 @@ select option,
   font-size: .9rem;
   text-align: left;
   cursor: pointer;
-  transition: background .15s, border-color .15s, transform .12s;
+  overflow: hidden;
+  /* Collapse animation: width + padding shrink the button into a cube. */
+  transition: flex-basis .4s cubic-bezier(.4, .2, .2, 1),
+              flex-grow .4s cubic-bezier(.4, .2, .2, 1),
+              padding .4s cubic-bezier(.4, .2, .2, 1),
+              background .15s, border-color .15s, transform .12s;
 }
 .status-banner-btn:hover { transform: translateY(-1px); }
+
+/* ----- Collapsed-to-cube state + best-seller carousel ----- */
+/* The carousel occupies the freed space to the LEFT of the cube. It
+   sits at width 0 until the banner collapses, then expands. */
+.osb-carousel {
+  flex: 0 1 0;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  border-radius: 14px;
+  transition: flex-grow .4s cubic-bezier(.4, .2, .2, 1), opacity .3s ease;
+}
+.order-status-banner.collapsed .osb-carousel {
+  flex: 1 1 auto;
+  opacity: 1;
+  pointer-events: auto;
+}
+.order-status-banner.collapsed .status-banner-btn {
+  flex: 0 0 auto;
+  width: 50px;
+  padding: 8px;
+  justify-content: center;
+}
+.order-status-banner.collapsed .status-text { display: none; }
+.order-status-banner.collapsed .status-icon { display: none; }
+.order-status-banner.collapsed .status-arrow { font-size: 1.8rem; color: var(--primary-deep); }
+/* Arrow flips: › (open the My-orders sheet) → ‹ (restore the banner). */
+.status-arrow::before { content: '\203A'; }            /* › */
+.order-status-banner.collapsed .status-arrow::before { content: '\2039'; }  /* ‹ */
+.status-arrow {
+  font-size: 1.4rem;
+  color: var(--ink-soft);
+  font-weight: 300;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.osb-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+.osb-track::-webkit-scrollbar { display: none; }
+.osb-card {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--white);
+  color: var(--ink);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color .15s, transform .12s;
+}
+.osb-card:hover { border-color: var(--brown-300); transform: translateY(-1px); }
+.osb-thumb {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--brown-50);
+  font-size: 1.2rem;
+}
+.osb-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.osb-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.osb-rank {
+  font-size: .64rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--accent-deep);
+  text-transform: uppercase;
+}
+.osb-name {
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.osb-price { font-size: .76rem; color: var(--primary-deep); font-weight: 600; }
 .status-banner-btn .status-icon {
   position: relative;
   width: 40px;
@@ -677,9 +786,11 @@ select option,
 
 .back-to-top {
   position: fixed;
-  right: clamp(12px, 4vw, 24px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);  /* clear the cart bar */
-  z-index: 35;
+  right: 18px;
+  /* Sits where My orders would be when that FAB is hidden; lifts above
+     it when present (body.has-myorders-fab, set in refreshMyOrdersFab). */
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  z-index: 79;                 /* just under the FABs (80) */
   display: inline-grid;
   place-items: center;
   width: 46px;
@@ -700,6 +811,18 @@ select option,
   pointer-events: auto;
 }
 .back-to-top:hover { border-color: var(--brown-300); }
+/* Lift above the My-orders pill when it's showing so they never overlap. */
+body.has-myorders-fab .back-to-top { bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); }
+
+/* Suppress fixed-element transitions during viewport changes (pinch-zoom,
+   rotate) so FABs don't animate/jut as the layout recalculates. */
+body.vp-resizing .fab-myorders,
+body.vp-resizing .fab-chat,
+body.vp-resizing .fab-cart,
+body.vp-resizing .back-to-top,
+body.vp-resizing .nav-handle,
+body.vp-resizing .topbar,
+body.vp-resizing .chips { transition: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
   .topbar, .chips, .nav-handle, .back-to-top { transition: none; }
@@ -2978,6 +3101,8 @@ body.cart-open .fab-cart {
     max-height: 70vh;
   }
   .fab-myorders { right: 12px; bottom: 76px; padding: 9px 14px; font-size: .85rem; }
+  .back-to-top { right: 12px; }
+  body.has-myorders-fab .back-to-top { bottom: calc(env(safe-area-inset-bottom, 0px) + 132px); }
   .bell-dropdown { right: -8px; }
   .admin-toast-stack { right: 8px; bottom: 8px; left: 8px; max-width: none; }
 }
