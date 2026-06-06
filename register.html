@@ -74,7 +74,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=31"></script>
+  <script src="store.js?v=32"></script>
   <script>
     // Standalone registration flow — shares Store with the main
     // app via localStorage. On success, the new account is written
@@ -88,7 +88,12 @@
     // Make sure the default admin is present too — same boot
     // sequence as the main app, so opening register.html cold
     // still gives someone to sign in as.
-    Store.bootSeed().catch(() => {});
+    function paintBrand() {
+      const ini = Store.brandInitials();
+      document.querySelectorAll('.brand-mark').forEach(el => { el.textContent = ini; });
+    }
+    paintBrand();
+    Store.bootSeed().then(paintBrand).catch(() => {});
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();

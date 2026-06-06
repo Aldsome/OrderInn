@@ -1334,6 +1334,33 @@ const Store = {
     const acct = users.find(u => (u.email || '').toLowerCase() === String(s.email).toLowerCase());
     return !!acct && acct.role === 'admin';
   },
+  /* Role-agnostic staleness check used at boot for BOTH admin and
+     customer sessions: true when there IS a session but its
+     account is gone from the synced list (renamed/deleted on the
+     server). Returns false when no accounts are cached (offline)
+     so a real user isn't kicked out just because the list failed
+     to load. */
+  sessionStale() {
+    const s = readJSON(STORE_KEYS.session, null);
+    if (!s) return false;
+    const users = readJSON(STORE_KEYS.users, []);
+    if (!users.length) return false;
+    return !users.find(u => (u.email || '').toLowerCase() === String(s.email).toLowerCase());
+  },
+  /* Derive 1–2 letter logo initials from the shop name so the
+     brand mark follows a rebrand automatically — no hardcoded
+     letters to chase. Prefers embedded capitals
+     ("OrderInn Coffee" → "OI"), then word initials, then the
+     first two letters. Pass nothing to use the current config. */
+  brandInitials(name) {
+    const s = String(name == null ? Store.getConfig().shopName : name || '').trim();
+    if (!s) return 'OI';
+    const caps = s.match(/[A-Z]/g);
+    if (caps && caps.length >= 2) return (caps[0] + caps[1]).toUpperCase();
+    const words = s.split(/\s+/).filter(Boolean);
+    if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+    return s.slice(0, 2).toUpperCase();
+  },
 
   /* ==========================================================
      SEED — runs every boot; guarantees the default admin

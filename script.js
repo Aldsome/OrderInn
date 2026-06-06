@@ -203,6 +203,11 @@ function applyConfigToDOM() {
   document.title = `${CONFIG.shopName} — Order`;
   $('#brandName').textContent    = CONFIG.shopName;
   $('#brandTagline').textContent = CONFIG.tagline;
+  // Logo initials follow the shop name automatically, so a rebrand
+  // from Settings updates every brand mark on the page — no more
+  // hardcoded letters to hunt down.
+  const initials = Store.brandInitials(CONFIG.shopName);
+  document.querySelectorAll('.brand-mark').forEach(el => { el.textContent = initials; });
 }
 
 /* ==========================================================
@@ -4646,17 +4651,17 @@ async function boot() {
   localStorage.removeItem('bossb_table');
   await Store.bootSeed();
 
-  // If a remembered admin session no longer matches a live admin
-  // account (the account was renamed/removed on the server — e.g.
-  // after the admin-email rebrand), drop it and prompt a fresh
-  // sign-in so a stale "admin" can't keep panel access on this
-  // device. isAdmin() now re-validates against the synced accounts.
+  // If a remembered session (admin OR customer) no longer matches
+  // a live account — the account was renamed/removed on the server,
+  // e.g. after the admin-email rebrand — drop it and prompt a fresh
+  // sign-in so a stale login can't linger on this device.
   const remembered = Store.getSession();
-  if (remembered && remembered.role === 'admin' && !Store.isAdmin()) {
+  if (remembered && Store.sessionStale()) {
+    const wasAdmin = remembered.role === 'admin';
     Store.logout();
     refreshAdminHeaderBtn();
-    showToast('Your admin account changed — please sign in again', 'error');
-    openStaffLogin();
+    showToast('Your account is no longer available — please sign in again', 'error');
+    if (wasAdmin) openStaffLogin();
   }
 
   // Always boot into the customer view. Admins click Staff

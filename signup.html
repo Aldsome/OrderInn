@@ -71,7 +71,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=31"></script>
+  <script src="store.js?v=32"></script>
   <script>
     // Customer signup — no invite code. role=customer skips the
     // invite check inside Store.registerAccount. Future work:
@@ -84,7 +84,12 @@
     const okEl    = $('#signupSuccess');
     const submit  = $('#signupSubmitBtn');
 
-    Store.bootSeed().catch(() => {});
+    function paintBrand() {
+      const ini = Store.brandInitials();
+      document.querySelectorAll('.brand-mark').forEach(el => { el.textContent = ini; });
+    }
+    paintBrand();
+    Store.bootSeed().then(paintBrand).catch(() => {});
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
