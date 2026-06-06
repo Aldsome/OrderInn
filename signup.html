@@ -39,7 +39,7 @@
 
       <form id="signupForm" class="auth-form" novalidate>
         <label>Display name
-          <input type="text" name="name" required autocomplete="name" placeholder="What should we call you?" />
+          <input type="text" name="name" required autocomplete="name" placeholder="e.g. juan_cruz (letters, numbers, _ or -)" />
         </label>
         <label>Email
           <input type="email" name="email" required autocomplete="email" placeholder="you@example.com" />
@@ -71,7 +71,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=35"></script>
+  <script src="store.js?v=36"></script>
   <script>
     // Customer signup — no invite code. role=customer skips the
     // invite check inside Store.registerAccount. Future work:

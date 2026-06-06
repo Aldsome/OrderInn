@@ -344,6 +344,7 @@ $('#tableTabLoginForm')?.addEventListener('submit', async (e) => {
     const cust = await Store.loginCustomer({ email: fd.get('email'), password: fd.get('password') });
     e.target.reset();
     refreshProfileBtn();
+    reconcileCustomerPoints();
     showToast(`Welcome, ${cust.name}`, 'success');
     // They have an identity now; if they already picked a table, close —
     // otherwise drop them back on the table picker to choose one.
@@ -2334,6 +2335,7 @@ $('#customerLoginForm').addEventListener('submit', async (e) => {
     e.target.reset();
     closeCustomerLogin();
     refreshProfileBtn();
+    reconcileCustomerPoints();
     showToast(`Welcome, ${cust.name}`, 'success');
     // Auto-redirect into the ordering flow. A table/PIN is still
     // required to order, so prompt for it when none is set yet.
@@ -4001,6 +4003,23 @@ function snapshotOrderStatuses() {
   for (const o of Store.getOrders()) ORDER_STATUS_BY_ID.set(o.id, o.status);
 }
 
+/* Credit points for any of THIS customer's orders that are already
+   completed but not yet awarded — covers orders served while their
+   tab was closed (the live award in reactToCustomerOrderChanges only
+   fires on a status transition this device actually observes).
+   Idempotent via Store.awardOrderPoints. */
+function reconcileCustomerPoints() {
+  if (!(Store.isCustomer && Store.isCustomer())) return 0;
+  let total = 0;
+  for (const o of Store.getMyOrders()) {
+    if (o.status === 'served') total += Store.awardOrderPoints(o);
+  }
+  if (total > 0 && !adminPanelOpenForToasts()) {
+    showToast(`+${total} points from completed orders`, 'success');
+  }
+  return total;
+}
+
 /* Detects status changes for THIS customer's orders since the
    last snapshot and shows a friendly toast. Skipped silently
    when the admin panel is open (per the requested rule). */
@@ -4927,6 +4946,8 @@ async function boot() {
   // for orders that already existed when the tab opened.
   snapshotOrderStatuses();
   knownOrderIds = new Set(Store.getOrders().map(o => o.id));
+  // Credit points for orders completed while the customer was away.
+  reconcileCustomerPoints();
 
   // Restore the customer's order state on reload — banner, FAB,
   // and polling all derive from the same client's orders.

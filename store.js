@@ -1667,6 +1667,14 @@ const Store = {
     email = String(email || '').trim().toLowerCase();
     name  = String(name  || '').trim();
     if (!email || !name || !password) throw new Error('Missing field');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter a valid email address');
+    // Account name rules: letters/numbers/underscore/dash only, 2–30
+    // chars, no spaces and no "@" (so a name can't masquerade as an
+    // email or break the chat sender label). Duplicate NAMES are fine;
+    // only duplicate emails are blocked (below).
+    if (!/^[A-Za-z0-9_-]{2,30}$/.test(name)) {
+      throw new Error('Name can use only letters, numbers, _ or - (2–30 chars, no spaces or @)');
+    }
     if (password.length < 8)          throw new Error('Password must be at least 8 characters');
 
     // Customer self-signup never needs the invite code — that's
