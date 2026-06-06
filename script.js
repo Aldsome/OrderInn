@@ -240,7 +240,17 @@ function setTableLabel(label) {
   if (pinEl) {
     const sess    = Store.getSession();
     const isStaff = sess && sess.role === 'admin';
-    const pin     = (label && !isStaff) ? Store.getMyNamePin() : null;
+    // Show the table's CANONICAL join PIN: an active order's PIN at
+    // this table (what the Join gate actually checks, and what the
+    // My-orders panel shows) wins, so every surface agrees. Fall back
+    // to this device's name PIN only before any order exists. Without
+    // this, a local reset re-mints the name PIN and the header drifts
+    // out of sync with the orders' PIN (header showed a code that
+    // wouldn't actually let anyone join).
+    let pin = null;
+    if (label && !isStaff) {
+      pin = getActiveOrdersHere().map(o => o.joinPin).find(Boolean) || Store.getMyNamePin();
+    }
     if (pin) { pinEl.textContent = `PIN ${pin}`; pinEl.hidden = false; }
     else     { pinEl.hidden = true; }
   }
@@ -4642,6 +4652,21 @@ function timeAgo(d, now = Date.now()) {
    BOOT
    ========================================================== */
 async function boot() {
+  // Recovery escape hatch — open the site with ?reset=1 to wipe ALL
+  // local data (cache, pending sync queue, sign-in) WITHOUT needing
+  // to sign in. For when local state gets wedged and the normal UI
+  // or admin panel can't be reached. Server data is untouched; the
+  // next load re-pulls a clean copy from Supabase. Runs first, before
+  // anything that could itself throw.
+  if (new URLSearchParams(location.search).get('reset') === '1') {
+    try {
+      Store.factoryReset();
+      ['bb_chat_local', 'bossb_active_order', 'bb_chat_seen', 'bb_pin_hint_seen', 'bb_dismissed_orders']
+        .forEach(k => localStorage.removeItem(k));
+    } catch (e) { /* best-effort */ }
+    location.replace(location.pathname);   // drop the param + reload clean
+    return;
+  }
   initTheme();
   applyConfigToDOM();
   // Migration: an older build cached the table label here so

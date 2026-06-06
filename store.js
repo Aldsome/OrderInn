@@ -429,9 +429,27 @@ function queuePending(entry) {
   writePending(filtered);
 }
 
-/* Replay all queued writes. Stops on the first failure so we
-   preserve order. Called on every successful remote write, on
-   the `online` browser event, and on a 20s timer. */
+/* Distinguish writes that can NEVER succeed on retry (RLS denial,
+   constraint/validation, auth) from temporary ones (offline,
+   timeout, 5xx, rate-limit). Permanent failures are DROPPED instead
+   of being queued/retried, so a single rejected write can't become
+   a "poison pill" that jams every later write behind it forever. */
+function isPermanentError(error) {
+  if (!error) return false;
+  const code = String(error.code || '');
+  // Postgres / PostgREST permanent rejections.
+  const permCodes = ['42501', '23502', '23503', '23514', '23505', '22P02', 'PGRST301'];
+  if (permCodes.includes(code)) return true;
+  const status = Number(error.status || error.statusCode || 0);
+  // 4xx won't fix itself — except 408 (timeout) and 429 (rate-limit).
+  if (status >= 400 && status < 500 && status !== 408 && status !== 429) return true;
+  return false;
+}
+
+/* Replay all queued writes. Stops on the first TRANSIENT failure so
+   we preserve order; permanent failures are dropped and skipped.
+   Called on every successful remote write, on the `online` browser
+   event, and on a 20s timer. */
 let flushing = false;
 async function flushPending() {
   if (!REMOTE_MODE || flushing) return;
@@ -454,6 +472,14 @@ async function flushPending() {
       list = readPending().filter(e => e.id !== entry.id);
       writePending(list);
     } catch (e) {
+      if (isPermanentError(e)) {
+        // Poison pill: this write can never succeed (e.g. RLS
+        // denial). Drop it so it can't jam every queued write
+        // behind it, and keep draining the rest of the queue.
+        console.warn('[Store] dropping un-syncable write (permanent error)', entry, e);
+        writePending(readPending().filter(x => x.id !== entry.id));
+        continue;
+      }
       console.warn('[Store] flush stalled, will retry later', e);
       setSyncState({ status: 'error' });
       flushing = false;
@@ -491,6 +517,13 @@ function remoteUpsert(table, row) {
           else flushPending();
         });
       }
+      if (isPermanentError(error)) {
+        // Won't ever succeed on retry (RLS / validation / auth) —
+        // drop it instead of queuing so one rejected write can't
+        // jam the whole sync queue.
+        console.error(`[Store] supabase upsert ${table} REJECTED (permanent) — not queued`, error);
+        return;
+      }
       console.warn(`[Store] supabase upsert ${table} failed — queued for retry`, error);
       queuePending({ table, op: 'upsert', payload: row });
       flushPending();
@@ -524,6 +557,10 @@ function remoteDelete(table, idCol, id) {
   }
   return sb.from(table).delete().eq(idCol, id).then(({ error }) => {
     if (error) {
+      if (isPermanentError(error)) {
+        console.error(`[Store] supabase delete ${table} REJECTED (permanent) — not queued`, error);
+        return;
+      }
       console.warn(`[Store] supabase delete ${table} failed — queued for retry`, error);
       queuePending({ table, op: 'delete', payload: { _delCol: idCol, _delId: id } });
       flushPending();
@@ -1367,11 +1404,18 @@ const Store = {
      exists with the default password.
      ========================================================== */
   async seedIfEmpty() {
+    const SEED_ID       = 'u_seed_admin';
     const SEED_EMAIL    = 'admin@orderinn.com';
     const SEED_PASSWORD = 'admin1234';
     const users = await Store.getUsers();
     const expectedHash = await hashPassword(SEED_PASSWORD);
-    const existing = users.find(u => u.email === SEED_EMAIL);
+    // Match the seed admin by its STABLE id first, falling back to
+    // email only for legacy rows. Matching by email alone meant a
+    // rebrand (email change) made the app think the admin was gone
+    // and try to recreate it — a write RLS rejects, which jammed
+    // the sync queue. Id-matching makes future renames code-only.
+    const existing = users.find(u => u.id === SEED_ID)
+                  || users.find(u => (u.email || '').toLowerCase() === SEED_EMAIL.toLowerCase());
 
     if (existing) {
       let changed = false;
@@ -1382,7 +1426,7 @@ const Store = {
     }
 
     const seed = {
-      id:           'u_seed_admin',
+      id:           SEED_ID,
       email:        SEED_EMAIL,
       passwordHash: expectedHash,
       name:         'Admin',
