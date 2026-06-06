@@ -623,8 +623,11 @@ $('#tableForm').addEventListener('submit', async (e) => {
   const submitBtn = e.target.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.disabled = true;
   try {
-    await checkDuplicateTable(label, () => {
-      moveOrdersOnTableChange(label);   // carry / cancel active orders when moving
+    await checkDuplicateTable(label, async () => {
+      // Decide what happens to active orders first; if the user opts to
+      // keep their current name, abort the rename without changing it.
+      const proceed = await moveOrdersOnTableChange(label);
+      if (!proceed) { closeTableModal(); return; }
       setTableLabel(label);
       closeTableModal();
       bumpInactivity();
@@ -638,25 +641,38 @@ $('#tableForm').addEventListener('submit', async (e) => {
    orders at the old one, offer to move those orders along (they
    follow the person). Declining cancels them — the customer is
    leaving that room. No-op when there's nothing active to move. */
-function moveOrdersOnTableChange(newLabel) {
+async function moveOrdersOnTableChange(newLabel) {
   const oldLabel = state.tableNumber;
-  if (!oldLabel || sameLabel(oldLabel, newLabel)) return;
+  if (!oldLabel || sameLabel(oldLabel, newLabel)) return true;   // nothing to decide → proceed
   const mine = Store.getMyOrders().filter(o =>
     (o.status === 'pending' || o.status === 'preparing') && sameLabel(o.tableNumber, oldLabel));
-  if (!mine.length) return;
-  const move = confirm(
-    `You have ${mine.length} active order${mine.length === 1 ? '' : 's'} at "${oldLabel}".\n\n` +
-    `OK = move ${mine.length === 1 ? 'it' : 'them'} to "${newLabel}".\n` +
-    `Cancel = cancel ${mine.length === 1 ? 'that order' : 'those orders'}.`
-  );
-  if (move) {
+  if (!mine.length) return true;                                  // no active orders → proceed
+  const n = mine.length;
+  // Explicit 3-way choice — no ambiguous "Cancel" that could read as
+  // "cancel the dialog" when it actually cancels the orders.
+  const choice = await uiConfirm({
+    title: 'You have active orders',
+    message: `You have ${n} active order${n === 1 ? '' : 's'} at "${oldLabel}". What would you like to do?`,
+    buttons: [
+      { label: `Keep my current name (${oldLabel})`,                 value: 'keep',   variant: 'primary' },
+      { label: `Move my order${n === 1 ? '' : 's'} to "${newLabel}"`, value: 'move',   variant: 'ghost' },
+      { label: `Cancel my order${n === 1 ? '' : 's'}`,               value: 'cancel', variant: 'danger' },
+    ],
+  });
+  if (choice === 'move') {
     Store.moveOrders(mine.map(o => o.id), newLabel);
-    showToast(`Moved ${mine.length} order${mine.length === 1 ? '' : 's'} to "${newLabel}"`, 'success');
-  } else {
-    mine.forEach(o => Store.updateOrderStatus(o.id, 'cancelled'));
-    showToast(`Cancelled ${mine.length} order${mine.length === 1 ? '' : 's'}`, 'info');
+    showToast(`Moved ${n} order${n === 1 ? '' : 's'} to "${newLabel}"`, 'success');
+    refreshAdminActivity();
+    return true;
   }
-  refreshAdminActivity();
+  if (choice === 'cancel') {
+    mine.forEach(o => Store.updateOrderStatus(o.id, 'cancelled'));
+    showToast(`Cancelled ${n} order${n === 1 ? '' : 's'}`, 'info');
+    refreshAdminActivity();
+    return true;
+  }
+  // 'keep' or dismissed → abort the rename entirely.
+  return false;
 }
 /* Tapping the name (or the legacy hidden "change" button) reopens the
    name/table picker. For a signed-in admin the label IS the account
@@ -2186,6 +2202,40 @@ bindBackdropClose('#tableModal', () => { if (tableModalDismissible()) closeTable
   const btn = $('#closeTableBtn');
   if (btn) btn.addEventListener('click', () => { if (tableModalDismissible()) closeTableModal(); });
 })();
+
+/* Reusable promise-based confirm/alert modal — replaces native
+   confirm()/alert(). Resolves the chosen button's `value` (or null if
+   dismissed). Inner clicks never close it (bindBackdropClose only fires
+   on the backdrop); pass dismissable:false to also block the backdrop. */
+function uiConfirm({ title = '', message = '', buttons = [{ label: 'OK', value: true, variant: 'primary' }], dismissable = true } = {}) {
+  return new Promise(resolve => {
+    const modal = $('#uiConfirmModal');
+    $('#uiConfirmTitle').textContent = title;
+    $('#uiConfirmMsg').textContent   = message;
+    const host = $('#uiConfirmBtns');
+    host.innerHTML = '';
+    let settled = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      modal._uiClose = null;
+      closeModal('#uiConfirmModal');
+      resolve(val);
+    };
+    buttons.forEach(b => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn ' + (b.variant === 'danger' ? 'btn-danger' : b.variant === 'ghost' ? 'btn-ghost' : 'btn-primary');
+      btn.style.width = '100%';
+      btn.textContent = b.label;
+      btn.addEventListener('click', () => done(b.value));
+      host.appendChild(btn);
+    });
+    modal._uiClose = dismissable ? () => done(null) : null;
+    openModal('#uiConfirmModal');
+  });
+}
+bindBackdropClose('#uiConfirmModal', () => { const m = $('#uiConfirmModal'); if (m && m._uiClose) m._uiClose(); });
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;

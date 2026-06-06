@@ -171,6 +171,48 @@ async function hashPassword(plain) {
 }
 
 /* ==========================================================
+   PASSWORD SHOW/HIDE
+   Adds an inline "Show"/"Hide" text toggle INSIDE every password
+   field (right edge), on every page that loads store.js. Styles are
+   inlined so no stylesheet/cache bump is needed. Idempotent.
+   ========================================================== */
+function enhancePasswordFields(root) {
+  const scope = root || document;
+  scope.querySelectorAll('input[type="password"]').forEach(inp => {
+    if (inp.dataset.pwEnhanced) return;
+    inp.dataset.pwEnhanced = '1';
+
+    const wrap = document.createElement('span');
+    wrap.style.position = 'relative';
+    wrap.style.display  = 'block';
+    inp.parentNode.insertBefore(wrap, inp);
+    wrap.appendChild(inp);
+    inp.style.paddingRight = '56px';   // room for the toggle text
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Show';
+    btn.setAttribute('aria-label', 'Show password');
+    Object.assign(btn.style, {
+      position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+      border: 'none', background: 'transparent', color: '#A0855E',
+      font: 'inherit', fontSize: '12px', fontWeight: '700',
+      cursor: 'pointer', padding: '2px 4px', lineHeight: '1',
+    });
+    btn.addEventListener('click', () => {
+      const hidden = inp.type === 'password';
+      inp.type = hidden ? 'text' : 'password';
+      btn.textContent = hidden ? 'Hide' : 'Show';
+      btn.setAttribute('aria-label', hidden ? 'Hide password' : 'Show password');
+    });
+    wrap.appendChild(btn);
+  });
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', () => enhancePasswordFields());
+}
+
+/* ==========================================================
    LOCAL HELPERS
    ========================================================== */
 function readJSON(key, fallback) {

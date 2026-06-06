@@ -674,6 +674,19 @@
   </div>
 
   <!-- ==========================================================
+       REUSABLE CONFIRM MODAL  (replaces native confirm/alert)
+       Inner clicks never dismiss it; backdrop closes only when the
+       caller allows it (dismissable). Buttons are injected by JS.
+       ========================================================== -->
+  <div class="modal" id="uiConfirmModal" aria-hidden="true">
+    <div class="modal-card small-card" role="dialog" aria-labelledby="uiConfirmTitle">
+      <header class="modal-head"><h3 id="uiConfirmTitle"></h3></header>
+      <p id="uiConfirmMsg" class="muted" style="white-space:pre-line; margin-top:0;"></p>
+      <div id="uiConfirmBtns" style="display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+  </div>
+
+  <!-- ==========================================================
        ADMIN PANEL  (full-screen overlay; visible only when
        signed in as admin)
        ========================================================== -->
@@ -1101,7 +1114,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=36"></script>
-  <script src="script.js?v=67"></script>
+  <script src="store.js?v=37"></script>
+  <script src="script.js?v=68"></script>
 </body>
 </html>
