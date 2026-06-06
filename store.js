@@ -1752,6 +1752,7 @@ const Store = {
       points:         p.points         || 0,   // spendable
       lifetimePoints: p.lifetimePoints || 0,   // never spent — drives loyalty
       vouchers:       Array.isArray(p.vouchers) ? p.vouchers : [],
+      awardedOrders:  Array.isArray(p.awardedOrders) ? p.awardedOrders : [],
     };
   },
   _savePerks(perks) {
@@ -1764,8 +1765,7 @@ const Store = {
     writeJSON(STORE_KEYS.users, users);
     remoteUpsert('bb_accounts', USER_TO_ROW(u));   // self-heals if `perks` column absent
   },
-  /* Award points (called when a signed-in customer places an order).
-     Bumps both the spendable balance and the lifetime total. */
+  /* Award points (raw). Bumps spendable balance + lifetime total. */
   addPoints(n) {
     if (!Store.getCustomer() || !n) return 0;
     const p = Store.getPerks();
@@ -1773,6 +1773,42 @@ const Store = {
     p.lifetimePoints += n;
     Store._savePerks(p);
     return p.points;
+  },
+  /* Award points for a COMPLETED order — idempotent (only once per
+     order id), so points are credited when an order is served, never
+     at placement, and never twice. Returns points earned (0 if none). */
+  awardOrderPoints(order) {
+    if (!Store.getCustomer() || !order) return 0;
+    const p = Store.getPerks();
+    if (p.awardedOrders.includes(order.id)) return 0;
+    const pts = Math.max(1, Math.floor((order.total || 0) / 10));   // ₱10 = 1 pt
+    p.points         += pts;
+    p.lifetimePoints += pts;
+    p.awardedOrders.push(order.id);
+    Store._savePerks(p);
+    return pts;
+  },
+  /* Staff action: grant a discount voucher to ANY customer account
+     by email (used by the admin panel). Writes to that account's
+     perks, not the signed-in customer's. */
+  async grantVoucher(email, discountPct) {
+    const users = await Store.getUsers();
+    const u = users.find(x => (x.email || '').toLowerCase() === String(email || '').toLowerCase());
+    if (!u) throw new Error('No account with that email');
+    const perks = u.perks || {};
+    perks.vouchers = Array.isArray(perks.vouchers) ? perks.vouchers : [];
+    const voucher = {
+      code:        'V-' + Math.random().toString(36).slice(2, 7).toUpperCase(),
+      discountPct: Number(discountPct) || 10,
+      createdAt:   new Date().toISOString(),
+      used:        false,
+      fromStaff:   true,
+    };
+    perks.vouchers.unshift(voucher);
+    u.perks = perks;
+    writeJSON(STORE_KEYS.users, users);
+    remoteUpsert('bb_accounts', USER_TO_ROW(u));
+    return voucher;
   },
   /* Spend points for a random-value discount voucher. */
   redeemVoucher() {

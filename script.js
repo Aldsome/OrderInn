@@ -303,7 +303,10 @@ function openTableModalPrefilled(name) {
    an identity — a guest name/table or a signed-in session. First-time
    visitors must pick a name so staff can find them. */
 function tableModalDismissible() {
-  return !!state.tableNumber || !!Store.getSession() || (Store.isCustomer && Store.isCustomer());
+  // A guest needs a table name; an admin's session IS their identity.
+  // A signed-in CUSTOMER still must pick a table/PIN to order, so being
+  // logged in alone does NOT make this dismissable.
+  return !!state.tableNumber || !!Store.getSession();
 }
 function openTableModal()  {
   const jp = $('#joinPinInput'); if (jp) jp.value = '';
@@ -1214,12 +1217,6 @@ $('#placeOrderBtn').addEventListener('click', async () => {
   openOrderPlacedModal(order);
   refreshOrdersBadge();
   refreshMyOrdersFab();
-  // Loyalty: award points to a signed-in customer (₱10 = 1 point).
-  if (Store.isCustomer && Store.isCustomer()) {
-    const earned = Math.max(1, Math.floor((order.total || 0) / 10));
-    Store.addPoints(earned);
-    showToast(`+${earned} points earned!`, 'success');
-  }
   // A new order resets the "show thanks" lockout so a second
   // visit will retrigger it after all orders are served.
   thanksShown = false;
@@ -1844,7 +1841,18 @@ function renderMyOrdersList() {
       </article>
     `;
   }).join('');
-  host.innerHTML = peopleHtml + pinHtml + toolbarHtml + orderRows + ctaHtml;
+  // Logged-in customer's available vouchers, shown right in My Orders.
+  let vouchersHtml = '';
+  if (Store.isCustomer && Store.isCustomer()) {
+    const active = (Store.getPerks().vouchers || []).filter(v => !v.used);
+    if (active.length) {
+      vouchersHtml = `<div class="myorders-vouchers">
+        <div class="mv-title">🎟️ Your vouchers</div>
+        ${active.map(v => `<div class="mv-item"><span class="mv-code">${escapeHtml(v.code)}</span><span>${v.discountPct}% off${v.fromStaff ? ' · gift' : ''}</span></div>`).join('')}
+      </div>`;
+    }
+  }
+  host.innerHTML = peopleHtml + pinHtml + vouchersHtml + toolbarHtml + orderRows + ctaHtml;
 }
 
 /* Track checkbox selection for the "clear" multi-select (the 1s
@@ -2327,7 +2335,9 @@ $('#customerLoginForm').addEventListener('submit', async (e) => {
     closeCustomerLogin();
     refreshProfileBtn();
     showToast(`Welcome, ${cust.name}`, 'success');
-    openProfile();
+    // Auto-redirect into the ordering flow. A table/PIN is still
+    // required to order, so prompt for it when none is set yet.
+    if (!state.tableNumber) openTableModal();
   } catch (err) {
     errEl.textContent = err.message;
     errEl.hidden = false;
@@ -2348,6 +2358,26 @@ $('#redeemVoucherBtn').addEventListener('click', () => {
     renderProfile();
   } catch (err) {
     showToast(err.message, 'error');
+  }
+});
+
+/* Admin: grant a discount voucher to a customer by email. */
+$('#grantVoucherForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('#grantVoucherMsg');
+  msg.hidden = true;
+  const email = $('#grantVoucherEmail').value.trim();
+  const pct   = $('#grantVoucherPct').value;
+  try {
+    const v = await Store.grantVoucher(email, pct);
+    msg.hidden = false;
+    msg.style.color = '#1f9d55';
+    msg.textContent = `✓ Granted ${v.discountPct}% voucher (${v.code}) to ${email}`;
+    e.target.reset();
+  } catch (err) {
+    msg.hidden = false;
+    msg.style.color = '';
+    msg.textContent = err.message;
   }
 });
 
@@ -3979,6 +4009,14 @@ function reactToCustomerOrderChanges() {
   for (const o of fresh) {
     const prev = ORDER_STATUS_BY_ID.get(o.id);
     if (prev !== undefined && prev !== o.status) {
+      // Loyalty: award points the moment THIS customer's order is
+      // completed (served) — once per order, never at placement.
+      if (o.status === 'served' && Store.isCustomer && Store.isCustomer()) {
+        const earned = Store.awardOrderPoints(o);
+        if (earned > 0 && !adminPanelOpenForToasts()) {
+          showToast(`+${earned} points earned!`, 'success');
+        }
+      }
       const info = STATUS_INFO[o.status] || STATUS_INFO.pending;
       // Suppression hook: showToast already guards on admin
       // panel state, but we also skip the inline status-banner

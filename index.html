@@ -64,6 +64,17 @@
     .card-tab.active { background: #A0855E; color: #fff; opacity: 1; }
     .tab-pane { animation: tabfade .18s ease; }
     @keyframes tabfade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+
+    /* Vouchers shown in My Orders */
+    .myorders-vouchers { border: 1px solid rgba(160,133,94,0.30); border-radius: 12px; padding: 10px 12px; margin: 4px 0; display: flex; flex-direction: column; gap: 6px; }
+    .myorders-vouchers .mv-title { font-weight: 700; font-size: 13px; }
+    .mv-item { display: flex; justify-content: space-between; font-size: 13px; border-top: 1px dashed rgba(160,133,94,0.3); padding-top: 6px; }
+    .mv-item:first-of-type { border-top: none; padding-top: 0; }
+    .mv-item .mv-code { font-weight: 700; letter-spacing: .5px; }
+
+    /* Admin grant-voucher form */
+    .grant-voucher-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .grant-voucher-form input[type="email"] { flex: 1 1 160px; }
   </style>
 </head>
 <body>
@@ -860,6 +871,23 @@
           </fieldset>
         </form>
 
+        <!-- Grant a discount voucher to a customer by their account email. -->
+        <div class="danger-card">
+          <h4>Customer rewards</h4>
+          <p class="muted small">Give a customer a discount voucher by their account email.</p>
+          <form id="grantVoucherForm" class="grant-voucher-form">
+            <input type="email" id="grantVoucherEmail" placeholder="customer@email.com" required />
+            <select id="grantVoucherPct" aria-label="Discount percent">
+              <option value="5">5% off</option>
+              <option value="10" selected>10% off</option>
+              <option value="15">15% off</option>
+              <option value="20">20% off</option>
+            </select>
+            <button type="submit" class="btn btn-primary">Grant voucher</button>
+          </form>
+          <p class="form-error" id="grantVoucherMsg" hidden></p>
+        </div>
+
         <!-- Staff access controls. The invite code is what a new
              hire needs to register at /register.html. Existing
              admins can also create accounts directly here. -->
@@ -1073,7 +1101,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=34"></script>
-  <script src="script.js?v=65"></script>
+  <script src="store.js?v=35"></script>
+  <script src="script.js?v=66"></script>
 </body>
 </html>
