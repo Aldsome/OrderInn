@@ -2863,10 +2863,10 @@ body.cart-open .fab-cart {
 .myorders-cancelled {
   /* `overflow: visible` is deliberate: inside the scrollable grid body,
      an overflow:auto/hidden box has min-height:auto → 0 and gets shrunk
-     to a sliver. Keeping it visible lets it size to its content (the
-     summary, or the full list when open); the body handles scrolling. */
+     to a sliver. Keeping it visible restores the grid item's natural
+     min-height (its content), so it sizes to the summary when collapsed
+     and the full list when open; the body handles scrolling. */
   overflow: visible;
-  min-height: max-content;
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
