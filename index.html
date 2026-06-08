@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=52" />
+  <link rel="stylesheet" href="style.css?v=54" />
 
   <script>
     (function () {
@@ -130,22 +130,11 @@
         </div>
       </div>
 
-      <!-- Table strip — shows the table name (from ?table= URL) -->
-      <div class="table-strip container">
-        <span>Table</span>
-        <!-- The name itself is the control now: tap it to rename or
-             move tables (replaces the old "change" link). -->
-        <strong id="tableNumberDisplay" role="button" tabindex="0"
-                title="This is your name — tap to rename or move to another table"
-                style="cursor:pointer; text-decoration: underline dotted; text-underline-offset: 3px;">—</strong>
-        <!-- This table's share PIN — tap to copy; a friend on another
-             device enters it to join this table. -->
-        <span class="table-pin" id="tablePinDisplay" hidden
-              title="Tap to copy your table PIN — share it so friends can join"
-              style="cursor:pointer;"></span>
-        <!-- Kept (hidden) so the admin header logic still has its node. -->
-        <button class="link-mini" id="changeTableBtn" hidden>change</button>
-      </div>
+      <!-- Session-based ordering: no table strip. The ordering identity
+           is a persistent per-device session; an optional location note
+           is collected at checkout instead. #changeTableBtn is retained
+           (hidden) only because the admin header logic references it. -->
+      <button class="link-mini" id="changeTableBtn" hidden>change</button>
 
       <!-- Customer's active-order status banner (poll-driven).
            After a few seconds it auto-collapses the status into a small
@@ -301,6 +290,14 @@
       <p class="empty-state">Your cart is empty. Tap any item to add ☕</p>
     </div>
     <footer class="drawer-foot">
+      <!-- Optional location note (e.g. "Table 12", "Near window"). Purely
+           a hint for staff — orders are session-based, not table-bound.
+           Auto-filled from a QR ?table= param when present. -->
+      <label class="location-field" for="locationInput">
+        <span class="location-label">📍 Location <small class="muted">(optional)</small></span>
+        <input type="text" id="locationInput" maxlength="40" autocomplete="off"
+               placeholder="e.g. Table 12 or Near window" />
+      </label>
       <div class="row total">
         <span>Total</span>
         <strong id="cartTotal">₱0.00</strong>
@@ -386,19 +383,8 @@
       <h3 id="placedTitle">Order placed!</h3>
       <p class="muted" id="placedSubtitle">Show this number to your server.</p>
       <div class="order-number">#<span id="placedOrderNumber">—</span></div>
-      <p class="muted small" id="placedTable">Table —</p>
-
-      <!-- Table PIN + write-it-down reminder. The PIN is needed to
-           rejoin / modify / move this table later, so surface it
-           right after ordering. -->
-      <div class="placed-pin" id="placedPinRow" hidden>
-        <div class="placed-pin-main">
-          <span>Table PIN</span>
-          <strong id="placedPin">----</strong>
-          <button type="button" class="btn btn-ghost btn-mini" id="placedPinCopyBtn">Copy</button>
-        </div>
-        <small class="muted">📝 Write this down — you'll need it to change your name/table or modify your order later.</small>
-      </div>
+      <!-- Optional location note (hidden when none was provided). -->
+      <p class="muted small" id="placedTable" hidden></p>
 
       <!-- Live status pill -->
       <div class="placed-status">
@@ -453,139 +439,20 @@
       <h3>Thanks for visiting!</h3>
       <p class="muted">How would you like to continue?</p>
       <div class="thanks-actions">
-        <button class="btn btn-primary"   id="thanksSameUserBtn">Continue as same user</button>
-        <button class="btn btn-ghost"     id="thanksNewUserBtn">Continue as new user</button>
+        <button class="btn btn-primary"   id="thanksSameUserBtn">Keep browsing</button>
+        <button class="btn btn-ghost"     id="thanksNewUserBtn">Start a new order</button>
       </div>
       <p class="muted small thanks-hint">
-        Same user keeps your table label and order history.
-        New user clears everything for the next customer.
+        Keep browsing keeps your order history on this device.
+        Start a new order clears your cart for a fresh round.
       </p>
     </div>
   </div>
 
-  <!-- ==========================================================
-       "STILL THERE?" PROMPT  (idle check — only shown to a guest
-       with nothing going on: no cart, no orders in flight)
-       ========================================================== -->
-  <div class="modal" id="afkModal" aria-hidden="true">
-    <div class="modal-card small-card" role="dialog" aria-labelledby="afkTitle">
-      <header class="modal-head"><h3 id="afkTitle">Still there? 👀</h3></header>
-      <p>You've been idle for a bit. We'll free your table for the next
-         guest in <strong id="afkCountdown">45</strong>s if you've stepped away.</p>
-      <div class="form-actions">
-        <button class="btn btn-primary btn-block" id="afkStayBtn">I'm still here</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ==========================================================
-       DUPLICATE TABLE PROMPT  (shown when the entered table
-       label already has an active order from another device)
-       ========================================================== -->
-  <div class="modal" id="dupTableModal" aria-hidden="true">
-    <div class="modal-card small-card" role="dialog">
-      <header class="modal-head">
-        <h3 id="dupTableTitle">Already an open order here</h3>
-      </header>
-      <p id="dupTableDesc">
-        Looks like <strong id="dupTableLabel">—</strong> already has
-        <span id="dupTableCount">an</span> open order on another device.
-        Are you joining that table, or did you sit down somewhere else?
-      </p>
-      <!-- Join gate: shown only when an existing table has a PIN.
-           Stops a random person piling orders onto someone else's
-           table. The owner finds this PIN in their My Orders panel. -->
-      <div class="dup-pin-row" id="dupPinRow" hidden>
-        <label>Enter the table's PIN to join
-          <input type="text" inputmode="numeric" autocomplete="off"
-                 maxlength="4" id="dupPinInput" placeholder="4-digit PIN" />
-        </label>
-        <p class="form-error" id="dupPinError" hidden></p>
-      </div>
-      <div class="form-actions">
-        <button class="btn btn-ghost"   id="dupTableElsewhereBtn">I'm somewhere else</button>
-        <button class="btn btn-primary" id="dupTableJoinBtn">Join this table</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ==========================================================
-       TABLE MODAL  (if URL has no ?table=)
-       - Free-text name so staff can use any naming scheme:
-         "Window 2", "Booth A", "Patio", "Table 5", etc.
-       ========================================================== -->
-  <div class="modal" id="tableModal" aria-hidden="true">
-    <div class="modal-card small-card tabbed-card" role="dialog">
-      <!-- Folder/bookmark tabs: flip the card between the table picker
-           and a customer login in place, without resizing it. -->
-      <div class="card-tabs" role="tablist" aria-label="Table or sign in">
-        <button type="button" class="card-tab active" id="tabTableBtn"
-                role="tab" aria-selected="true" data-pane="table">🪑 Table</button>
-        <button type="button" class="card-tab" id="tabLoginBtn"
-                role="tab" aria-selected="false" data-pane="login">👤 Log in</button>
-      </div>
-
-      <header class="modal-head">
-        <h3 id="tableModalTitle">Join or start a table</h3>
-        <!-- Only shown once the visitor already has an identity (a
-             guest name/table or a signed-in session); first-timers
-             must pick a name so staff can find them. -->
-        <button class="icon-btn close-btn" id="closeTableBtn" aria-label="Close" hidden>✕</button>
-      </header>
-
-      <!-- ===== PANE: TABLE ===== -->
-      <div class="tab-pane" data-pane="table">
-        <!-- Primary path: start a new table by entering a name/number. -->
-        <form id="tableForm">
-          <p class="muted small" style="margin: 0;">
-            Helps our staff find you when your order is ready.
-          </p>
-          <label>Table number (or name)
-            <input type="text" id="tableInput" maxlength="40" required
-                   placeholder="e.g. Table 7, Booth A, Window 2" />
-          </label>
-          <button type="submit" class="btn btn-primary btn-block">Continue</button>
-        </form>
-
-        <div class="or-divider"><span>or join with a PIN</span></div>
-
-        <!-- Secondary path: a tablemate already started the table — punch
-             in their PIN to drop straight into their room. -->
-        <div class="table-join table-join--compact">
-          <label>Joining your table? Enter the PIN
-            <input type="text" inputmode="numeric" autocomplete="off" maxlength="4"
-                   id="joinPinInput" placeholder="4-digit PIN" />
-          </label>
-          <button type="button" class="btn btn-ghost btn-block" id="joinPinBtn">Join table</button>
-          <p class="form-error" id="joinPinError" hidden></p>
-        </div>
-        <!-- Staff escape hatch — admins can sign in directly here. -->
-        <button type="button" class="staff-login-link" id="tableStaffLoginBtn">
-          Staff? Sign in here
-        </button>
-      </div>
-
-      <!-- ===== PANE: CUSTOMER LOGIN ===== -->
-      <div class="tab-pane" data-pane="login" hidden>
-        <form id="tableTabLoginForm" class="auth-form">
-          <p class="muted small" style="margin: 0;">
-            Sign in to earn points &amp; rewards on your orders.
-          </p>
-          <label>Email
-            <input type="email" name="email" required autocomplete="username" placeholder="you@email.com" />
-          </label>
-          <label>Password
-            <input type="password" name="password" required autocomplete="current-password" />
-          </label>
-          <p class="form-error" id="tableTabLoginError" hidden></p>
-          <button type="submit" class="btn btn-primary btn-block">Sign in</button>
-          <p class="hint muted small">
-            New here? <a href="signup.html" class="link-mini">Create an account</a>
-          </p>
-        </form>
-      </div>
-    </div>
-  </div>
+  <!-- Session-based ordering: the AFK idle prompt, duplicate-table
+       prompt, and table picker modal have all been removed. The
+       ordering identity is a persistent per-device session created on
+       load; customers never pick or share a table. -->
 
   <!-- ==========================================================
        STAFF LOGIN MODAL  (admin-only, no register)
@@ -1158,7 +1025,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=39"></script>
-  <script src="script.js?v=77"></script>
+  <script src="store.js?v=41"></script>
+  <script src="common.js?v=2"></script>
+  <script src="script.js?v=80"></script>
 </body>
 </html>

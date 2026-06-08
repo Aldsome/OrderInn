@@ -1186,7 +1186,9 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
 }
 .chat-msg.mine   { align-self: flex-end; align-items: flex-end; }
 .chat-msg.theirs { align-self: flex-start; align-items: flex-start; }
-.chat-who  { color: var(--ink-soft); font-size: .72rem; margin-bottom: 2px; }
+.chat-who  { color: var(--ink-soft); font-size: .72rem; margin-bottom: 2px; font-weight: 600; }
+/* Per-sender colour accent on incoming bubbles (set via --who-color). */
+.chat-msg.theirs .chat-bubble { border-left: 3px solid var(--who-color, var(--line)); }
 .chat-time { color: var(--ink-soft); font-size: .66rem; margin-top: 2px; }
 .chat-bubble {
   padding: 9px 13px;
@@ -1454,6 +1456,31 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
   margin-bottom: 12px;
 }
 .pay-note { text-align: center; margin: 8px 0 0; }
+
+/* Optional location note at checkout (session model — replaces table). */
+.location-field {
+  display: block;
+  margin-bottom: 12px;
+}
+.location-field .location-label {
+  display: block;
+  font-size: .85rem;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+}
+.location-field input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+  color: var(--ink);
+  font-size: .95rem;
+}
+.location-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 
 /* ==========================================================
    MODALS  (generic)

@@ -34,7 +34,16 @@ const STORE_KEYS = {
   activeSessions: 'bb_active_sessions', // { [clientId]: { name, lastActive } } — collision check
   pendingWrites:  'bb_pending_writes',  // queue of remote writes that haven't been flushed yet
   customer:       'bb_customer',        // signed-in customer profile { id, email, name }
+  cartSession:    'bb_cart_session',    // { sessionId, restaurantId, cartItems, createdAt, expiresAt }
 };
+
+/* Single-restaurant deployment id — scopes the cart session so the same
+   browser used across different OrderInn deployments wouldn't share a
+   cart. (One value today; kept explicit for the QR/kiosk model.) */
+const RESTAURANT_ID = 'orderinn';
+/* Cart session lifetime — the cart persists across refreshes and QR
+   re-scans, and only resets after this much inactivity. */
+const CART_SESSION_TTL_MS = 18 * 60 * 60 * 1000;   // 18h
 
 /* How long a guest's name/table choice survives a refresh. After
    this window expires, the table prompt re-asks (so a different
@@ -281,8 +290,12 @@ else             console.info('[Store] LOCAL mode (no Supabase URL in config.js 
 const ROW_TO_ORDER = (r) => r && ({
   id:          r.id,
   number:      r.number,
-  tableNumber: r.table_number,
-  clientId:    r.client_id,
+  // The legacy `table_number` column now carries the OPTIONAL free-text
+  // location identifier ("Table 12", "Near window", …) or null — no
+  // table is ever requested during ordering.
+  locationIdentifier: r.table_number || null,
+  clientId:    r.client_id,           // device/session that placed it
+  userId:      r.user_id || null,     // account owner once linked (self-heals)
   items:       r.items,
   total:       Number(r.total),
   notes:       r.notes || '',
@@ -291,13 +304,13 @@ const ROW_TO_ORDER = (r) => r && ({
   servedAt:    r.served_at,
   cancelledAt: r.cancelled_at,
   cancelledBy: r.cancelled_by,
-  joinPin:     r.join_pin || null,
 });
 const ORDER_TO_ROW = (o) => ({
   id:           o.id,
   number:       o.number,
-  table_number: o.tableNumber || null,
+  table_number: o.locationIdentifier || null,   // reused column (see above)
   client_id:    o.clientId,
+  user_id:      o.userId || null,               // dropped via self-heal if column absent
   items:        o.items,
   total:        o.total,
   notes:        o.notes || '',
@@ -306,7 +319,6 @@ const ORDER_TO_ROW = (o) => ({
   served_at:    o.servedAt,
   cancelled_at: o.cancelledAt || null,
   cancelled_by: o.cancelledBy || null,
-  join_pin:     o.joinPin || null,
 });
 const ROW_TO_PRODUCT = (r) => r && ({
   id:       r.id,
@@ -732,7 +744,7 @@ const Store = {
   getOrders()      { return readJSON(STORE_KEYS.orders, []); },
   setOrders(o)     { return writeJSON(STORE_KEYS.orders, o); },
 
-  async placeOrder({ tableNumber, items, notes }) {
+  async placeOrder({ locationIdentifier, items, notes } = {}) {
     // Server-aware, DAILY-RESETTING order numbering. Numbers
     // restart at #1 each calendar day so they don't grow without
     // bound (the lifetime tally lives in config + the CSV export).
@@ -760,44 +772,23 @@ const Store = {
       }
     }
     const number = Math.max(localMax, serverMax) + 1;
-    // Table join PIN — minted by the FIRST order at a table label,
-    // then inherited by every later order at the same table (the
-    // owner's repeats and anyone who joined via the PIN gate). This
-    // is what the "Join this table" gate checks against. When the
-    // table's orders are all served/cleared, the next first order
-    // mints a fresh PIN, so a freed table can't be joined with a
-    // stale code.
-    const activeAtTable = Store.findActiveOrdersByTable(tableNumber);
-    const existingPin   = activeAtTable.map(o => o.joinPin).find(Boolean);
-    // Mint a UNIQUE pin (not in use by any other active table) so a
-    // PIN maps to exactly one room — required for "join by PIN".
-    let joinPin = existingPin;
-    if (!joinPin) {
-      const usedPins = new Set(Store.getOrders()
-        .filter(o => (o.status === 'pending' || o.status === 'preparing') && o.joinPin)
-        .map(o => String(o.joinPin)));
-      // Prefer this device's already-established name PIN (minted when
-      // the name was first claimed) so the table keeps ONE consistent
-      // code from claim → order. Fall back to a fresh unique pin.
-      const namePin = Store.getMyNamePin && Store.getMyNamePin();
-      if (namePin && !usedPins.has(String(namePin))) {
-        joinPin = String(namePin);
-      } else {
-        do { joinPin = String(Math.floor(1000 + Math.random() * 9000)); } while (usedPins.has(joinPin));
-      }
-    }
+    // Session-based ordering (kiosk/QR model): the order is tied to this
+    // device's session (clientId) and, if signed in, the account
+    // (userId). No table is requested — locationIdentifier is an
+    // optional free-text delivery hint set at checkout.
+    const cust = Store.getCustomer && Store.getCustomer();
     const order = {
       id:          'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       number,
-      tableNumber: tableNumber || null,
-      clientId:    Store.getClientId(),       // ties this order to the browser that placed it
+      locationIdentifier: locationIdentifier || null,
+      clientId:    Store.getClientId(),       // device/session that placed it
+      userId:      (cust && cust.id) || null, // account owner if signed in
       items,                                  // each: { itemId, name, qty, unitPrice, config }
       total:       items.reduce((s, i) => s + i.unitPrice * i.qty, 0),
       notes:       notes || '',
       status:      'pending',
       placedAt:    new Date().toISOString(),
       servedAt:    null,
-      joinPin,                                // table-join PIN (see above)
     };
     const orders = Store.getOrders();
     orders.unshift(order);                    // newest first
@@ -807,9 +798,12 @@ const Store = {
     Store.setConfig({ lifetimeOrders: (Store.getConfig().lifetimeOrders || 0) + 1 });
     Store.pushLog({
       type:    'order_placed',
-      message: `Order #${order.number} placed at ${order.tableNumber || '—'}`,
+      message: `Order #${order.number} placed${order.locationIdentifier ? ` · ${order.locationIdentifier}` : ''}`,
       orderId: order.id,
     });
+    // Checkout converts the session cart into an order → clear the cart
+    // (the session itself persists for the next round).
+    Store.archiveCartSession();
     return order;
   },
 
@@ -904,7 +898,14 @@ const Store = {
      Used to drive the customer's "My orders" popup. */
   getMyOrders() {
     const cid = Store.getClientId();
-    return Store.getOrders().filter(o => o.clientId === cid);
+    const cust = Store.getCustomer && Store.getCustomer();
+    const uid  = cust && cust.id;
+    // This device's current-session orders PLUS — when signed in — every
+    // order owned by this account (orders linked from past guest sessions
+    // or placed on another device), de-duped by orderId.
+    return Store.getOrders().filter(o =>
+      o.clientId === cid || (uid && o.userId === uid)
+    );
   },
 
   /* All orders at a table label, from EVERY device — this is the
@@ -1018,6 +1019,102 @@ const Store = {
      that all "is this the same device/person?" checks should use
      (everything except getMyOrders, which stays scoped to current). */
   getMyClientIds() { return [Store.getClientId(), ...Store.getClientIdHistory()]; },
+
+  /* ==========================================================
+     CART SESSION  (kiosk/QR model)
+     A persistent per-device, per-restaurant cart. Created on first
+     use, restored on refresh / QR re-scan, and only reset after
+     inactivity. The session id is the device clientId, so orders,
+     chat and cart all key off the same identity. Distinct from an
+     order: checkout converts the cart into a NEW orderId.
+     ========================================================== */
+  _freshCartSession() {
+    const now = Date.now();
+    return {
+      sessionId:    Store.getClientId(),   // = device id; one source of truth
+      restaurantId: RESTAURANT_ID,
+      cartItems:    [],
+      createdAt:    new Date(now).toISOString(),
+      expiresAt:    new Date(now + CART_SESSION_TTL_MS).toISOString(),
+    };
+  },
+  /* Get the live session, recreating it if missing, for a different
+     device id (after a login reset), a different restaurant, or past
+     its inactivity expiry. */
+  getCartSession() {
+    let s = readJSON(STORE_KEYS.cartSession, null);
+    const now = Date.now();
+    const cid = Store.getClientId();
+    const valid = s && s.restaurantId === RESTAURANT_ID && s.sessionId === cid
+                  && s.expiresAt && new Date(s.expiresAt).getTime() >= now;
+    if (!valid) {
+      s = Store._freshCartSession();
+      writeJSON(STORE_KEYS.cartSession, s);
+    }
+    return s;
+  },
+  getSessionId() { return Store.getCartSession().sessionId; },
+  /* Sliding expiry — call on any activity so an active cart never times
+     out mid-visit. */
+  touchCartSession() {
+    const s = Store.getCartSession();
+    s.expiresAt = new Date(Date.now() + CART_SESSION_TTL_MS).toISOString();
+    writeJSON(STORE_KEYS.cartSession, s);
+    return s;
+  },
+  getCart() { return Store.getCartSession().cartItems || []; },
+  setCart(items) {
+    const s = Store.getCartSession();
+    s.cartItems = Array.isArray(items) ? items : [];
+    s.expiresAt = new Date(Date.now() + CART_SESSION_TTL_MS).toISOString();
+    writeJSON(STORE_KEYS.cartSession, s);
+    return s.cartItems;
+  },
+  /* After a successful order: empty the cart but keep the same session
+     so the device can keep ordering in the same visit. */
+  archiveCartSession() {
+    const s = Store.getCartSession();
+    s.cartItems = [];
+    writeJSON(STORE_KEYS.cartSession, s);
+  },
+
+  /* ==========================================================
+     ACCOUNT LINKING  (guest → account)
+     When a guest signs in/registers, the orders placed in their
+     current device session are linked to the account by stamping
+     userId — preserving each orderId (single source of truth). Points
+     are credited per orderId (idempotent via perks.awardedOrders), so
+     migrated orders count exactly once and can't double-count.
+     ========================================================== */
+  /* Orders placed by THIS device's session(s) — newest first. */
+  getSessionOrders() {
+    const mine = new Set(Store.getMyClientIds());
+    return Store.getOrders().filter(o => mine.has(o.clientId));
+  },
+  /* Did this session place orders already owned by a DIFFERENT account?
+     Used to require explicit confirmation before switching accounts on
+     a shared device (keeps accounts strictly separate). */
+  sessionOrdersForeignTo(userId) {
+    return Store.getSessionOrders().some(o => o.userId && o.userId !== userId);
+  },
+  /* Attach userId to this session's orders that aren't already owned by
+     this account. Idempotent: never duplicates, never regenerates an
+     orderId; only updates ownership metadata. Returns the count linked. */
+  linkSessionOrdersToAccount(userId) {
+    if (!userId) return 0;
+    const mine = new Set(Store.getMyClientIds());
+    const orders = Store.getOrders();
+    let linked = 0;
+    for (const o of orders) {
+      if (mine.has(o.clientId) && o.userId !== userId) {
+        o.userId = userId;
+        remoteUpsert('bb_orders', ORDER_TO_ROW(o));
+        linked++;
+      }
+    }
+    if (linked) Store.setOrders(orders);
+    return linked;
+  },
 
   /* ==========================================================
      SESSION TABLE  (local re-entry CONVENIENCE — not a reservation)
@@ -1220,9 +1317,11 @@ const Store = {
     const byThread = new Map();
     for (const m of rows) {
       if (!m.thread) continue;
-      const existing = byThread.get(m.thread);
-      if (existing) existing.count++;
-      else byThread.set(m.thread, { thread: m.thread, last: m, count: 1 });
+      let g = byThread.get(m.thread);
+      if (!g) { g = { thread: m.thread, last: m, count: 0, name: null }; byThread.set(m.thread, g); }
+      g.count++;
+      // rows are newest-first → first customer name seen is the latest.
+      if (!g.name && m.role === 'customer' && m.senderName) g.name = m.senderName;
     }
     return [...byThread.values()].sort(
       (a, b) => new Date(b.last.ts) - new Date(a.last.ts));
@@ -1993,8 +2092,8 @@ const Store = {
   },
   /* On sign-in, look for the account's own still-active orders (under
      any client-id it owns) and re-adopt that id so the customer resumes
-     them with no PIN/table re-entry. Returns { clientId, tableNumber }
-     or null when there's nothing active to resume. */
+     them — no re-entry needed. Returns { clientId } or null when there's
+     nothing active to resume. */
   resumeAccountOrders() {
     const p = Store.getPerks();
     const saved = new Set(p.orderClientIds || []);
@@ -2005,7 +2104,7 @@ const Store = {
     if (!mine.length) return null;
     const top = mine[0];
     Store.adoptClientId(top.clientId);
-    return { clientId: top.clientId, tableNumber: top.tableNumber };
+    return { clientId: top.clientId };
   },
 
   /* Staff invite code — single shared secret existing admins

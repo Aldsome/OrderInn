@@ -63,8 +63,9 @@ insert into public.bb_config (id, data)
 create table if not exists public.bb_orders (
   id             text primary key,
   number         int not null,
-  table_number   text,                     -- table number / name (room + delivery target)
-  client_id      text not null,            -- per-device anonymous id
+  table_number   text,                     -- reused as optional locationIdentifier ("Table 12", "Near window")
+  client_id      text not null,            -- per-device anonymous id = the cart session id
+  user_id        text,                     -- account owner once a guest links/logs in (null for guests)
   items          jsonb not null,           -- array of { itemId, name, qty, unitPrice, summary, config }
   total          numeric not null,
   notes          text,
@@ -74,9 +75,14 @@ create table if not exists public.bb_orders (
   cancelled_at   timestamptz,
   cancelled_by   text
 );
+-- Backfill for databases created before user_id existed. Safe + idempotent:
+-- a no-op once the column is present.
+alter table public.bb_orders add column if not exists user_id text;
+
 create index if not exists bb_orders_placed_at_idx on public.bb_orders (placed_at desc);
 create index if not exists bb_orders_status_idx    on public.bb_orders (status);
 create index if not exists bb_orders_client_idx    on public.bb_orders (client_id);
+create index if not exists bb_orders_user_idx      on public.bb_orders (user_id);
 
 -- Auto-increment order numbers within the table so the app
 -- doesn't have to compute MAX(number)+1 on every insert.

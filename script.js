@@ -5,52 +5,7 @@
    - Admin panel (overlays customer view when signed in)
    ========================================================== */
 
-const $  = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-/* Run a re-render without letting it shift the scroll position.
-   Category/sort switches rebuild list HTML whose height changes,
-   which would otherwise jump the page (window) or the admin scroll
-   box. We snapshot the scroll offset, re-render, then restore it.
-   Direct scrollTop assignment is instant (CSS scroll-behavior:smooth
-   only affects scrollTo/scrollIntoView), so there's no animation. */
-function withScrollAnchor(el, fn) {
-  const win = !el || el === window;
-  const node = win ? document.scrollingElement || document.documentElement : el;
-  const top = node.scrollTop;
-  fn();
-  // Restore on the next frame too, in case async layout (images)
-  // nudged it; the synchronous set covers the common case.
-  node.scrollTop = top;
-  requestAnimationFrame(() => { node.scrollTop = top; });
-}
-
-/* ==========================================================
-   OPTION CATALOG  (shared)
-   ========================================================== */
-const SIZES = [
-  { id: 'sm', label: 'Small  (12oz)', delta: -10 },
-  { id: 'md', label: 'Medium (16oz)', delta:   0, default: true },
-  { id: 'lg', label: 'Large  (22oz)', delta: +20 },
-];
-const TEMPS = [
-  { id: 'hot', label: 'Hot',  delta: 0, default: true },
-  { id: 'ice', label: 'Iced', delta: +10 },
-];
-const MILKS = [
-  { id: 'regular', label: 'Whole milk',  delta:   0, default: true },
-  { id: 'oat',     label: 'Oat milk',    delta: +20 },
-  { id: 'almond',  label: 'Almond milk', delta: +20 },
-  { id: 'soy',     label: 'Soy milk',    delta: +15 },
-  { id: 'none',    label: 'No milk',     delta:  -5 },
-];
-const SUGAR = [
-  { id: '0',   label: '0%',   delta: 0 },
-  { id: '25',  label: '25%',  delta: 0 },
-  { id: '50',  label: '50%',  delta: 0, default: true },
-  { id: '75',  label: '75%',  delta: 0 },
-  { id: '100', label: '100%', delta: 0 },
-];
 
 /* ==========================================================
    STATE
@@ -58,166 +13,13 @@ const SUGAR = [
 const state = {
   cart:        [],
   category:    'all',
-  tableNumber: null,
+  tableNumber: null,        // repurposed: holds the SESSION ID (never shown)
+  locationIdentifier: null, // optional checkout location note (from QR ?table=)
   editingLineKey: null,
   pendingQty:  1,
   editingOrderId: null,   // when set, placing the cart UPDATES this order
 };
 
-let MENU   = Store.getMenu();
-let CONFIG = Store.getConfig();
-
-/* ==========================================================
-   FORMAT HELPERS
-   ========================================================== */
-const peso = (n) => `${CONFIG.currency}${Number(n).toFixed(2)}`;
-const getOpt = (list, id) => list.find(o => o.id === id);
-
-/* Thumbnail markup — show the product image when present; the emoji
-   only appears as a fallback when there is NO image (or it fails to
-   load), so it never overlays a real photo. The fallback starts
-   hidden whenever an image exists and is revealed by the img's
-   onerror handler. */
-function thumbMarkup(item, opts = {}) {
-  const cls     = opts.fallbackClass || 'ph-fallback';
-  const extra   = opts.fallbackStyle || '';
-  const loading = opts.loading || 'lazy';
-  const emoji   = (item && item.emoji) || '☕';
-  if (item && item.img) {
-    const hide = ['display:none', extra].filter(Boolean).join(';');
-    return `<img src="${item.img}" alt="${escapeHtml(opts.alt || '')}" loading="${loading}" `
-      + `onerror="this.style.display='none';var f=this.parentNode.querySelector('.${cls}');if(f)f.style.display='';">`
-      + `<span class="${cls}" style="${hide}">${emoji}</span>`;
-  }
-  return `<span class="${cls}"${extra ? ` style="${extra}"` : ''}>${emoji}</span>`;
-}
-
-/* ----- Option groups (built-in + admin-defined custom) -----
-   The four built-ins keep their bespoke choice lists; custom groups
-   come from Store.getOptionGroups(). optionDefs() unifies them so the
-   pricing / line-key / summary / customizer code treats every option
-   group the same way and isn't hardcoded to milk/sugar/etc. */
-const BUILTIN_OPTION_DEFS = [
-  { key: 'size',  label: 'Size',     list: SIZES },
-  { key: 'temp',  label: 'Hot/Iced', list: TEMPS },
-  { key: 'milk',  label: 'Milk',     list: MILKS },
-  { key: 'sugar', label: 'Sugar',    list: SUGAR },
-];
-function optionDefs() {
-  return BUILTIN_OPTION_DEFS.concat(
-    Store.getOptionGroups().map(g => ({
-      key: g.id, label: g.label, list: g.choices || [], custom: true,
-    }))
-  );
-}
-const optionDef = (key) => optionDefs().find(d => d.key === key);
-
-function defaultConfigFor(item) {
-  const o = item.options || {};
-  const config = { notes: '' };
-  for (const def of optionDefs()) {
-    if (!o[def.key]) continue;
-    config[def.key] = (def.list.find(c => c.default)?.id) || def.list[0]?.id || null;
-  }
-  // Preserve the legacy marker: when the Hot/Iced toggle is OFF, a
-  // cold-category drink still carries an inert 'ice' temp (when the
-  // toggle is ON the loop above already set the list default).
-  if (item.category === 'cold' && !o.temp) config.temp = 'ice';
-  return config;
-}
-function unitPrice(item, config) {
-  let p = item.price;
-  const o = item.options || {};
-  for (const def of optionDefs()) {
-    if (!o[def.key] || !config[def.key]) continue;
-    p += getOpt(def.list, config[def.key])?.delta || 0;
-  }
-  return p;
-}
-/* Stable cart line key: item id + every set option selection (sorted
-   so order is deterministic) + notes. Format is internal to the cart
-   only (never persisted), so generalising it is safe. */
-function lineKeyOf(itemId, config) {
-  const keys = Object.keys(config).filter(k => k !== 'notes').sort();
-  return [itemId, ...keys.map(k => `${k}:${config[k] ?? '_'}`),
-    (config.notes || '').trim().toLowerCase()].join('|');
-}
-function configSummary(item, config) {
-  const bits = [];
-  const o = item.options || {};
-  for (const def of optionDefs()) {
-    if (!o[def.key] || !config[def.key]) continue;
-    const choice = getOpt(def.list, config[def.key]);
-    if (!choice) continue;
-    if (def.key === 'size')       bits.push(choice.label.split(/\s+/)[0]);
-    else if (def.key === 'milk') { if (config.milk !== 'regular') bits.push(choice.label); }
-    else if (def.key === 'sugar') bits.push(`${choice.label} sugar`);
-    else                          bits.push(choice.label);   // temp + custom groups
-  }
-  if (config.notes) bits.push(`"${config.notes}"`);
-  return bits.join(' · ');
-}
-
-/* ==========================================================
-   THEME
-   ========================================================== */
-const THEME_KEY = 'bossb-theme';
-const ADMIN_TAB_KEY = 'bb_admin_tab';   // last admin tab, restored on refresh
-function applyTheme(t)     { document.documentElement.setAttribute('data-theme', t); }
-function initTheme() {
-  const saved = localStorage.getItem(THEME_KEY);
-  applyTheme(saved === 'dark' || saved === 'light'
-    ? saved
-    : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-}
-let themeAnimTimer = null;
-function toggleTheme() {
-  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-  localStorage.setItem(THEME_KEY, next);
-  // Briefly enable a global colour transition so the switch fades in
-  // instead of snapping. The class is removed after the fade so normal
-  // interactions stay snappy (no permanent transition on everything).
-  const root = document.documentElement;
-  root.classList.add('theme-anim');
-  clearTimeout(themeAnimTimer);
-  themeAnimTimer = setTimeout(() => root.classList.remove('theme-anim'), 450);
-  applyTheme(next);
-}
-
-/* ==========================================================
-   TOAST
-   ========================================================== */
-const toastEl = $('#toast');
-let toastTimer;
-function showToast(msg, variant = '') {
-  // Customer-facing toast: suppress when the admin panel is
-  // open in this tab. An admin actively managing orders
-  // doesn't need a customer-context popup about "their" order
-  // (they're the same human, just in a different role).
-  if (adminPanelOpenForToasts()) return;
-  toastEl.textContent = msg;
-  toastEl.className   = 'toast show ' + variant;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
-}
-function adminPanelOpenForToasts() {
-  const p = document.getElementById('adminPanel');
-  return !!p && !p.hidden;
-}
-
-/* ==========================================================
-   CONFIG → DOM
-   ========================================================== */
-function applyConfigToDOM() {
-  document.title = `${CONFIG.shopName} — Order`;
-  $('#brandName').textContent    = CONFIG.shopName;
-  $('#brandTagline').textContent = CONFIG.tagline;
-  // Logo initials follow the shop name automatically, so a rebrand
-  // from Settings updates every brand mark on the page — no more
-  // hardcoded letters to hunt down.
-  const initials = Store.brandInitials(CONFIG.shopName);
-  document.querySelectorAll('.brand-mark').forEach(el => { el.textContent = initials; });
-}
 
 /* ==========================================================
    TABLE LABEL  (free-text — "Window seat", "Booth A", "5")
@@ -227,511 +29,55 @@ function readTableFromURL() {
   const t = params.get('table');
   return t ? t.trim() : null;
 }
-// Set on a successful PIN merge so the joining device adopts the
-// existing name/table PIN instead of minting its own (one code per
-// table). Consumed + cleared by the next setTableLabel.
-let nextAdoptPin = null;
-function setTableLabel(label) {
-  state.tableNumber = label;                 // kept as `tableNumber` for compat
-  $('#tableNumberDisplay').textContent = label || '—';
-  if (label) {
-    Store.setSessionTable(label);
-    Store.bumpActiveSession(label, nextAdoptPin);   // mints/keeps/adopts this name's PIN
-    nextAdoptPin = null;
-  } else {
-    Store.clearSessionTable();
-    Store.dropActiveSession();
-  }
-  // Surface this name's share PIN so the owner can hand it to friends
-  // joining from another device. Hidden for staff (their label is their
-  // account identity, not a shareable guest name).
-  const pinEl = $('#tablePinDisplay');
-  if (pinEl) {
-    const sess    = Store.getSession();
-    const isStaff = sess && sess.role === 'admin';
-    // Show the table's CANONICAL join PIN: an active order's PIN at
-    // this table (what the Join gate actually checks, and what the
-    // My-orders panel shows) wins, so every surface agrees. Fall back
-    // to this device's name PIN only before any order exists. Without
-    // this, a local reset re-mints the name PIN and the header drifts
-    // out of sync with the orders' PIN (header showed a code that
-    // wouldn't actually let anyone join).
-    let pin = null;
-    if (label && !isStaff) {
-      pin = getActiveOrdersHere().map(o => o.joinPin).find(Boolean) || Store.getMyNamePin();
-    }
-    if (pin) { pinEl.textContent = `PIN ${pin}`; pinEl.dataset.pin = pin; pinEl.hidden = false; }
-    else     { pinEl.hidden = true; delete pinEl.dataset.pin; }
-  }
-  // The status banner + My-orders bubble are linked to the current
-  // room, so re-evaluate them whenever the room changes (e.g. the
-  // banner must stop showing an order left behind in a prior room,
-  // and a newly-joined table's orders must appear immediately).
-  // Guarded: these run only after boot wires everything up.
+/* ----- Session-based ordering (kiosk/QR model) -----
+   The customer's ordering identity is a persistent per-device SESSION,
+   not a table. For back-compat with the app's grouping/chat code,
+   state.tableNumber holds the SESSION ID — it is never shown as a
+   "table" and never typed by the user. An optional, free-text
+   locationIdentifier (e.g. "Table 12", "Near window") may be set at
+   checkout, and is auto-filled from a QR ?table= param if present.
+
+   All the old table-picker machinery (table modal, name-collision
+   checks, join-by-PIN, dup modal, move-on-rename, table strip) has
+   been removed — there is no table to pick. */
+function syncSession() {
+  state.tableNumber = Store.getSessionId();   // session id (= device id)
+  // No table name / PIN header UI in the session model.
+  const nameEl = $('#tableNumberDisplay'); if (nameEl) nameEl.textContent = '';
+  const pinEl  = $('#tablePinDisplay');    if (pinEl)  pinEl.hidden = true;
   if (typeof refreshOrderStatusBanner === 'function') refreshOrderStatusBanner();
   if (typeof refreshMyOrdersFab === 'function') refreshMyOrdersFab();
 }
+/* Back-compat shim: legacy callers used setTableLabel() to (re)bind the
+   ordering identity; now it just re-syncs to the current session. */
+function setTableLabel() { syncSession(); }
+/* Create/restore the cart session on load (replaces the table prompt).
+   Reads an optional QR location hint for checkout, and restores the
+   persisted cart so a refresh / re-scan never loses items. */
 function ensureTable() {
-  // QR-code path: URL ?table= overrides everything and always
-  // wins (it's how customers arrive at a specific table).
-  const t = readTableFromURL();
-  if (t) {
-    setTableLabel(t);
-    return;
-  }
-  // Authenticated admins skip the prompt entirely — their
-  // signed-in identity *is* the table label, so any order they
-  // place is tied to their staff name.
-  const session = Store.getSession();
-  if (session && session.role === 'admin') {
-    setTableLabel(session.name || session.email);
-    return;
-  }
-  // Recent guest session (< 24h, same device) — reuse the
-  // previous label so a refresh doesn't kick the customer back
-  // to the prompt. Inactivity reset is what clears this, NOT
-  // page reload.
-  const recent = Store.getSessionTable();
-  if (recent && recent.name) {
-    // If a different live session has stolen the name in the
-    // meantime, treat it as expired and reprompt with prefill.
-    if (Store.findActiveSessionByName(recent.name)) {
-      openTableModalPrefilled(recent.name);
-      return;
-    }
-    setTableLabel(recent.name);
-    return;
-  }
-  openTableModal();
+  Store.touchCartSession();                 // create-or-restore + slide expiry
+  state.locationIdentifier = (typeof readTableFromURL === 'function' ? readTableFromURL() : null) || null;
+  // Pre-fill the optional checkout location field from the QR hint.
+  const locEl = $('#locationInput');
+  if (locEl && state.locationIdentifier) locEl.value = state.locationIdentifier;
+  state.cart = Store.getCart() || [];       // restore persisted cart
+  syncSession();
 }
-function openTableModalPrefilled(name) {
-  $('#tableInput').value = name || '';
-  openTableModal();
+/* The table picker no longer exists — these are safe no-ops so any
+   remaining legacy callers don't throw. */
+function openTableModalPrefilled() {}
+function tableModalDismissible() { return true; }
+function openTableModal()  {}
+function closeTableModal() {}
+function setTableTab() {}
+
+/* Display name used for chat presence / message authorship: the
+   signed-in customer's name, otherwise "Guest" (never the opaque
+   session id). */
+function customerChatName() {
+  const c = Store.getCustomer && Store.getCustomer();
+  return (c && c.name) || 'Guest';
 }
-/* The table picker is dismissable only once the visitor already has
-   an identity — a guest name/table or a signed-in session. First-time
-   visitors must pick a name so staff can find them. */
-function tableModalDismissible() {
-  // A guest needs a table name; an admin's session IS their identity.
-  // A signed-in CUSTOMER still must pick a table/PIN to order, so being
-  // logged in alone does NOT make this dismissable.
-  return !!state.tableNumber || !!Store.getSession();
-}
-function openTableModal()  {
-  const jp = $('#joinPinInput'); if (jp) jp.value = '';
-  const je = $('#joinPinError'); if (je) je.hidden = true;
-  const closeBtn = $('#closeTableBtn');
-  if (closeBtn) closeBtn.hidden = !tableModalDismissible();
-  setTableTab('table');                 // always open on the table picker
-  openModal('#tableModal');
-}
-function closeTableModal() { closeModal('#tableModal'); }
-
-/* Tabbed table modal — flip between the table picker and a customer
-   login in place (the folder/bookmark tabs), keeping the card size. */
-function setTableTab(pane) {
-  document.querySelectorAll('#tableModal .card-tab').forEach(t => {
-    const on = t.dataset.pane === pane;
-    t.classList.toggle('active', on);
-    t.setAttribute('aria-selected', on ? 'true' : 'false');
-  });
-  document.querySelectorAll('#tableModal .tab-pane').forEach(p => {
-    p.hidden = (p.dataset.pane !== pane);
-  });
-  const title = $('#tableModalTitle');
-  if (title) title.textContent = (pane === 'login') ? 'Sign in' : 'Join or start a table';
-}
-$('#tabTableBtn')?.addEventListener('click', () => setTableTab('table'));
-$('#tabLoginBtn')?.addEventListener('click', () => setTableTab('login'));
-
-$('#tableTabLoginForm')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const errEl = $('#tableTabLoginError');
-  errEl.hidden = true;
-  const fd = new FormData(e.target);
-  try {
-    const cust = await Store.loginCustomer({ email: fd.get('email'), password: fd.get('password') });
-    e.target.reset();
-    refreshProfileBtn();
-    reconcileCustomerPoints();
-    // Clear the guest visit, then resume this account's own active
-    // orders (if any) without needing a PIN/table.
-    const resumed = resumeOrClearOnLogin();
-    showToast(resumed ? `Welcome back, ${cust.name} — resuming your orders` : `Welcome, ${cust.name}`, 'success');
-    if (resumed || state.tableNumber) closeTableModal();
-    else { setTableTab('table'); showToast('Now pick your table to order', 'info'); }
-  } catch (err) {
-    errEl.textContent = err.message;
-    errEl.hidden = false;
-  }
-});
-
-/* Join-by-PIN: a tablemate enters the table's 4-digit PIN and is
-   dropped straight into that room — no name typed, no collision
-   check (the PIN is the authorization). The fast path that avoids
-   the conflicting-name problem entirely. */
-function joinByPin() {
-  const inp = $('#joinPinInput');
-  const err = $('#joinPinError');
-  const pin = (inp?.value || '').trim();
-  if (err) err.hidden = true;
-  if (!/^\d{3,4}$/.test(pin)) {
-    if (err) { err.textContent = 'Enter the 3–4 digit PIN from your tablemate.'; err.hidden = false; }
-    return;
-  }
-  const found = Store.findTableByPin(pin);
-  if (!found || !found.label) {
-    if (err) { err.textContent = 'No active table has that PIN. Double-check with your tablemate.'; err.hidden = false; }
-    return;
-  }
-  // Adopt the matched room as our table/identity. Bypass the
-  // name-collision flow on purpose — joining is authorised by the PIN.
-  setTableLabel(found.label);
-  closeTableModal();
-  bumpInactivity();
-  refreshOrderStatusBanner();
-  refreshMyOrdersFab();
-  showToast(`Joined "${found.label}" ☕`, 'success');
-}
-$('#joinPinBtn').addEventListener('click', joinByPin);
-$('#joinPinInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); joinByPin(); }
-});
-
-/* Two layers of collision check before accepting a table label:
-   1. A *live* session on another device holding the same name —
-      this blocks BEFORE either device has even ordered. The
-      second person is told to pick a different label; no
-      "join this table" prompt because the issue is name reuse,
-      not legitimate table sharing.
-   2. Otherwise, an in-flight ORDER under this label on another
-      device — this is the legitimate "joining this table?" case
-      (one person paid, friends are adding more rounds). */
-async function checkDuplicateTable(label, onAccept) {
-  // Layer 0 — the customer re-entered the name/number they are
-  // ALREADY in. Nothing to join or validate: just acknowledge
-  // "you're already in this room" and let Continue drop them back
-  // on the page. Short-circuits before any collision/PIN logic.
-  if (state.tableNumber &&
-      String(label).trim().toLowerCase() === String(state.tableNumber).trim().toLowerCase()) {
-    showDupModal({ mode: 'sameRoom', label, onAccept });
-    return;
-  }
-  // Layer 1 — any active order at this label, from any device
-  // (including this one). Orders sync through Supabase, so this
-  // works cross-device. An existing order is the LEGITIMATE
-  // group-room / table-sharing case and takes precedence over the
-  // name-collision block below: a friend joining a table that
-  // already has an order must always get the join/PIN flow, never
-  // the hard "name is taken" wall (the table owner's open page is
-  // itself holding a live session for this name, which would
-  // otherwise trip Layer 2 and make joining impossible).
-  const matches = Store.findActiveOrdersByTable(label);
-  if (matches.length > 0) {
-    const myIds = Store.getMyClientIds();
-    // "Member" = this device already has an active order at this
-    // label (the table owner, or someone who joined earlier on
-    // this device). We match against this browser's CURRENT *and
-    // past* client ids so a soft reset (visit-end, inactivity,
-    // staff login/out) doesn't lock the same device out of its own
-    // table. Members continue freely. Everyone else is a would-be
-    // joiner and must pass the table PIN — including a cache-cleared
-    // returnee, who reclaims via that PIN gate.
-    const isMember = matches.some(o => myIds.includes(o.clientId));
-    if (isMember) {
-      showDupModal({ mode: 'ownOrder', label, count: matches.length, onAccept });
-    } else {
-      // The table's join PIN lives on its active orders (minted by
-      // the first order). null = legacy orders placed before the
-      // PIN feature existed → no gate (graceful degradation).
-      const pin = matches.map(o => o.joinPin).find(Boolean) || null;
-      showDupModal({ mode: 'share', label, count: matches.length, onAccept, pin });
-    }
-    return;
-  }
-
-  // Layer 2 — no order at this label yet, but another live device
-  // is already holding this exact name. First the LOCAL registry
-  // (another tab of the same browser), then the REMOTE registry
-  // via Supabase (another DEVICE holding the same name before
-  // either has ordered — e.g. PC "art" + phone "art"). Hard block:
-  // there's nothing to join yet, so two strangers shouldn't both
-  // sit as the same name (staff would mix up orders). The second
-  // person picks a different label.
-  let conflict = Store.findActiveSessionByName(label);
-  if (!conflict) conflict = await Store.findActiveSessionByNameRemote(label);
-  // A "conflict" against one of THIS browser's own past client ids is
-  // just our own stale session after a soft reset — not a real clash.
-  // Accept straight through (setTableLabel re-bumps the session under
-  // the current id).
-  if (conflict && Store.getMyClientIds().includes(conflict.clientId)) conflict = null;
-  if (conflict) {
-    // Another live device holds this exact name and there's no order to
-    // join yet. Gate the take/merge behind that device's name PIN so a
-    // troll can't grab a name in use; the genuine owner shares their PIN.
-    // (Legacy sessions with no PIN fall back to the reclaim escape hatch.)
-    showDupModal({ mode: 'nameTaken', label, onAccept, pin: conflict.pin });
-    return;
-  }
-
-  onAccept();
-}
-let pendingTableLabel  = null;
-let pendingTableAccept = null;
-let pendingTablePin    = null;   // expected PIN for the share-join gate
-let pinAttempts        = 0;
-
-/* Configure + open the duplicate/collision modal. Four modes:
-   - 'sameRoom'  : the customer re-entered the name they're already
-                   in — single Continue button returns to the page.
-   - 'nameTaken' : another live device holds this exact name —
-                   only option is to choose a different label.
-   - 'ownOrder'  : this device already has an open order here —
-                   offer continue (join) or sit elsewhere.
-   - 'share'     : someone else has an open order at this label —
-                   offer join (table sharing) or sit elsewhere. */
-function showDupModal({ mode, label, count = 1, onAccept = null, pin = null }) {
-  const modal   = $('#dupTableModal');
-  const desc    = $('#dupTableDesc');
-  const title   = $('#dupTableTitle');
-  const labelEl = $('#dupTableLabel');
-  const joinBtn = $('#dupTableJoinBtn');
-  const elseBtn = $('#dupTableElsewhereBtn');
-  const pinRow  = $('#dupPinRow');
-  const pinErr  = $('#dupPinError');
-  const pinInp  = $('#dupPinInput');
-
-  if (!modal || !joinBtn || !elseBtn) {
-    console.error('[Store] duplicate-table modal markup is missing. Expected #dupTableModal, #dupTableJoinBtn, and #dupTableElsewhereBtn.');
-    pendingTableLabel = null;
-    pendingTableAccept = null;
-    pendingTablePin = null;
-    pinAttempts = 0;
-    openTableModal();
-    return;
-  }
-
-  if (labelEl) labelEl.textContent = label;
-  // Reset PIN UI + button visibility each time (modes below only
-  // override what they need to change).
-  pendingTablePin = null;
-  pinAttempts = 0;
-  if (pinRow) pinRow.hidden = true;
-  if (pinErr) pinErr.hidden = true;
-  if (pinInp) pinInp.value = '';
-  joinBtn.hidden = false;
-  joinBtn.disabled = false;
-  elseBtn.hidden = false;
-
-  if (mode === 'sameRoom') {
-    if (title) title.textContent = "You're already here";
-    joinBtn.textContent = 'Continue';
-    elseBtn.hidden = true;                        // only one action: go back
-    if (desc) desc.textContent =
-      `You're already in "${label}" — this is your current table and order list.`;
-    pendingTableAccept = onAccept;
-  } else if (mode === 'nameTaken') {
-    if (title) title.textContent = 'That name is in use';
-    elseBtn.textContent = 'Choose another name';
-    joinBtn.hidden = false;
-    pendingTableAccept = onAccept;               // accept = take/merge the name
-    if (pin) {
-      // The name's owner has a PIN — require it to take/merge the name,
-      // so a troll can't grab a name that's in active use.
-      if (desc) desc.textContent =
-        `"${label}" is in use on another device. Enter that person's PIN to share the name and merge your orders, or pick a different name. The PIN shows on their screen under the table name.`;
-      joinBtn.textContent = 'Use this name';
-      pendingTablePin = pin;
-      if (pinRow) pinRow.hidden = false;
-    } else {
-      // Legacy session minted before the PIN feature (or the pin column
-      // isn't present yet) — keep the old reclaim escape hatch.
-      if (desc) desc.textContent =
-        `The name "${label}" looks like it's in use on another device. If that's not you, pick a different name so staff don't mix up your orders. If you're the same person returning (for example you cleared your browser), you can take it back.`;
-      joinBtn.textContent = "It's me — use this name";
-    }
-  } else if (mode === 'ownOrder') {
-    if (title) title.textContent = 'Already an open order here';
-    joinBtn.hidden = false;
-    joinBtn.textContent = 'Continue with it';
-    elseBtn.textContent = "I'm somewhere else";
-    if (desc) desc.textContent =
-      `You already have ${count === 1 ? 'an' : count} open order here. Continue with it, or sit somewhere else?`;
-    pendingTableAccept = onAccept;
-  } else {   // 'share' — a would-be joiner; gate behind the table PIN
-    if (title) title.textContent = 'Join this table?';
-    joinBtn.hidden = false;
-    joinBtn.textContent = 'Join this table';
-    elseBtn.textContent = "I'm somewhere else";
-    if (desc) desc.textContent =
-      `"${label}" already has an open order. To add to this table, enter the table's PIN — ask the person who started it.`;
-    pendingTableAccept = onAccept;
-    // Only show the PIN gate when the table actually has a PIN.
-    if (pin) {
-      pendingTablePin = pin;
-      if (pinRow) pinRow.hidden = false;
-    }
-  }
-  pendingTableLabel = label;
-  closeTableModal();            // ensure the dup prompt isn't painted behind the table modal
-  openModal('#dupTableModal');
-  if ((mode === 'share' || mode === 'nameTaken') && pin && pinInp) setTimeout(() => pinInp.focus(), 50);
-}
-
-$('#dupTableJoinBtn').addEventListener('click', () => {
-  // Share-join gate: if a PIN is expected, validate it first.
-  if (pendingTablePin) {
-    const pinInput = $('#dupPinInput');
-    const entered = (pinInput?.value || '').trim();
-    if (entered !== pendingTablePin) {
-      pinAttempts++;
-      const err = $('#dupPinError');
-      if (err) {
-        err.textContent = pinAttempts >= 5
-          ? 'Too many attempts. Please ask staff for help.'
-          : 'Incorrect PIN. Ask the person who started this table.';
-        err.hidden = false;
-      }
-      if (pinInput) {
-        pinInput.focus();
-        pinInput.select();
-      }
-      if (pinAttempts >= 5) $('#dupTableJoinBtn').disabled = true;
-      return;
-    }
-  }
-  const accept = pendingTableAccept;
-  // Adopt the PIN we just validated so this device shares the table's
-  // single code (consumed by setTableLabel via bumpActiveSession).
-  if (pendingTablePin) nextAdoptPin = pendingTablePin;
-  closeModal('#dupTableModal');
-  pendingTableLabel = null; pendingTableAccept = null; pendingTablePin = null; pinAttempts = 0;
-  $('#dupTableJoinBtn').disabled = false;
-  if (accept) accept();
-});
-$('#dupTableElsewhereBtn').addEventListener('click', () => {
-  closeModal('#dupTableModal');
-  pendingTableLabel = null; pendingTableAccept = null; pendingTablePin = null; pinAttempts = 0;
-  $('#dupTableJoinBtn').disabled = false;
-  $('#tableInput').value = '';
-  openTableModal();
-});
-
-$('#tableForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const input = $('#tableInput');
-  const label = input.value.trim();
-  if (!label) {
-    // Reinforce HTML5 required — input.required already blocks
-    // submit but show a friendlier hint in case styling hid it.
-    input.setCustomValidity('Please enter a table name or number.');
-    input.reportValidity();
-    input.setCustomValidity('');
-    return;
-  }
-  // Brief disable while the (async) remote collision check runs.
-  const submitBtn = e.target.querySelector('button[type="submit"]');
-  if (submitBtn) submitBtn.disabled = true;
-  try {
-    await checkDuplicateTable(label, async () => {
-      // Capture the previous label before it changes so we can tell a
-      // first-time seating apart from an actual move.
-      const prevLabel = state.tableNumber;
-      // Decide what happens to active orders first; if the user opts to
-      // keep their current name, abort the rename without changing it.
-      const proceed = await moveOrdersOnTableChange(label);
-      if (!proceed) { closeTableModal(); return; }
-      setTableLabel(label);
-      closeTableModal();
-      bumpInactivity();
-      // Confirm the outcome so the customer always sees where they landed.
-      showToast(
-        prevLabel && !sameLabel(prevLabel, label)
-          ? `You moved to "${label}"`
-          : `You're seated at "${label}"`,
-        'success'
-      );
-    });
-  } finally {
-    if (submitBtn) submitBtn.disabled = false;
-  }
-});
-
-/* When a guest changes to a DIFFERENT label while they have active
-   orders at the old one, offer to move those orders along (they
-   follow the person). Declining cancels them — the customer is
-   leaving that room. No-op when there's nothing active to move. */
-async function moveOrdersOnTableChange(newLabel) {
-  const oldLabel = state.tableNumber;
-  if (!oldLabel || sameLabel(oldLabel, newLabel)) return true;   // nothing to decide → proceed
-  const mine = Store.getMyOrders().filter(o =>
-    (o.status === 'pending' || o.status === 'preparing') && sameLabel(o.tableNumber, oldLabel));
-  if (!mine.length) return true;                                  // no active orders → proceed
-  const n = mine.length;
-  // Explicit 3-way choice — no ambiguous "Cancel" that could read as
-  // "cancel the dialog" when it actually cancels the orders.
-  const choice = await uiConfirm({
-    title: 'You have active orders',
-    message: `You have ${n} active order${n === 1 ? '' : 's'} at "${oldLabel}". What would you like to do?`,
-    buttons: [
-      { label: `Keep my current name (${oldLabel})`,                 value: 'keep',   variant: 'primary' },
-      { label: `Move my order${n === 1 ? '' : 's'} to "${newLabel}"`, value: 'move',   variant: 'ghost' },
-      { label: `Cancel my order${n === 1 ? '' : 's'}`,               value: 'cancel', variant: 'danger' },
-    ],
-  });
-  if (choice === 'move') {
-    Store.moveOrders(mine.map(o => o.id), newLabel);
-    showToast(`Moved ${n} order${n === 1 ? '' : 's'} to "${newLabel}"`, 'success');
-    refreshAdminActivity();
-    return true;
-  }
-  if (choice === 'cancel') {
-    mine.forEach(o => Store.updateOrderStatus(o.id, 'cancelled'));
-    showToast(`Cancelled ${n} order${n === 1 ? '' : 's'}`, 'info');
-    refreshAdminActivity();
-    return true;
-  }
-  // 'keep' or dismissed → abort the rename entirely.
-  return false;
-}
-/* Tapping the name (or the legacy hidden "change" button) reopens the
-   name/table picker. For a signed-in admin the label IS the account
-   identity, so it acts as sign-out instead. */
-function handleChangeTable() {
-  if (Store.getSession()) {
-    adminSignOut();
-    return;
-  }
-  $('#tableInput').value = state.tableNumber || '';
-  openTableModal();
-}
-$('#changeTableBtn').addEventListener('click', handleChangeTable);
-(function wireTableStripControls() {
-  const nameEl = $('#tableNumberDisplay');
-  if (nameEl) {
-    nameEl.addEventListener('click', handleChangeTable);
-    nameEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleChangeTable(); }
-    });
-  }
-  // Tap the header PIN to copy it (My-orders panel copy is unchanged).
-  const pinEl = $('#tablePinDisplay');
-  if (pinEl) {
-    pinEl.addEventListener('click', async () => {
-      const pin = pinEl.dataset.pin;
-      if (!pin) return;
-      await copyTextToClipboard(pin);
-      showToast('PIN copied', 'success');
-    });
-  }
-})();
-
-/* Keep the active-session registry's lastActive for THIS device
-   fresh while the customer is interacting. Lets other devices
-   reliably tell when a name is "abandoned" and free to reuse. */
-setInterval(() => {
-  if (state.tableNumber) Store.bumpActiveSession(state.tableNumber);
-}, 60 * 1000);
 
 /* ==========================================================
    MENU RENDERING
@@ -920,6 +266,11 @@ function clearCart() {
    Split out so a single qty change can refresh these without rebuilding
    the whole cart list (see changeQty). */
 function refreshCartChrome() {
+  // Persist the cart to the session on every change (add / qty / remove
+  // / clear all funnel through here), so a refresh or QR re-scan never
+  // loses items. Skipped while editing an existing order (that pulls the
+  // order's items into the cart temporarily — not the real cart).
+  if (!state.editingOrderId && Store.setCart) Store.setCart(state.cart);
   const { subtotal, count } = cartTotals();
   $('#fabCartCount').textContent = count;
   $('#fabCartTotal').textContent = peso(subtotal);
@@ -1086,14 +437,6 @@ function buildOpts(container, list, currentId, onPick) {
 }
 
 function openCustomizer(itemId, opts = {}) {
-  // Hard gate: no customizing / adding without a table label.
-  // Send the customer back to the table prompt — they can't
-  // build a cart while the table is empty.
-  if (!state.tableNumber) {
-    showToast('Please enter your table first', 'error');
-    openTableModal();
-    return;
-  }
   const item = MENU.find(m => m.id === itemId);
   if (!item) return;
   const o = item.options || {};
@@ -1182,12 +525,18 @@ $('#closeCustomizerBtn').addEventListener('click', closeCustomizer);
 /* ==========================================================
    PLACE ORDER
    ========================================================== */
+/* Optional location note attached at checkout (e.g. "Table 12",
+   "Near window"). Priority: what the customer typed in the cart's
+   location field; otherwise the QR ?table= hint captured on load.
+   Null when neither is present — orders are session-based, not
+   table-bound. */
+function readCheckoutLocation() {
+  const el = $('#locationInput');
+  const typed = el ? el.value.trim() : '';
+  return typed || state.locationIdentifier || null;
+}
 $('#placeOrderBtn').addEventListener('click', async () => {
   if (state.cart.length === 0) return;
-  if (!state.tableNumber) {
-    openTableModal();
-    return;
-  }
   const btn = $('#placeOrderBtn');
   if (btn.dataset.placing === '1') return;   // guard against double-tap
   btn.dataset.placing = '1';
@@ -1238,7 +587,7 @@ $('#placeOrderBtn').addEventListener('click', async () => {
     // placeOrder is async in remote mode (it queries Supabase
     // for the authoritative max order number to avoid collisions).
     order = await Store.placeOrder({
-      tableNumber: state.tableNumber,
+      locationIdentifier: readCheckoutLocation(),
       items,
     });
   } catch (e) {
@@ -1250,6 +599,10 @@ $('#placeOrderBtn').addEventListener('click', async () => {
   btn.dataset.placing = '0';
   clearCart();
   closeCart();
+  // Reset the location field back to the QR default (if any) so the
+  // next order starts clean rather than reusing a one-off note.
+  const locEl = $('#locationInput');
+  if (locEl) locEl.value = state.locationIdentifier || '';
 
   // Remember this customer's active order so the status banner
   // and the modal can poll for live updates from the admin.
@@ -1298,10 +651,6 @@ $('#newOrderBtn').addEventListener('click', () => {
   clearActiveOrder();
 });
 $('#closePlacedBtn').addEventListener('click', () => closeModal('#orderPlacedModal'));
-$('#placedPinCopyBtn').addEventListener('click', async () => {
-  await copyTextToClipboard($('#placedPinCopyBtn').dataset.pin || '');
-  showToast('Table PIN copied — keep it handy', 'success');
-});
 
 /* ==========================================================
    CUSTOMER ORDER STATUS BANNER
@@ -1338,10 +687,13 @@ function clearActiveOrder() {
 function resetCustomerVisitState() {
   clearActiveOrder();
   finishEditingOrder();
-  setTableLabel(null);
-  Store.clearSessionTable();
   clearCart();
-  Store.resetClientId();
+  Store.clearSessionTable();
+  Store.resetClientId();            // fresh device id → clean guest slate
+  Store.touchCartSession();         // rebind the cart session to the new id
+  state.cart = Store.getCart() || [];
+  syncSession();                    // re-read the (new) session id
+  updateCart();
   refreshMyOrdersFab();
   refreshOrderStatusBanner();
   if (!$('#myOrdersSheet').hidden) renderMyOrdersList();
@@ -1350,17 +702,47 @@ function resetCustomerVisitState() {
 /* On sign-in: clear any guest leftovers, then resume the account's OWN
    active orders if it has any (re-adopting its clientId + table so no
    PIN/table re-entry is needed). Returns true if orders were resumed. */
-function resumeOrClearOnLogin() {
-  resetCustomerVisitState();
-  const resumed = Store.resumeAccountOrders();
-  if (resumed && resumed.tableNumber) {
-    setTableLabel(resumed.tableNumber);
-    refreshMyOrdersFab();
-    refreshOrderStatusBanner();
-    if (!$('#myOrdersSheet').hidden) renderMyOrdersList();
-    return true;
+async function resumeOrClearOnLogin() {
+  // One role at a time: signing in as a customer drops any admin
+  // session on this device (and vice versa, in the staff login).
+  if (Store.getSession()) {
+    Store.logout();
+    if (typeof exitAdminPanel === 'function') exitAdminPanel();
+    if (typeof refreshAdminHeaderBtn === 'function') refreshAdminHeaderBtn();
   }
-  return false;
+  const cust = Store.getCustomer && Store.getCustomer();
+  if (!cust) return 0;
+  // Account-switch guard on a SHARED device: if this session already
+  // holds orders owned by a DIFFERENT account, require explicit
+  // confirmation before re-linking them (strict account separation).
+  if (Store.sessionOrdersForeignTo(cust.id)) {
+    const ok = await confirmAsk(
+      'This device has orders linked to a different account. Move them to ' +
+      `${cust.name || 'your account'}? Only do this if they're yours.`,
+      { title: 'Switch accounts?', confirmLabel: 'Link to my account', cancelLabel: 'Keep them separate', danger: true }
+    );
+    if (!ok) {
+      // Decline → start a clean session so the other account's orders
+      // never surface under this login.
+      Store.resetClientId();
+      Store.setCart([]); state.cart = [];
+      syncSession();
+      updateCart();
+      refreshMyOrdersFab();
+      refreshOrderStatusBanner();
+      if (!$('#myOrdersSheet').hidden) renderMyOrdersList();
+      return 0;
+    }
+  }
+  // Link this session's guest orders to the account (idempotent — keeps
+  // the original orderId, only attaches userId), then credit any points
+  // from completed orders so migrated orders count toward rewards.
+  const linked = Store.linkSessionOrdersToAccount(cust.id);
+  reconcileCustomerPoints();
+  refreshMyOrdersFab();
+  refreshOrderStatusBanner();
+  if (!$('#myOrdersSheet').hidden) renderMyOrdersList();
+  return linked;
 }
 /* Case-insensitive table-label compare (labels are free text). */
 function sameLabel(a, b) {
@@ -1368,25 +750,16 @@ function sameLabel(a, b) {
 }
 
 function getActiveOrder() {
-  const here = state.tableNumber;
   // Prefer the explicitly-stored last-placed order — but ONLY while it
-  // still belongs to the CURRENT room. Otherwise the banner would
-  // cling to an order left behind after the customer changed table.
+  // still belongs to THIS session/device. Otherwise the banner could
+  // cling to an order from a different account.
   const id = localStorage.getItem('bossb_active_order');
   if (id) {
+    const mine = new Set(Store.getMyClientIds ? Store.getMyClientIds() : [Store.getClientId()]);
     const stored = Store.getOrders().find(o => o.id === id);
-    if (stored && (!here || sameLabel(stored.tableNumber, here))) return stored;
+    if (stored && mine.has(stored.clientId)) return stored;
   }
-  // Otherwise track the CURRENT room: its most recent active order
-  // from ANY device, so a customer who just joined an existing table
-  // (and hasn't ordered yet) still sees the table's order + banner.
-  // Falls back to this device's own active orders when no table label
-  // is set. Keeps the banner + My orders linked to the same room.
-  if (here) {
-    const tableActive = Store.getTableOrders(here)
-      .filter(o => o.status === 'pending' || o.status === 'preparing');
-    return tableActive[0] || null;     // getTableOrders is newest-first
-  }
+  // Otherwise track this session's most recent active order.
   const fallback = getMyActiveOrders();
   return fallback[0] || null;
 }
@@ -1437,7 +810,12 @@ function openOrderPlacedModal(order) {
 function updatePlacedModalForOrder(order) {
   const info = STATUS_INFO[order.status] || STATUS_INFO.pending;
   $('#placedOrderNumber').textContent = order.number;
-  $('#placedTable').textContent       = `Table ${order.tableNumber ?? '—'}`;
+  // Optional free-text location note (e.g. "Table 12"); hidden when none.
+  const placedLoc = $('#placedTable');
+  if (placedLoc) {
+    if (order.locationIdentifier) { placedLoc.textContent = order.locationIdentifier; placedLoc.hidden = false; }
+    else { placedLoc.textContent = ''; placedLoc.hidden = true; }
+  }
   $('#placedTitle').textContent       = info.modalTitle;
   $('#placedSubtitle').textContent    = info.modalSubtitle;
   $('#placedTickIcon').textContent    = info.icon;
@@ -1448,17 +826,9 @@ function updatePlacedModalForOrder(order) {
   const pill = $('#placedStatusPill');
   pill.textContent = order.status;
   pill.className   = 'status-pill status-' + order.status;
-  // Table PIN + reminder — only meaningful while the table is live.
+  // No table PIN in the session model — keep the row hidden if present.
   const pinRow = $('#placedPinRow');
-  if (pinRow) {
-    if (order.joinPin && order.status !== 'cancelled') {
-      $('#placedPin').textContent = order.joinPin;
-      $('#placedPinCopyBtn').dataset.pin = order.joinPin;
-      pinRow.hidden = false;
-    } else {
-      pinRow.hidden = true;
-    }
-  }
+  if (pinRow) pinRow.hidden = true;
   $('#newOrderBtn').textContent = (order.status === 'served' || order.status === 'cancelled')
     ? 'Start new order'
     : 'Place another order';
@@ -1612,10 +982,9 @@ function getMyActiveOrders() {
    when no table label is set. The My orders sheet already shows this
    same combined table view, so the badge and the sheet now match. */
 function getActiveOrdersHere() {
-  const here = state.tableNumber;
-  if (!here) return getMyActiveOrders();
-  return Store.getTableOrders(here)
-    .filter(o => o.status === 'pending' || o.status === 'preparing');
+  // Session model: "here" is this device's session, so active orders are
+  // simply this session's pending/preparing orders.
+  return getMyActiveOrders();
 }
 
 function refreshMyOrdersFab() {
@@ -1625,10 +994,10 @@ function refreshMyOrdersFab() {
   // Let the back-to-top button lift above this pill when it's present.
   document.body.classList.toggle('has-myorders-fab', !fab.hidden);
   $('#fabMyOrdersBadge').textContent = active;
-  // Chat FAB only appears once this table has an order to talk about.
+  // Chat FAB only appears once this session has an order to talk about.
   const chatFab = $('#fabChatBtn');
   if (chatFab) {
-    chatFab.hidden = !(state.tableNumber && Store.getTableOrders(state.tableNumber).length > 0);
+    chatFab.hidden = (Store.getMyOrders().length === 0);
   }
 }
 
@@ -1718,7 +1087,7 @@ $('#closeMyOrdersBtn').addEventListener('click', closeMyOrders);
 // The header tier chip jumps to the profile (where the full tier
 // progress + perks live).
 $('#myOrdersTierChip')?.addEventListener('click', () => { if (Store.isCustomer && Store.isCustomer()) openProfile(); });
-$('#endVisitBtn').addEventListener('click', endVisit);
+$('#endVisitBtn')?.addEventListener('click', endVisit);
 
 /* Orders the customer has "cleared" from their own list (history
    tidy-up). They stay in the store for staff; this just hides them
@@ -1738,14 +1107,10 @@ const selectedToClear = new Set();
 
 function renderMyOrdersList() {
   const myId = Store.getClientId();
-  // Combined view: when the customer is on a table, show the
-  // whole table's orders across all devices (so joined tablemates
-  // see each other's rounds). Falls back to own orders if no
-  // table label is set. Dismissed (cleared) orders are hidden.
+  // Session-based: this device's own orders, plus (when signed in) any
+  // orders linked to the account. Dismissed (cleared) orders are hidden.
   const dismissed = dismissedOrderIds();
-  const orders = (state.tableNumber
-    ? Store.getTableOrders(state.tableNumber)
-    : Store.getMyOrders()).filter(o => !dismissed.has(o.id));
+  const orders = Store.getMyOrders().filter(o => !dismissed.has(o.id));
   const host   = $('#myOrdersList');
   const active = orders.filter(o => o.status === 'pending' || o.status === 'preparing').length;
   $('#myOrdersSummary').textContent = active === 0
@@ -1763,15 +1128,13 @@ function renderMyOrdersList() {
     }
   }
 
-  // "End my visit" only makes sense once the guest holds a table
-  // label (a room to abolish). Admins keep their auto-stamped label
-  // for the panel and never run the customer abolish lifecycle.
+  // No "End my visit" in the session model — the session persists per
+  // device and expires on its own. Keep the footer hidden if present.
   const foot = $('#myOrdersFoot');
-  if (foot) foot.hidden = !(state.tableNumber && !Store.isAdmin());
+  if (foot) foot.hidden = true;
 
   // Today's spending strip — the customer's OWN non-cancelled
-  // orders placed today (don't count tablemates' spending as
-  // theirs).
+  // orders placed today.
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
   const todays = orders.filter(o => {
@@ -1823,51 +1186,11 @@ function renderMyOrdersList() {
     return;
   }
 
-  // Table PIN banner — the join code for this table, taken from
-  // the customer's own active orders. Shown so they can share it
-  // with real tablemates; anyone without it can't pile orders
-  // onto this table.
-  const activePin = orders
-    .filter(o => o.status === 'pending' || o.status === 'preparing')
-    .map(o => o.joinPin).find(Boolean);
-  const pinHtml = activePin
-    ? `<div class="myorders-pin${pinHintActive ? ' hint' : ''}">
-         <div class="myorders-pin-text">
-           <span>Table PIN</span>
-           <strong>${escapeHtml(activePin)}</strong>
-           <small>share with your table so they can add orders</small>
-         </div>
-         <button class="btn btn-ghost myorders-pin-copy" data-act="copy-pin"
-                 data-pin="${escapeHtml(activePin)}" aria-label="Copy table PIN">Copy</button>
-       </div>`
-    : '';
-
-  // People at this table = distinct devices with a non-cancelled
-  // order. All of THIS browser's ids (current + past) collapse into a
-  // single person so a soft reset on the same device doesn't inflate
-  // the count (FIX2); every other distinct clientId counts once.
-  // (A full browser cache wipe loses the id history and is the one
-  // case this can't collapse — it looks like a genuinely new device.)
-  const myIds = new Set(Store.getMyClientIds());
-  const otherIds = new Set();
-  let meCounted = false;
-  for (const o of orders) {
-    if (o.status === 'cancelled') continue;
-    if (myIds.has(o.clientId)) meCounted = true;
-    else otherIds.add(o.clientId);
-  }
-  const headcount = otherIds.size + (meCounted ? 1 : 0);
-  const peopleHtml = headcount > 0
-    ? `<div class="myorders-people">
-         <span class="people-icons">${'<span class="person">👤</span>'.repeat(Math.min(headcount, 5))}${headcount > 5 ? '<span class="person plus">＋</span>' : ''}</span>
-         <span class="people-label">${headcount} ${headcount === 1 ? 'person' : 'people'} at this table</span>
-       </div>`
-    : '';
-
   // Toolbar: cancel-all (any of MY cancellable orders) + multi-select
   // "clear" of MY finished orders (served/cancelled) from this list.
-  const myCancellable = orders.filter(o => o.clientId === myId && Store.isCancellableByCustomer(o));
-  const myClearable   = orders.filter(o => o.clientId === myId && (o.status === 'served' || o.status === 'cancelled'));
+  // Every order in this list belongs to this session/account.
+  const myCancellable = orders.filter(o => Store.isCancellableByCustomer(o));
+  const myClearable   = orders.filter(o => o.status === 'served' || o.status === 'cancelled');
   // In select mode the actions live in a pinned dock at the bottom, so
   // the top toolbar only carries the entry points. Cancel-all is hidden
   // while selecting to keep the mode focused on clearing finished orders.
@@ -1886,24 +1209,22 @@ function renderMyOrdersList() {
 
   const rowHtml = (o) => {
     const info  = STATUS_INFO[o.status] || STATUS_INFO.pending;
-    const isMine = o.clientId === myId;
-    const selectable = myOrdersSelectMode && isMine && (o.status === 'served' || o.status === 'cancelled');
+    const selectable = myOrdersSelectMode && (o.status === 'served' || o.status === 'cancelled');
     const itemsHtml = o.items.map(i => {
       const menuItem = MENU.find(m => m.id === i.itemId);
       const thumb = `<span class="myo-thumb">${thumbMarkup(menuItem, { fallbackClass: 'myo-thumb-ph' })}</span>`;
       return `<li>${thumb}<span class="myo-name">${i.qty}× ${escapeHtml(i.name)}</span><span class="myo-price">${peso(i.unitPrice * i.qty)}</span></li>`;
     }).join('');
-    // Only the customer who placed an order can cancel it — a
-    // tablemate's order is read-only in your view.
-    const cancellable = isMine && Store.isCancellableByCustomer(o);
+    const cancellable = Store.isCancellableByCustomer(o);
     const isChecked = selectable && selectedToClear.has(o.id);
+    const loc = o.locationIdentifier
+      ? `<small class="muted myorder-loc"> · 📍 ${escapeHtml(String(o.locationIdentifier))}</small>` : '';
     return `
       <article class="myorder-item${selectable ? ' selectable' : ''}${isChecked ? ' selected' : ''}" data-id="${o.id}" data-status="${o.status}"${selectable ? ' data-selectable="1"' : ''}>
         <header>
           <div>
             ${selectable ? `<label class="myo-select"><input type="checkbox" data-clear-id="${o.id}"${isChecked ? ' checked' : ''} aria-label="Select to clear"></label>` : ''}
-            <strong>Order #${o.number}</strong>
-            <span class="myorder-who ${isMine ? 'mine' : ''}">${isMine ? 'you' : 'tablemate'}</span>
+            <strong>Order #${o.number}</strong>${loc}
             <small class="muted"> · ${timeAgo(new Date(o.placedAt))}</small>
           </div>
           <span class="status-pill status-${o.status}">${o.status}</span>
@@ -1954,7 +1275,7 @@ function renderMyOrdersList() {
        </div>`
     : '';
 
-  host.innerHTML = peopleHtml + pinHtml + vouchersHtml + toolbarHtml + orderRows + cancelledHtml + ctaHtml + dockHtml;
+  host.innerHTML = vouchersHtml + toolbarHtml + orderRows + cancelledHtml + ctaHtml + dockHtml;
 }
 
 /* Track checkbox selection for the "clear" multi-select (the 1s
@@ -1987,11 +1308,6 @@ $('#myOrdersList').addEventListener('click', async (e) => {
   const act = btn.dataset.act;
 
   // ----- Toolbar / banner actions (not tied to a single order) -----
-  if (act === 'copy-pin') {
-    await copyTextToClipboard(btn.dataset.pin || '');
-    showToast('Table PIN copied', 'success');
-    return;
-  }
   if (act === 'cancel-all') {
     const myId = Store.getClientId();
     const targets = Store.getMyOrders().filter(o => Store.isCancellableByCustomer(o));
@@ -2140,136 +1456,41 @@ function continueAsSameUser() {
   bumpInactivity();
   showToast('Welcome back ☕ Add anything else?', 'success');
 }
-/* Explicit "End my visit" — the user-initiated path into the same
-   abolish funnel as the thanks overlay and the inactivity reset.
-   The room is a lease tied to the visit, so ending it frees the
-   name immediately for the next walk-in. If orders are still in
-   flight we confirm first and surface the PIN, since the orders
-   stay in the store (admin still sees them) and the guest can
-   rejoin by re-entering the name or the PIN. */
+/* "End my visit" is gone in the session model (the footer button is
+   hidden). Kept as a thin shim so the legacy click binding doesn't
+   throw — it just starts a fresh order on this device. */
 async function endVisit() {
-  const here = state.tableNumber;
-  if (!here) { closeMyOrders(); return; }
-  const activeHere = getActiveOrdersHere();
-  if (activeHere.length > 0) {
-    const pin = activeHere.map(o => o.joinPin).find(Boolean);
-    const pinLine = pin ? ` Write down your PIN to rejoin: ${pin}` : '';
-    const ok = await confirmAsk(
-      `You still have ${activeHere.length} order${activeHere.length === 1 ? '' : 's'} being prepared. ` +
-      `End your visit anyway? Your name will be freed for the next guest.${pinLine}`,
-      { title: 'End visit', confirmLabel: 'End visit', cancelLabel: 'Stay', danger: true }
-    );
-    if (!ok) return;
-  }
   resetForNextCustomer();
-  showToast('Visit ended — your name is free for the next guest', 'success');
 }
+/* "Start a new order" — a soft reset that clears the cart and the
+   last-order banner so the customer can begin a fresh round on the
+   same device/session. In the session model there is NO table to
+   abolish, NO clientId reset, and NO table prompt: the session
+   persists per device and expires on its own. */
 function resetForNextCustomer() {
-  // Forget this device's order history scope by clearing the
-  // active-order pointer and the table label. Orders remain in
-  // the store for the admin to clear/serve.
-  const leaving = state.tableNumber;     // capture before setTableLabel(null) wipes it
   clearActiveOrder();
   finishEditingOrder();             // drop any in-progress order edit
-  setTableLabel(null);
-  Store.clearSessionTable();        // forget the 24h guest persistence
   clearCart();
   closeMyOrders();
   dismissThanks();
-  // Abolish the room: once the visit truly ends, wipe this table's
-  // chat thread so the next customer who reuses the label starts
-  // fresh — and the previous customer's own messages can't reappear
-  // flipped to the wrong side once the clientId below changes (BUG1).
-  // Guarded so we never nuke a SHARED table's chat while a tablemate
-  // still has an order in flight.
-  if (leaving && Store.findActiveOrdersByTable(leaving).length === 0) {
-    Store.clearThread(leaving);
-    if (chatThread === leaving) {
-      chatMessages = [];
-      if (chatDrawer.classList.contains('open')) closeChat();
-      else renderChatMessages();
-    }
-  }
-  // Mint a fresh clientId so the next customer at this device
-  // sees a clean "My orders" list — the previous customer's
-  // orders remain in the store (visible to admin) but stop
-  // matching this browser's Store.getMyOrders().
-  Store.resetClientId();
   thanksShown = false;
   refreshMyOrdersFab();
-  // Force the customer back to the table prompt — they cannot
-  // start ordering again without picking a table.
-  openTableModal();
+  refreshOrderStatusBanner();
 }
 
 /* ==========================================================
-   INACTIVITY RESET
-   - If the customer hasn't interacted with the page for
-     INACTIVITY_MS, AND they have no in-flight orders, we
-     consider them gone and reset to the table prompt.
-   - Customers waiting on a drink are never kicked out.
+   INACTIVITY  (session model)
+   The ordering identity is a persistent per-device session, not a
+   shared table, so we never kick a customer back to a table prompt.
+   bumpInactivity remains as a harmless no-op for the legacy callers
+   that still reference it; the AFK auto-reset has been removed.
    ========================================================== */
-const INACTIVITY_MS = 5 * 60 * 1000;
-let inactivityDeadline = Date.now() + INACTIVITY_MS;
-function bumpInactivity() {
-  inactivityDeadline = Date.now() + INACTIVITY_MS;
-  // Any interaction means the guest is back — dismiss the idle prompt.
-  if ($('#afkModal') && $('#afkModal').classList.contains('open')) hideAfkPrompt();
-}
-['click', 'touchstart', 'keydown', 'scroll', 'pointerdown'].forEach(ev =>
-  document.addEventListener(ev, bumpInactivity, { passive: true })
-);
-
-/* A guest is "engaged" — and so NEVER timed out — whenever something
-   is going on: items sitting in the cart, or an order still in
-   flight (pending/preparing). AFK only ever targets a guest with a
-   table but nothing happening. An actively browsing guest also stays
-   alive because scrolling/tapping keeps bumping the deadline; their
-   live session heartbeat keeps them the owner of their table name. */
+function bumpInactivity() {}
 function customerIsEngaged() {
   return state.cart.length > 0 || getMyActiveOrders().length > 0;
 }
-
-/* "Still there?" idle prompt with a grace countdown. We confirm
-   before freeing the table so we never yank an order/cart out from
-   under someone who just looked away briefly. */
-const AFK_GRACE_MS = 45 * 1000;
-let afkPromptTimer = null, afkDeadline = 0;
-function showAfkPrompt() {
-  const modal = $('#afkModal');
-  if (!modal || modal.classList.contains('open')) return;
-  afkDeadline = Date.now() + AFK_GRACE_MS;
-  openModal('#afkModal');
-  const tick = () => {
-    const left = Math.max(0, Math.ceil((afkDeadline - Date.now()) / 1000));
-    const el = $('#afkCountdown'); if (el) el.textContent = left;
-    if (left <= 0) { hideAfkPrompt(); resetForNextCustomer(); }
-  };
-  tick();
-  afkPromptTimer = setInterval(tick, 1000);
-}
-function hideAfkPrompt() {
-  if (afkPromptTimer) { clearInterval(afkPromptTimer); afkPromptTimer = null; }
-  closeModal('#afkModal');
-}
-$('#afkStayBtn').addEventListener('click', () => { hideAfkPrompt(); bumpInactivity(); });
-
-setInterval(() => {
-  if (Date.now() < inactivityDeadline) return;
-  // Signed-in admins are never timed out — staff, not walk-ins.
-  const session = Store.getSession();
-  if (session && session.role === 'admin') { bumpInactivity(); return; }
-  // Engaged guests (cart items or orders in flight) are immune.
-  if (customerIsEngaged()) { bumpInactivity(); return; }
-  // Don't fight a modal that's already up.
-  if ($('#tableModal').classList.contains('open')) { bumpInactivity(); return; }
-  if ($('#afkModal').classList.contains('open')) return;     // already prompting
-  // Never even started (no table) → just nudge to the table prompt.
-  if (!state.tableNumber) { openTableModal(); bumpInactivity(); return; }
-  // Has a table but nothing going on → confirm presence before
-  // abolishing the room and freeing the name for the next guest.
-  showAfkPrompt();
-}, 30 * 1000);
+function hideAfkPrompt() { closeModal('#afkModal'); }
+$('#afkStayBtn')?.addEventListener('click', () => { hideAfkPrompt(); });
 $('#thanksSameUserBtn').addEventListener('click', continueAsSameUser);
 $('#thanksNewUserBtn').addEventListener('click', resetForNextCustomer);
 
@@ -2300,13 +1521,6 @@ function bindBackdropClose(sel, onClose) {
 bindBackdropClose('#customizerModal', closeCustomizer);
 bindBackdropClose('#staffLoginModal', closeStaffLogin);
 bindBackdropClose('#itemModal',        closeItemModal);
-// Table picker: allow click-away + an X, but only once the visitor
-// has an identity (guest name or signed in) — see tableModalDismissible.
-bindBackdropClose('#tableModal', () => { if (tableModalDismissible()) closeTableModal(); });
-(function wireTableModalClose() {
-  const btn = $('#closeTableBtn');
-  if (btn) btn.addEventListener('click', () => { if (tableModalDismissible()) closeTableModal(); });
-})();
 
 /* Reusable promise-based confirm/alert modal — replaces native
    confirm()/alert(). Resolves the chosen button's `value` (or null if
@@ -2368,7 +1582,6 @@ document.addEventListener('keydown', (e) => {
   if ($('#customizerModal').classList.contains('open'))    return closeCustomizer();
   if ($('#staffLoginModal').classList.contains('open'))    return closeStaffLogin();
   if ($('#itemModal').classList.contains('open'))          return closeItemModal();
-  if ($('#dupTableModal').classList.contains('open'))      return; // force a choice
   if ($('#orderPlacedModal').classList.contains('open'))   return closeModal('#orderPlacedModal');
   if (!$('#myOrdersSheet').hidden)                         return closeMyOrders();
   if (cartDrawer.classList.contains('open'))               return closeCart();
@@ -2382,16 +1595,6 @@ function openStaffLogin()  { openModal('#staffLoginModal'); }
 function closeStaffLogin() {
   closeModal('#staffLoginModal');
   $('#staffLoginError').hidden = true;
-  // Cancelling the staff login from the table flow leaves the
-  // customer with no table set AND no modal showing — they
-  // could browse the menu un-tabled, breaking the "always
-  // require table" rule. Reopen the table prompt unless a
-  // signed-in admin already exists.
-  const session = Store.getSession();
-  const isAdmin = !!session && session.role === 'admin';
-  if (!state.tableNumber && !isAdmin) {
-    openTableModal();
-  }
 }
 /* Footer button is dual-purpose: when no admin session is
    active it opens Staff Login; when one IS active it signs
@@ -2403,10 +1606,6 @@ $('#openStaffLoginBtn').addEventListener('click', () => {
   } else {
     openStaffLogin();
   }
-});
-$('#tableStaffLoginBtn').addEventListener('click', () => {
-  closeTableModal();
-  openStaffLogin();
 });
 
 /* Header Admin shortcut — visible only when a staff session
@@ -2455,6 +1654,13 @@ $('#staffLoginForm').addEventListener('submit', async (e) => {
     e.target.reset();
     closeStaffLogin();
     closeTableModal();
+    // One role at a time: if a customer is signed in on this device,
+    // save their orders to their account and sign them out first.
+    if (Store.getCustomer()) {
+      Store.rememberOrdersForAccount();
+      Store.logoutCustomer();
+      if (typeof refreshProfileBtn === 'function') refreshProfileBtn();
+    }
     // Sever the guest persona entirely: clear the table name + active
     // orders and mint a fresh clientId so the previous guest's visit
     // doesn't linger under the admin (those orders stay in the panel).
@@ -2500,13 +1706,12 @@ $('#customerLoginForm').addEventListener('submit', async (e) => {
     e.target.reset();
     closeCustomerLogin();
     refreshProfileBtn();
-    reconcileCustomerPoints();
-    // Clear guest leftovers, then resume the account's own active orders
-    // (re-adopts their clientId + table, no PIN needed).
-    const resumed = resumeOrClearOnLogin();
-    showToast(resumed ? `Welcome back, ${cust.name} — resuming your orders` : `Welcome, ${cust.name}`, 'success');
-    // Need a table to order; prompt only if we didn't resume one.
-    if (!resumed && !state.tableNumber) openTableModal();
+    // Link this session's guest orders to the account (with the
+    // account-switch confirmation when needed) and reconcile points.
+    const linked = await resumeOrClearOnLogin();
+    showToast(linked > 0
+      ? `Welcome, ${cust.name} — ${linked} order${linked === 1 ? '' : 's'} added to your account`
+      : `Welcome, ${cust.name}`, 'success');
   } catch (err) {
     errEl.textContent = err.message;
     errEl.hidden = false;
@@ -2701,10 +1906,10 @@ function adminSignOut() {
   Store.logout();
   exitAdminPanel();
   refreshAdminHeaderBtn();
-  // Clear the device's guest visit (table + active orders) and drop
-  // back to the customer table prompt. Orders placed stay in the store.
+  // Clear the device's guest visit and drop back to the customer view.
+  // Orders placed stay in the store; the session model needs no table
+  // prompt — a fresh session is created on the next interaction.
   resetCustomerVisitState();
-  openTableModal();
   showToast('Signed out');
 }
 $('#exitAdminBtn').addEventListener('click', exitAdminPanel);
@@ -2783,17 +1988,19 @@ function renderOrders() {
         <span>${peso(i.unitPrice * i.qty)}</span>
       </li>
     `).join('');
-    const tableLabel = o.tableNumber ? escapeHtml(String(o.tableNumber)) : '—';
+    const locTag = o.locationIdentifier
+      ? `<span class="table-tag" title="Location">
+              <span class="table-tag-label">📍</span>
+              <strong>${escapeHtml(String(o.locationIdentifier))}</strong>
+            </span>`
+      : '';
     const cancellable = Store.isCancellableByCustomer(o);
     return `
       <article class="order-card${orderSelectMode ? ' selectable' : ''}${selectedOrders.has(o.id) ? ' selected' : ''}" data-id="${o.id}" data-status="${o.status}">
         <header class="order-head">
           <div class="order-head-id">
             <h3>#${o.number}</h3>
-            <span class="table-tag" title="Table">
-              <span class="table-tag-label">Table</span>
-              <strong>${tableLabel}</strong>
-            </span>
+            ${locTag}
           </div>
           <div class="order-head-status">
             <span class="status-pill status-${o.status}">${o.status}</span>
@@ -3865,7 +3072,7 @@ function buildReceiptHtml(order) {
       </header>
       <hr>
       <div class="rec-row"><span>Order</span><strong>#${order.number}</strong></div>
-      <div class="rec-row"><span>Table</span><strong>${escapeHtml(String(order.tableNumber || '—'))}</strong></div>
+      ${order.locationIdentifier ? `<div class="rec-row"><span>Location</span><strong>${escapeHtml(String(order.locationIdentifier))}</strong></div>` : ''}
       <div class="rec-row"><span>Placed</span><strong>${placed.toLocaleString()}</strong></div>
       ${served ? `<div class="rec-row"><span>Served</span><strong>${served.toLocaleString()}</strong></div>` : ''}
       <hr>
@@ -3957,7 +3164,7 @@ $('#downloadReceiptBtn').addEventListener('click', () => {
     CONFIG.businessTin ? 'TIN: ' + CONFIG.businessTin : '',
     '-------------------------------',
     `Order #${o.number}`,
-    `Table:  ${o.tableNumber || '-'}`,
+    o.locationIdentifier ? `Location: ${o.locationIdentifier}` : '',
     `Placed: ${new Date(o.placedAt).toLocaleString()}`,
     o.servedAt ? `Served: ${new Date(o.servedAt).toLocaleString()}` : '',
     '-------------------------------',
@@ -4027,7 +3234,7 @@ function drawReceiptToCanvas(order) {
   if (CONFIG.businessTin)  center('TIN: ' + CONFIG.businessTin, fSmall, SOFT, 14);
   dash();
   rowOp('Order', '#' + order.number, fMeta, INK, 17);
-  rowOp('Table', String(order.tableNumber || '—'), fMeta, INK, 17);
+  if (order.locationIdentifier) rowOp('Location', String(order.locationIdentifier), fMeta, INK, 17);
   rowOp('Placed', new Date(order.placedAt).toLocaleString(), fMeta, INK, 17);
   if (order.servedAt) rowOp('Served', new Date(order.servedAt).toLocaleString(), fMeta, INK, 17);
   dash();
@@ -4124,7 +3331,7 @@ function buildDailyCsv() {
 
   const cur = CONFIG.currency || '';
   const headers = [
-    'Order #', 'Table', 'Placed', 'Served', 'Status',
+    'Order #', 'Location', 'Placed', 'Served', 'Status',
     'Items', 'Qty',
     `Subtotal (${cur})`, `${CONFIG.taxLabel || 'Tax'} ${CONFIG.taxRate}% (${cur})`, `Total (${cur})`,
   ];
@@ -4137,7 +3344,7 @@ function buildDailyCsv() {
     const qtyTotal = o.items.reduce((s, i) => s + i.qty, 0);
     return [
       o.number,
-      o.tableNumber || '',
+      o.locationIdentifier || '',
       fmtDate(o.placedAt),
       fmtDate(o.servedAt),
       o.status,
@@ -4365,7 +3572,7 @@ function reactToAdminOrderChanges() {
   for (const o of newcomers) {
     if (o.clientId === myId) continue;
     showAdminToast({
-      title:   `🧾 New order #${o.number} · ${o.tableNumber || '—'}`,
+      title:   `🧾 New order #${o.number}${o.locationIdentifier ? ' · ' + o.locationIdentifier : ''}`,
       variant: 'info',
     });
   }
@@ -4425,21 +3632,36 @@ const adminUnreadThreads = new Set();
 
 const CHAT_SEEN_KEY = 'bb_chat_seen';   // { [thread]: lastSeenTs }
 function chatSeenMap() { try { return JSON.parse(localStorage.getItem(CHAT_SEEN_KEY) || '{}'); } catch { return {}; } }
-function markChatSeen(thread) {
+/* Mark a thread read. Store a value at least as large as the newest
+   message seen (server clock) AND local now, so a server/device clock
+   skew can't leave a just-opened thread stuck "unread". */
+function markChatSeen(thread, ts) {
+  if (!thread) return;
   const map = chatSeenMap();
-  map[thread] = Date.now();
+  map[thread] = Math.max(map[thread] || 0, ts || 0, Date.now());
   localStorage.setItem(CHAT_SEEN_KEY, JSON.stringify(map));
+}
+function latestChatTs() {
+  return chatMessages.reduce((mx, m) => Math.max(mx, new Date(m.ts).getTime() || 0), 0) || Date.now();
+}
+
+/* Per-thread floor: the customer view hides messages older than this so
+   a new guest reusing a table label starts with a clean conversation,
+   while the messages themselves stay in the store for the admin. */
+const CHAT_FLOOR_KEY = 'bb_chat_floor';
+function chatFloorMap() { try { return JSON.parse(localStorage.getItem(CHAT_FLOOR_KEY) || '{}'); } catch { return {}; } }
+function setChatFloor(thread, ts) {
+  if (!thread) return;
+  const map = chatFloorMap();
+  map[thread] = Math.max(map[thread] || 0, ts || Date.now());
+  localStorage.setItem(CHAT_FLOOR_KEY, JSON.stringify(map));
 }
 
 async function openChat(thread, role = 'customer') {
-  if (!thread) {                       // customer with no table yet
-    showToast('Set your table first to chat', 'error');
-    openTableModal();
-    return;
-  }
-  // Customers can only chat once their table actually has an order —
+  if (!thread) return;                  // no session id yet
+  // Customers can only chat once their session actually has an order —
   // no point messaging staff before ordering. (Admins always can.)
-  if (role !== 'admin' && Store.getTableOrders(thread).length === 0) {
+  if (role !== 'admin' && Store.getMyOrders().length === 0) {
     showToast('Place an order first to chat with staff', 'error');
     return;
   }
@@ -4452,7 +3674,10 @@ async function openChat(thread, role = 'customer') {
     if (adminUnreadThreads.delete(String(thread))) updateChatsBadge();
     markThreadActiveInList(thread);
   }
-  $('#chatTitle').textContent    = role === 'admin' ? `Table ${thread}` : 'Chat with staff';
+  // Admin: title is the customer's name (from the cached thread list),
+  // not "Table X". Falls back to the raw label if no name yet.
+  const cacheName = (chatThreadsCache || []).find(t => String(t.thread) === String(thread))?.name;
+  $('#chatTitle').textContent    = role === 'admin' ? (cacheName || String(thread)) : 'Chat with staff';
   updateChatStatus();              // sets the default subtitle
   startChatPresence(thread, role);
   chatDrawer.classList.add('open');
@@ -4467,7 +3692,10 @@ async function openChat(thread, role = 'customer') {
   chatMessages = await Store.listMessages(thread);
   setChatReply(null);
   renderChatMessages();
-  markChatSeen(thread);
+  markChatSeen(thread, latestChatTs());
+  // Admin: now that we've marked it read, repaint the list so its
+  // unread cue actually clears (it was re-seeding from the stale ts).
+  if (role === 'admin' && chatThreadsCache) paintChatThreads(chatThreadsCache);
   refreshChatDot();
   syncChatToViewport(true);
 }
@@ -4480,7 +3708,7 @@ function closeChat() {
   stopChatPresence();
   if (activeVoiceId) { const a = voiceAudioEls.get(activeVoiceId); if (a) a.pause(); }
   syncChatToViewport(false);          // revert any keyboard sizing
-  if (chatThread) markChatSeen(chatThread);
+  if (chatThread) markChatSeen(chatThread, latestChatTs());
   // Closing a docked conversation deselects it and returns the right
   // pane to its placeholder, then refreshes the list (read state).
   if (wasDocked) {
@@ -4577,12 +3805,15 @@ function paintChatThreads(threads) {
                   : escapeHtml(m.body || '');
     const who = m.role === 'admin' ? 'You: ' : '';
     const label = escapeHtml(String(t.thread));
+    // Show the customer's name (per-person colour), not "Table X".
+    const display = t.name || String(t.thread);
+    const color = colorForName(display);
     return `
       <button class="chat-thread${unread ? ' unread' : ''}${active ? ' active' : ''}${sel ? ' selected' : ''}" data-thread="${label}">
-        <span class="ct-avatar">${label.slice(0, 2).toUpperCase()}</span>
+        <span class="ct-avatar" style="background:${color}">${escapeHtml(initialsForName(display))}</span>
         <span class="ct-main">
           <span class="ct-top">
-            <strong class="ct-name">Table ${label}</strong>
+            <strong class="ct-name">${escapeHtml(display)}</strong>
             <small class="ct-time">${timeAgo(new Date(m.ts))}</small>
           </span>
           <span class="ct-preview">${who}${preview}</span>
@@ -4744,7 +3975,7 @@ function startChatPresence(thread, role) {
   if (!Store.joinChatPresence) return;
   presenceLeave = Store.joinChatPresence({
     thread, role,
-    name: role === 'admin' ? (Store.getSession()?.name || 'Staff') : (state.tableNumber || 'Guest'),
+    name: role === 'admin' ? (Store.getSession()?.name || 'Staff') : customerChatName(),
     onPresence: (pstate, selfId) => {
       const everyone = Object.values(pstate || {}).flat();
       // Count a participant as "other" only if visible to us (admins,
@@ -4813,9 +4044,17 @@ function chatShowsGuests() {
   return chatRole === 'admin' || !!(CONFIG && CONFIG.allowGuestChat);
 }
 function chatVisibleMessages() {
-  if (chatShowsGuests()) return chatMessages;
+  let list = chatMessages;
+  // Customer view: hide messages from before this device's current
+  // visit (floor raised when a prior guest ended), so a returning/new
+  // guest starts clean. Admin always sees the full history.
+  if (chatRole !== 'admin' && chatThread) {
+    const floor = chatFloorMap()[chatThread] || 0;
+    if (floor) list = list.filter(m => new Date(m.ts).getTime() >= floor);
+  }
+  if (chatShowsGuests()) return list;
   const myId = Store.getClientId();
-  return chatMessages.filter(m => m.role === 'admin' || m.sender === myId);
+  return list.filter(m => m.role === 'admin' || m.sender === myId);
 }
 
 function renderChatMessages() {
@@ -4835,9 +4074,14 @@ function renderChatMessages() {
       ? `<div class="chat-reply-quote">${escapeHtml(m.replyPreview || 'message')}</div>` : '';
     const reactHtml = m.reaction
       ? `<span class="chat-react" aria-label="reaction">${m.reaction}</span>` : '';
+    // Per-person colour: staff share one colour; each customer name its
+    // own. Drives the name label + a bubble accent so senders are easy
+    // to tell apart at a glance.
+    const who = m.senderName || (m.role === 'admin' ? 'Staff' : 'Guest');
+    const color = colorForName(m.role === 'admin' ? 'Staff' : who);
     return `
-      <div class="chat-msg ${mine ? 'mine' : 'theirs'}${m.reaction ? ' has-react' : ''}" data-id="${m.id}">
-        ${(!mine) ? `<small class="chat-who">${escapeHtml(m.senderName || (m.role === 'admin' ? 'Staff' : 'Guest'))}</small>` : ''}
+      <div class="chat-msg ${mine ? 'mine' : 'theirs'}${m.reaction ? ' has-react' : ''}" data-id="${m.id}" style="--who-color:${color}">
+        ${(!mine) ? `<small class="chat-who" style="color:${color}">${escapeHtml(who)}</small>` : ''}
         <div class="chat-bubble chat-${m.kind}">${replyHtml}${inner}${reactHtml}</div>
         <small class="chat-time">${timeAgo(new Date(m.ts), Store.serverNow ? Store.serverNow() : Date.now())}</small>
       </div>`;
@@ -5186,7 +4430,7 @@ async function sendChat(kind, body) {
       thread: chatThread, role: chatRole, kind, body: text,
       senderName: chatRole === 'admin'
         ? (Store.getSession()?.name || 'Staff')
-        : (state.tableNumber || 'Guest'),
+        : customerChatName(),
       replyTo:      chatReplyTo ? chatReplyTo.id : null,
       replyPreview: chatReplyTo ? chatReplyTo.preview : null,
     });
@@ -5336,7 +4580,7 @@ window.addEventListener('bb-chat', (e) => {
     if (!chatMessages.some(m => m.id === msg.id)) {
       chatMessages.push(msg);
       renderChatMessages();
-      markChatSeen(chatThread);
+      markChatSeen(chatThread, new Date(msg.ts).getTime());
     }
   } else {
     // Message for a thread we're not actively viewing → unread.
@@ -5494,7 +4738,14 @@ async function boot() {
   // for orders that already existed when the tab opened.
   snapshotOrderStatuses();
   knownOrderIds = new Set(Store.getOrders().map(o => o.id));
-  // Credit points for orders completed while the customer was away.
+  // Returning signed-in customer (e.g. just created an account on
+  // signup.html and was redirected back): silently link this session's
+  // guest orders to the account, then credit points for any completed
+  // orders. Idempotent and keyed by orderId, so no double counting.
+  if (Store.isCustomer && Store.isCustomer()) {
+    const c = Store.getCustomer();
+    if (c) Store.linkSessionOrdersToAccount(c.id);
+  }
   reconcileCustomerPoints();
 
   // Restore the customer's order state on reload — banner, FAB,
