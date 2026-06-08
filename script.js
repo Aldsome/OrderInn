@@ -654,6 +654,24 @@ function finishEditingOrder() {
   $('#placeOrderBtn').textContent = 'Place Order';
 }
 
+/* Re-order a finished (served / cancelled) order: drop its items into a
+   fresh cart for review/modification. Unlike Modify this places a NEW
+   order — it never edits or revives the original. */
+function reorderIntoCart(order) {
+  finishEditingOrder();          // ensure we're not in update mode
+  clearCart();
+  let added = 0;
+  for (const it of order.items) {
+    if (!MENU.find(m => m.id === it.itemId)) continue;   // skip removed items
+    addLine(it.itemId, JSON.parse(JSON.stringify(it.config || {})), it.qty);
+    added++;
+  }
+  if (!added) { showToast('Those items are no longer on the menu', 'error'); return; }
+  closeMyOrders();
+  openCart();
+  showToast('Added to your cart — review, then place your order', 'success');
+}
+
 $('#newOrderBtn').addEventListener('click', () => {
   closeModal('#orderPlacedModal');
   // "Start new order" = the customer is done with the last
@@ -957,14 +975,55 @@ $('#orderStatusBtn').addEventListener('click', () => {
    hovering/touching so it doesn't slide out from under their tap. */
 const osbTrackEl = $('#osbTrack');
 if (osbTrackEl) {
+  let dragging = false, dragMoved = false, startX = 0, startScroll = 0, dragPointer = null;
+
   osbTrackEl.addEventListener('click', (e) => {
+    // Swallow the click that ends a drag so it doesn't open a product.
+    if (dragMoved) { e.preventDefault(); e.stopPropagation(); return; }
     const card = e.target.closest('.osb-card');
     if (!card) return;
     openCustomizer(card.dataset.id);
   });
+
+  // Desktop mice only have a vertical wheel — translate it to horizontal
+  // scroll so the carousel is reachable without a trackpad.
+  osbTrackEl.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;   // already horizontal intent
+    e.preventDefault();
+    osbTrackEl.scrollLeft += e.deltaY;
+    osbAutoplayStop();
+  }, { passive: false });
+
+  // Click-and-drag to scroll (mouse / pen). Touch keeps native swipe.
+  osbTrackEl.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') return;
+    dragging = true; dragMoved = false;
+    startX = e.clientX; startScroll = osbTrackEl.scrollLeft;
+    dragPointer = e.pointerId;
+    try { osbTrackEl.setPointerCapture(dragPointer); } catch (_) {}
+    osbTrackEl.classList.add('dragging');
+    osbAutoplayStop();
+  });
+  osbTrackEl.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    if (Math.abs(dx) > 4) dragMoved = true;
+    osbTrackEl.scrollLeft = startScroll - dx;
+  });
+  const endOsbDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    if (dragPointer != null) { try { osbTrackEl.releasePointerCapture(dragPointer); } catch (_) {} dragPointer = null; }
+    osbTrackEl.classList.remove('dragging');
+    // Clear the "moved" flag AFTER the click handler above has run.
+    setTimeout(() => { dragMoved = false; }, 0);
+  };
+  osbTrackEl.addEventListener('pointerup', endOsbDrag);
+  osbTrackEl.addEventListener('pointercancel', endOsbDrag);
+
   osbTrackEl.addEventListener('pointerenter', osbAutoplayStop);
   osbTrackEl.addEventListener('pointerleave', () => {
-    if ($('#orderStatusBanner')?.classList.contains('collapsed')) osbAutoplayStart();
+    if (!dragging && $('#orderStatusBanner')?.classList.contains('collapsed')) osbAutoplayStart();
   });
 }
 
@@ -1274,6 +1333,9 @@ function renderMyOrdersList() {
       return `<li>${thumb}<span class="myo-name">${i.qty}× ${escapeHtml(i.name)}</span><span class="myo-price">${peso(i.unitPrice * i.qty)}</span></li>`;
     }).join('');
     const cancellable = Store.isCancellableByCustomer(o);
+    // Finished orders (served or cancelled) can be re-ordered straight
+    // back into the cart. Hidden during select mode to keep that focused.
+    const reorderable = !myOrdersSelectMode && (o.status === 'served' || o.status === 'cancelled');
     const isChecked = selectable && selectedToClear.has(o.id);
     const loc = o.locationIdentifier
       ? `<small class="muted myorder-loc"> · 📍 ${escapeHtml(String(o.locationIdentifier))}</small>` : '';
@@ -1295,7 +1357,9 @@ function renderMyOrdersList() {
           ${cancellable
             ? `<button class="btn btn-ghost btn-modify-grace" data-act="modify">Modify</button>
                <button class="btn btn-cancel-grace" data-act="cancel">Cancel</button>`
-            : ''}
+            : reorderable
+              ? `<button class="btn btn-ghost btn-mini" data-act="reorder">🔁 Reorder</button>`
+              : ''}
         </footer>
       </article>
     `;
@@ -1419,6 +1483,12 @@ $('#myOrdersList').addEventListener('click', async (e) => {
       return;
     }
     startEditingOrder(order);
+    return;
+  }
+
+  if (act === 'reorder') {
+    const order = Store.getOrders().find(o => o.id === id);
+    if (order) reorderIntoCart(order);
     return;
   }
 
@@ -3560,11 +3630,16 @@ function initNotifSound() {
   } catch (e) { return; }
   const unlock = () => {
     if (notifAudioUnlocked || !notifAudio) return;
+    // Unlock autoplay SILENTLY — play muted, then reset. Without muting,
+    // the first click/keypress after a reload audibly plays a clipped
+    // fragment of the notif sound (the "cut in the middle" on reload).
+    notifAudio.muted = true;
     notifAudio.play().then(() => {
       notifAudio.pause();
       notifAudio.currentTime = 0;
+      notifAudio.muted = false;
       notifAudioUnlocked = true;
-    }).catch(() => {});
+    }).catch(() => { notifAudio.muted = false; });
     window.removeEventListener('pointerdown', unlock);
     window.removeEventListener('keydown', unlock);
   };

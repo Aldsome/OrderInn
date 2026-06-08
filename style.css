@@ -79,8 +79,8 @@
   --yellow-500: #FFD865;
   --yellow-700: #FFE48A;
 
-  --cream:    #16181C;   /* app background (darkest) */
-  --white:    #1E2127;   /* cards / panels / surfaces */
+  --cream:    #0c0c0c;   /* app background (darkest) */
+  --white:    #2a2112;   /* cards / panels / surfaces */
   --ink:      #ECEEF1;   /* primary text — neutral light gray */
   --ink-soft: #AAB0B9;   /* secondary text */
   --ink-faint:#767C86;   /* hints / timestamps */
@@ -594,8 +594,17 @@ select option,
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
   scroll-behavior: smooth;
+  cursor: grab;              /* hint that the strip is draggable on desktop */
 }
 .osb-track::-webkit-scrollbar { display: none; }
+/* While click-dragging: free scrolling (no snap/smooth fighting the drag). */
+.osb-track.dragging {
+  cursor: grabbing;
+  scroll-behavior: auto;
+  scroll-snap-type: none;
+  user-select: none;
+}
+.osb-track.dragging .osb-card { cursor: grabbing; }
 .osb-card {
   flex: 0 0 auto;
   scroll-snap-align: start;
@@ -1748,7 +1757,76 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .check-row { display: flex; flex-wrap: wrap; gap: 12px; }
 .check-row label { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); }
-.check-row input { width: 16px; height: 16px; accent-color: var(--primary); }
+
+/* ==========================================================
+   MODERN CHECKBOX + RADIO  (unified, app-wide)
+   Replaces native rendering with a brand-coloured control. The
+   checked tick/dot colour follows the same fixed-vs-dark rule as
+   the other --primary surfaces (light tick in light mode, dark
+   tick in dark mode) so it stays legible in both themes.
+   ========================================================== */
+input[type="checkbox"],
+input[type="radio"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 19px;
+  height: 19px;
+  margin: 0;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-content: center;
+  vertical-align: middle;
+  border: 2px solid var(--brown-300);
+  background: var(--white);
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+input[type="checkbox"] { border-radius: 6px; }
+input[type="radio"]    { border-radius: 50%; }
+input[type="checkbox"]:hover,
+input[type="radio"]:hover { border-color: var(--primary); }
+
+input[type="checkbox"]:checked,
+input[type="radio"]:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+/* Checkbox tick (rotated border) */
+input[type="checkbox"]::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  margin-bottom: 2px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) scale(0);
+  transition: transform .15s cubic-bezier(.5, 1.6, .5, 1);
+}
+input[type="checkbox"]:checked::after { transform: rotate(45deg) scale(1); }
+/* Radio dot */
+input[type="radio"]::after {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fff;
+  transform: scale(0);
+  transition: transform .15s cubic-bezier(.5, 1.6, .5, 1);
+}
+input[type="radio"]:checked::after { transform: scale(1); }
+/* Dark mode: --primary reads lighter, so the tick/dot must go dark. */
+[data-theme="dark"] input[type="checkbox"]::after { border-color: #0E1419; }
+[data-theme="dark"] input[type="radio"]::after    { background: #0E1419; }
+
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 38%, transparent);
+}
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled { opacity: .5; cursor: not-allowed; }
+
+.check-row input { width: 19px; height: 19px; }
 
 .form-error {
   margin: 0;
