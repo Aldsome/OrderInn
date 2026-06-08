@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=45" />
+  <link rel="stylesheet" href="style.css?v=52" />
 
   <script>
     (function () {
@@ -405,10 +405,10 @@
         <span class="status-pill" id="placedStatusPill">pending</span>
       </div>
 
-      <!-- Self-cancel — visible while the just-placed order is still
-           pending (staff haven't started preparing it). -->
-      <button class="btn btn-cancel-grace btn-block" id="placedCancelBtn" hidden>
-        <span>Cancel order</span>
+      <!-- Routes the customer to "My orders" to manage (cancel/modify)
+           the order they just placed. -->
+      <button class="btn btn-ghost btn-block" id="placedMyOrdersBtn">
+        <span>View my orders</span>
       </button>
 
       <p class="pay-note">💵 Pay at the counter when your order is ready.</p>
@@ -428,6 +428,9 @@
         <strong>My orders</strong>
         <small class="muted" id="myOrdersSummary">0 active</small>
       </div>
+      <button class="tier-chip" id="myOrdersTierChip" hidden aria-label="View your membership">
+        🏅 <span id="myOrdersTierName">Bronze</span>
+      </button>
       <button class="icon-btn close-btn" id="closeMyOrdersBtn" aria-label="Close">✕</button>
     </header>
     <div class="myorders-body" id="myOrdersList">
@@ -651,6 +654,15 @@
         <p class="profile-name" id="profileName">—</p>
         <p class="muted small" id="profileEmail">—</p>
 
+        <div class="perk-card tier-card">
+          <div class="perk-row">
+            <span class="tier-badge" id="profileTierBadge">🏅 Bronze</span>
+            <span class="muted small" id="profileTierSpend">₱0 lifetime</span>
+          </div>
+          <div class="loyalty-bar"><div class="loyalty-fill" id="tierFill"></div></div>
+          <p class="small muted" id="profileTierNext">—</p>
+        </div>
+
         <div class="perk-card">
           <span class="muted small">Points balance</span>
           <strong class="perk-points" id="profilePoints">0</strong>
@@ -756,6 +768,7 @@
 
     <nav class="admin-tabs">
       <button class="admin-tab active" data-admin-tab="orders">Orders <span class="tab-badge" id="ordersBadge">0</span></button>
+      <button class="admin-tab" data-admin-tab="chats">Chats <span class="tab-badge" id="chatsBadge" hidden>0</span></button>
       <button class="admin-tab" data-admin-tab="menu">Menu</button>
       <button class="admin-tab" data-admin-tab="settings">Settings</button>
     </nav>
@@ -798,11 +811,42 @@
             <button class="btn btn-ghost" id="exportCsvBtn">Export today (.csv)</button>
             <button class="btn btn-ghost" id="clearServedBtn">Clear served</button>
             <button class="btn btn-ghost" id="orderSelectToggle">Select</button>
-            <button class="btn btn-danger" id="deleteSelectedOrdersBtn" hidden>Delete selected</button>
+            <button class="btn btn-ghost" id="orderSelectAllBtn" hidden>Select all</button>
+            <button class="btn btn-ghost" id="cancelSelectedOrdersBtn" hidden>Cancel orders</button>
+            <button class="btn btn-danger" id="deleteSelectedOrdersBtn" hidden>Delete</button>
           </div>
         </div>
         <div class="orders-list" id="ordersList">
           <p class="empty-state">No orders yet.</p>
+        </div>
+      </section>
+
+      <!-- ----- Chats (Messenger-style table conversations) -----
+           Two-pane on desktop: conversation list on the left, the
+           selected thread's chat docked on the right. On mobile the
+           list shows full-width and a tap opens the chat as a sheet. -->
+      <section class="admin-pane chat-pane" data-admin-pane="chats" hidden>
+        <div class="chat-2pane">
+          <aside class="chat-2pane-list">
+            <div class="pane-head">
+              <h2>Messages</h2>
+              <div class="row-gap">
+                <button class="btn btn-ghost btn-mini" id="chatSelectToggle">Select</button>
+                <button class="btn btn-ghost btn-mini" id="refreshChatsBtn">Refresh</button>
+              </div>
+            </div>
+            <div class="chat-thread-list" id="chatThreadList">
+              <p class="empty-state">No conversations yet.</p>
+            </div>
+            <div class="chat-select-bar" id="chatSelectBar" hidden>
+              <span id="chatSelectCount">0 selected</span>
+              <button class="btn btn-ghost btn-mini" id="chatSelectCancel">Done</button>
+              <button class="btn btn-danger btn-mini" id="chatDeleteSelected" disabled>Delete</button>
+            </div>
+          </aside>
+          <div class="chat-2pane-convo" id="chatDockArea">
+            <p class="empty-state chat-dock-empty">Select a conversation to start chatting.</p>
+          </div>
         </div>
       </section>
 
@@ -1114,7 +1158,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=37"></script>
-  <script src="script.js?v=69"></script>
+  <script src="store.js?v=39"></script>
+  <script src="script.js?v=77"></script>
 </body>
 </html>

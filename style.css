@@ -62,12 +62,15 @@
 }
 
 [data-theme="dark"] {
-  --brown-50:  #251D14;
-  --brown-100: #332818;
-  --brown-200: #4A3823;
-  --brown-300: #6F543A;
-  --brown-500: #C8AC81;
-  --brown-700: #DDC9A8;
+  /* Neutral dark-gray surfaces (slightly cool) instead of warm brown,
+     while the brand accent (--brown-500/-700) stays tan so buttons,
+     avatars and highlights keep their identity. */
+  --brown-50:  #23262C;   /* subtle surface / hover */
+  --brown-100: #2B2F36;   /* selected / grouped rows */
+  --brown-200: #353A42;
+  --brown-300: #495059;   /* stronger borders */
+  --brown-500: #C8AC81;   /* brand accent (kept tan) */
+  --brown-700: #DDC9A8;   /* brand accent deep (kept tan) */
 
   --yellow-50:  #2A2310;
   --yellow-100: #3A2F18;
@@ -76,13 +79,13 @@
   --yellow-500: #FFD865;
   --yellow-700: #FFE48A;
 
-  --cream:    #1A140E;
-  --white:    #221912;
-  --ink:      #F5EBD9;
-  --ink-soft: #B8A892;
-  --ink-faint:#8A7A66;
-  --line:     #3A2F22;
-  --line-strong:#5C4830;
+  --cream:    #16181C;   /* app background (darkest) */
+  --white:    #1E2127;   /* cards / panels / surfaces */
+  --ink:      #ECEEF1;   /* primary text — neutral light gray */
+  --ink-soft: #AAB0B9;   /* secondary text */
+  --ink-faint:#767C86;   /* hints / timestamps */
+  --line:     #2E323A;
+  --line-strong:#3E434C;
 
   --primary:      var(--brown-500);
   --primary-deep: var(--brown-700);
@@ -92,6 +95,22 @@
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.45);
   --shadow:    0 8px 24px rgba(0, 0, 0, 0.55);
   --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+
+/* Theme switch fade — enabled only while toggling (JS adds .theme-anim
+   to <html> for ~450ms), so colours cross-fade instead of snapping
+   without leaving a permanent transition on every element. */
+html.theme-anim,
+html.theme-anim *,
+html.theme-anim *::before,
+html.theme-anim *::after {
+  transition: background-color .4s ease, color .4s ease,
+              border-color .4s ease, fill .4s ease,
+              stroke .4s ease, box-shadow .4s ease !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.theme-anim, html.theme-anim *,
+  html.theme-anim *::before, html.theme-anim *::after { transition: none !important; }
 }
 
 /* ==========================================================
@@ -1909,7 +1928,9 @@ body.admin-open { overflow: hidden; }
   padding: 0 7px;
   border-radius: 999px;
   background: var(--accent);
-  color: var(--ink);
+  /* Accent is yellow in BOTH themes, so the text must always be dark —
+     not var(--ink), which flips light in dark mode and vanishes. */
+  color: #2A1E07;
   font-size: .72rem;
   font-weight: 700;
 }
@@ -1948,6 +1969,14 @@ body.admin-open { overflow: hidden; }
   box-shadow: var(--shadow-sm);
   display: grid;
   gap: 8px;
+}
+/* Multi-select (cancel/delete) mode — click a card to toggle it. */
+.order-card.selectable { cursor: pointer; }
+.order-card.selectable:hover { border-color: var(--brown-300); }
+.order-card.selected {
+  border-color: var(--primary);
+  background: rgba(200, 172, 129, 0.22);
+  box-shadow: inset 0 0 0 2px var(--primary);
 }
 .order-card .order-head {
   display: flex;
@@ -2427,6 +2456,10 @@ body.cart-open .fab-cart {
 .myorders-head small { display: block; }
 .myorders-body {
   overflow-y: auto;
+  /* Keep scroll inside the sheet — don't chain to the page behind it
+     when the list reaches the top or bottom. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 10px 14px 14px;
   display: grid;
   gap: 10px;
@@ -2601,15 +2634,15 @@ body.cart-open .fab-cart {
 /* Select-to-clear: selectable rows act like tappable cards, and the
    chosen ones get a clear highlight. */
 .myorder-item.selectable { cursor: pointer; }
-.myorder-item.selectable:hover { border-color: var(--brown-300, #c9b59a); }
+.myorder-item.selectable:hover { border-color: var(--brown-300); }
 .myorder-item.selected {
-  border-color: var(--brand, #A0855E);
-  box-shadow: 0 0 0 2px var(--brand, #A0855E) inset;
-  background: var(--brown-50, #f7f1e8);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary) inset;
+  background: var(--brown-50);
 }
 .myorders-selhint {
   font-size: .8rem;
-  color: var(--muted, #777);
+  color: var(--ink-soft);
   align-self: center;
 }
 
@@ -2623,7 +2656,7 @@ body.cart-open .fab-cart {
   gap: 8px;
   margin: 4px -14px -14px;       /* bleed to the body's edges */
   padding: 10px 14px;
-  background: var(--white, #fff);
+  background: var(--white);
   border-top: 1px solid var(--line);
   box-shadow: 0 -6px 14px rgba(0,0,0,.06);
   z-index: 2;
@@ -2632,6 +2665,217 @@ body.cart-open .fab-cart {
   font-size: .85rem;
   font-weight: 600;
   margin-right: auto;
+}
+
+/* Membership tier chip in the My Orders header. */
+.tier-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  background: rgba(200, 172, 129, 0.18);
+  color: var(--ink);
+  font-size: .76rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tier-chip:hover { background: rgba(200, 172, 129, 0.30); }
+
+/* Logged-in My Orders CTA (savings / spend note). */
+.myorders-cta.loggedin {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--brown-50);
+  text-align: center;
+}
+.myorders-cta.loggedin .spend-note { margin: 0; font-size: .9rem; }
+
+/* Tier card in the profile modal. */
+.tier-card .tier-badge {
+  font-weight: 800;
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+/* Collapsed "Cancelled" group inside My Orders. */
+.myorders-cancelled {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.myorders-cancelled > summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  list-style: none;
+}
+.myorders-cancelled > summary::-webkit-details-marker { display: none; }
+.myorders-cancelled > summary::before { content: '▸ '; }
+.myorders-cancelled[open] > summary::before { content: '▾ '; }
+.myorders-cancelled-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 10px 10px;
+}
+
+/* ===== Admin Messenger-style conversation list ===== */
+.chat-list-hint { margin: 0 0 10px; }
+
+/* Two-pane chat: list (left) + docked conversation (right). */
+.chat-2pane {
+  display: flex;
+  gap: 16px;
+  height: min(74vh, 760px);
+}
+.chat-2pane-list {
+  flex: 0 0 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.chat-2pane-list .pane-head { flex: 0 0 auto; }
+.chat-2pane-list .chat-thread-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.chat-2pane-convo {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--cream);
+  display: flex;
+}
+.chat-dock-empty {
+  margin: auto;
+  text-align: center;
+  padding: 24px;
+}
+.chat-2pane-convo.has-convo .chat-dock-empty { display: none; }
+
+/* Docked drawer: drop the floating-overlay behaviour and fill the
+   right pane as an inline panel. */
+.chat-drawer.docked {
+  position: static !important;
+  inset: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+  transform: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  z-index: auto !important;
+}
+
+/* On phones the right pane collapses; the list is full-width and a
+   tapped conversation opens as the usual bottom-sheet drawer. */
+@media (max-width: 799px) {
+  .chat-2pane { display: block; height: auto; }
+  .chat-2pane-list { flex: none; }
+  .chat-2pane-convo { display: none; }
+}
+
+.chat-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat-thread {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--white);
+  /* <button> doesn't inherit text colour by default, so set it
+     explicitly or children (e.g. .ct-name) fall back to the browser's
+     dark default and disappear in dark mode. */
+  color: var(--ink);
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.chat-thread:hover { background: var(--brown-50); border-color: var(--brown-300); }
+.chat-thread.unread { border-color: var(--primary); background: var(--brown-50); }
+/* Currently-open conversation (two-pane desktop). */
+.chat-thread.active {
+  border-color: var(--primary);
+  background: var(--brown-100);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+.chat-thread .ct-avatar {
+  flex: 0 0 auto;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--primary);
+  color: var(--white);
+  font-weight: 700;
+  font-size: .85rem;
+}
+.chat-thread .ct-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.chat-thread .ct-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+}
+.chat-thread .ct-name { font-size: .95rem; color: var(--ink); }
+.chat-thread .ct-time { color: var(--ink-soft); font-size: .72rem; flex: 0 0 auto; }
+.chat-thread .ct-preview {
+  color: var(--ink-soft);
+  font-size: .82rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-thread.unread .ct-preview { color: var(--ink); font-weight: 600; }
+.chat-thread .ct-dot {
+  flex: 0 0 auto;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+/* Multi-select (delete) mode for conversations. */
+.chat-thread-list.selecting .chat-thread { padding-left: 12px; }
+.chat-thread.selected {
+  /* Tan tint reads clearly over both the light (#fff) and dark (gray)
+     surfaces, unlike --brown-100 which is too close to the dark card. */
+  border-color: var(--primary);
+  background: rgba(200, 172, 129, 0.22);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.chat-thread.selected .ct-avatar { position: relative; }
+.chat-thread.selected .ct-avatar::after {
+  content: '✓';
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  background: var(--primary);
+  color: var(--white);
+  font-size: 1rem; font-weight: 800;
+  border-radius: 50%;
+}
+.chat-select-bar {
+  display: flex; align-items: center; gap: 8px;
+  flex: 0 0 auto;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.chat-select-bar #chatSelectCount {
+  margin-right: auto;
+  font-size: .85rem; font-weight: 600;
+  color: var(--ink);
 }
 
 /* Placed-modal Table PIN + reminder */

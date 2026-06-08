@@ -162,6 +162,7 @@ function configSummary(item, config) {
    THEME
    ========================================================== */
 const THEME_KEY = 'bossb-theme';
+const ADMIN_TAB_KEY = 'bb_admin_tab';   // last admin tab, restored on refresh
 function applyTheme(t)     { document.documentElement.setAttribute('data-theme', t); }
 function initTheme() {
   const saved = localStorage.getItem(THEME_KEY);
@@ -169,9 +170,17 @@ function initTheme() {
     ? saved
     : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 }
+let themeAnimTimer = null;
 function toggleTheme() {
   const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   localStorage.setItem(THEME_KEY, next);
+  // Briefly enable a global colour transition so the switch fades in
+  // instead of snapping. The class is removed after the fade so normal
+  // interactions stay snappy (no permanent transition on everything).
+  const root = document.documentElement;
+  root.classList.add('theme-anim');
+  clearTimeout(themeAnimTimer);
+  themeAnimTimer = setTimeout(() => root.classList.remove('theme-anim'), 450);
   applyTheme(next);
 }
 
@@ -345,10 +354,11 @@ $('#tableTabLoginForm')?.addEventListener('submit', async (e) => {
     e.target.reset();
     refreshProfileBtn();
     reconcileCustomerPoints();
-    showToast(`Welcome, ${cust.name}`, 'success');
-    // They have an identity now; if they already picked a table, close —
-    // otherwise drop them back on the table picker to choose one.
-    if (state.tableNumber) closeTableModal();
+    // Clear the guest visit, then resume this account's own active
+    // orders (if any) without needing a PIN/table.
+    const resumed = resumeOrClearOnLogin();
+    showToast(resumed ? `Welcome back, ${cust.name} — resuming your orders` : `Welcome, ${cust.name}`, 'success');
+    if (resumed || state.tableNumber) closeTableModal();
     else { setTableTab('table'); showToast('Now pick your table to order', 'info'); }
   } catch (err) {
     errEl.textContent = err.message;
@@ -1021,11 +1031,14 @@ document.addEventListener('click', (e) => {
   // and my-orders sheets). Exclude the openers (so the tap that opens it
   // doesn't immediately close it) and anything inside the drawer or a
   // modal layered over it.
-  if (chatDrawer.classList.contains('open')) {
+  // Docked (desktop two-pane) chat is part of the layout, not an
+  // overlay, so it never auto-closes on outside clicks.
+  if (chatDrawer.classList.contains('open') && !chatDrawer.classList.contains('docked')) {
     let close = true;
     if (chatDrawer.contains(t))            close = false;
     else if (t.closest('.fab-chat'))       close = false;   // customer opener
-    else if (t.closest('.chat-act-btn'))   close = false;   // admin "Chat" opener
+    else if (t.closest('.chat-act-btn'))   close = false;   // legacy admin opener
+    else if (t.closest('.chat-thread'))    close = false;   // admin convo-list opener
     else if (t.closest('.modal'))          close = false;   // dialog over the chat
     if (close) closeChat();
   }
@@ -1316,6 +1329,39 @@ function clearActiveOrder() {
   $('#orderStatusBanner').hidden = true;
   if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
 }
+
+/* Clear this device's guest visit (table label, active order, cart) and
+   mint a fresh clientId — so a previous guest's table name and active
+   orders don't linger when a customer/admin signs in or out. Orders
+   already placed stay in the store; the fresh id just detaches them
+   from this device's "My orders" view. */
+function resetCustomerVisitState() {
+  clearActiveOrder();
+  finishEditingOrder();
+  setTableLabel(null);
+  Store.clearSessionTable();
+  clearCart();
+  Store.resetClientId();
+  refreshMyOrdersFab();
+  refreshOrderStatusBanner();
+  if (!$('#myOrdersSheet').hidden) renderMyOrdersList();
+}
+
+/* On sign-in: clear any guest leftovers, then resume the account's OWN
+   active orders if it has any (re-adopting its clientId + table so no
+   PIN/table re-entry is needed). Returns true if orders were resumed. */
+function resumeOrClearOnLogin() {
+  resetCustomerVisitState();
+  const resumed = Store.resumeAccountOrders();
+  if (resumed && resumed.tableNumber) {
+    setTableLabel(resumed.tableNumber);
+    refreshMyOrdersFab();
+    refreshOrderStatusBanner();
+    if (!$('#myOrdersSheet').hidden) renderMyOrdersList();
+    return true;
+  }
+  return false;
+}
 /* Case-insensitive table-label compare (labels are free text). */
 function sameLabel(a, b) {
   return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
@@ -1417,55 +1463,14 @@ function updatePlacedModalForOrder(order) {
     ? 'Start new order'
     : 'Place another order';
 
-  // Track the order on the cancel button so the click handler
-  // knows which one to act on.
-  $('#placedCancelBtn').dataset.orderId = order.id;
-  refreshPlacedCancelBtn(order);
+  // The order the customer just placed is now managed from the
+  // "My orders" sheet (cancel / modify there) instead of an inline
+  // cancel button in this modal.
 }
 
-/* Toggle the customer's self-cancel button. Visible while the
-   order is still pending; the only thing that closes it is staff
-   marking the order `preparing`. A light 1s poll hides the button
-   the moment that happens (e.g. via realtime) while the modal is
-   open. */
-let placedCancelTicker = null;
-function refreshPlacedCancelBtn(order) {
-  const btn = $('#placedCancelBtn');
-  const stop = () => { if (placedCancelTicker) { clearInterval(placedCancelTicker); placedCancelTicker = null; } };
-  if (!order) { btn.hidden = true; stop(); return; }
-  const sync = () => {
-    const fresh = Store.getOrders().find(o => o.id === order.id);
-    const ok = Store.isCancellableByCustomer(fresh);
-    btn.hidden = !ok;
-    if (!ok) stop();
-  };
-  sync();
-  stop();
-  if (!btn.hidden) placedCancelTicker = setInterval(sync, 1000);
-}
-
-$('#placedCancelBtn').addEventListener('click', async () => {
-  const orderId = $('#placedCancelBtn').dataset.orderId;
-  if (!orderId) return;
-  if (!(await confirmAsk('Cancel this order? You can re-order any time.', {
-    title: 'Cancel order', confirmLabel: 'Cancel order', cancelLabel: 'Keep it', danger: true,
-  }))) return;
-  const result = Store.customerCancelOrder(orderId);
-  if (!result.ok) {
-    showToast(result.reason === 'already_started'
-      ? 'Already being prepared — please ask staff.'
-      : 'Could not cancel.', 'error');
-    refreshOrderStatusBanner();
-    renderMyOrdersList();
-    return;
-  }
-  showToast('Order cancelled', 'success');
-  refreshOrderStatusBanner();
-  renderMyOrdersList();
-  refreshMyOrdersFab();
-  // Refresh the modal to reflect the cancelled state
-  const fresh = Store.getOrders().find(o => o.id === orderId);
-  if (fresh) updatePlacedModalForOrder(fresh);
+$('#placedMyOrdersBtn').addEventListener('click', () => {
+  closeModal('#orderPlacedModal');
+  openMyOrders();
 });
 
 /* ==========================================================
@@ -1710,6 +1715,9 @@ function clearPinHint() {
 }
 $('#fabMyOrdersBtn').addEventListener('click', openMyOrders);
 $('#closeMyOrdersBtn').addEventListener('click', closeMyOrders);
+// The header tier chip jumps to the profile (where the full tier
+// progress + perks live).
+$('#myOrdersTierChip')?.addEventListener('click', () => { if (Store.isCustomer && Store.isCustomer()) openProfile(); });
 $('#endVisitBtn').addEventListener('click', endVisit);
 
 /* Orders the customer has "cleared" from their own list (history
@@ -1744,6 +1752,17 @@ function renderMyOrdersList() {
     ? `${orders.length} total`
     : `${active} active · ${orders.length} total`;
 
+  // Header tier chip — shown for signed-in customers; taps open profile.
+  const tierChip = $('#myOrdersTierChip');
+  if (tierChip) {
+    if (Store.isCustomer && Store.isCustomer()) {
+      $('#myOrdersTierName').textContent = Store.tierStatus().name;
+      tierChip.hidden = false;
+    } else {
+      tierChip.hidden = true;
+    }
+  }
+
   // "End my visit" only makes sense once the guest holds a table
   // label (a room to abolish). Admins keep their auto-stamped label
   // for the panel and never run the customer abolish lifecycle.
@@ -1763,13 +1782,41 @@ function renderMyOrdersList() {
   });
   const todayTotal = todays.reduce((s, o) => s + (o.total || 0), 0);
 
-  const ctaHtml = `
-    <div class="myorders-cta" data-loggedin="false">
-      <strong>Today's spending: ${peso(todayTotal)}</strong>
-      <p>To save your spending history and earn rewards, sign in or create an account.</p>
-      <a href="signup.html" class="btn btn-primary btn-block">Create an account</a>
-    </div>
-  `;
+  // CTA changes by state:
+  //  • guest            → prompt to create an account
+  //  • member + voucher → highlight the savings on their next order
+  //  • member, no voucher → a quiet "you've spent ₱X this …!" note
+  let ctaHtml;
+  if (Store.isCustomer && Store.isCustomer()) {
+    const activeVouchers = (Store.getPerks().vouchers || []).filter(v => !v.used);
+    if (activeVouchers.length) {
+      const bestPct = Math.max(...activeVouchers.map(v => v.discountPct || 0));
+      const avg = Store.avgOrderValue();
+      const est = avg ? Math.round((bestPct / 100) * avg) : 0;
+      ctaHtml = `
+        <div class="myorders-cta loggedin">
+          <strong>🎟️ Saving ${est ? peso(est) : bestPct + '%'} with your voucher</strong>
+          <p class="muted small">Applied at the counter on your next order.</p>
+        </div>`;
+    } else {
+      const s = Store.spendSummary();
+      let amount = 0, label = 'so far';
+      if (s.week > 0)       { amount = s.week;  label = 'this week'; }
+      else if (s.month > 0) { amount = s.month; label = 'this month'; }
+      else if (s.year > 0)  { amount = s.year;  label = 'this year'; }
+      else                  { amount = s.lifetime; label = 'so far'; }
+      ctaHtml = amount > 0
+        ? `<div class="myorders-cta loggedin"><p class="spend-note">💸 You've spent <strong>${peso(amount)}</strong> ${label}!</p></div>`
+        : `<div class="myorders-cta loggedin"><p class="spend-note muted">Order something to start earning rewards 🌱</p></div>`;
+    }
+  } else {
+    ctaHtml = `
+      <div class="myorders-cta" data-loggedin="false">
+        <strong>Today's spending: ${peso(todayTotal)}</strong>
+        <p>To save your spending history and earn rewards, sign in or create an account.</p>
+        <a href="signup.html" class="btn btn-primary btn-block">Create an account</a>
+      </div>`;
+  }
 
   if (orders.length === 0) {
     host.innerHTML = `<p class="empty-state">No orders yet.</p>` + ctaHtml;
@@ -1837,7 +1884,7 @@ function renderMyOrdersList() {
   const toolbarHtml = toolbarBtns.length
     ? `<div class="myorders-toolbar">${toolbarBtns.join('')}</div>` : '';
 
-  const orderRows = orders.map(o => {
+  const rowHtml = (o) => {
     const info  = STATUS_INFO[o.status] || STATUS_INFO.pending;
     const isMine = o.clientId === myId;
     const selectable = myOrdersSelectMode && isMine && (o.status === 'served' || o.status === 'cancelled');
@@ -1873,7 +1920,18 @@ function renderMyOrdersList() {
         </footer>
       </article>
     `;
-  }).join('');
+  };
+  // Active + finished orders render inline; cancelled ones tuck into a
+  // collapsible group so they don't clutter the live list.
+  const activeOrders    = orders.filter(o => o.status !== 'cancelled');
+  const cancelledOrders = orders.filter(o => o.status === 'cancelled');
+  const orderRows = activeOrders.map(rowHtml).join('');
+  const cancelledHtml = cancelledOrders.length
+    ? `<details class="myorders-cancelled"${myOrdersSelectMode ? ' open' : ''}>
+         <summary>Cancelled (${cancelledOrders.length})</summary>
+         <div class="myorders-cancelled-list">${cancelledOrders.map(rowHtml).join('')}</div>
+       </details>`
+    : '';
   // Logged-in customer's available vouchers, shown right in My Orders.
   let vouchersHtml = '';
   if (Store.isCustomer && Store.isCustomer()) {
@@ -1896,7 +1954,7 @@ function renderMyOrdersList() {
        </div>`
     : '';
 
-  host.innerHTML = peopleHtml + pinHtml + vouchersHtml + toolbarHtml + orderRows + ctaHtml + dockHtml;
+  host.innerHTML = peopleHtml + pinHtml + vouchersHtml + toolbarHtml + orderRows + cancelledHtml + ctaHtml + dockHtml;
 }
 
 /* Track checkbox selection for the "clear" multi-select (the 1s
@@ -2396,22 +2454,11 @@ $('#staffLoginForm').addEventListener('submit', async (e) => {
     showToast(`Welcome, ${session.name}`, 'success');
     e.target.reset();
     closeStaffLogin();
-    // If the table prompt was still up (admin signed in before
-    // setting a table), dismiss it — admins aren't required to
-    // pick a table to access the panel. Auto-stamp the table
-    // label with their authenticated name so any order they
-    // place from the customer view is attributed to them.
     closeTableModal();
-    // Sever the guest persona: a fresh clientId means the staff
-    // member doesn't inherit ownership of orders placed earlier
-    // on this device as a guest (those stay visible in the admin
-    // panel, just not in the admin's customer "My orders"). Also
-    // drop the tracked active order + refresh the customer
-    // surfaces so the guest's banner/FAB don't linger.
-    Store.resetClientId();
-    clearActiveOrder();
-    refreshMyOrdersFab();
-    setTableLabel(session.name || session.email);
+    // Sever the guest persona entirely: clear the table name + active
+    // orders and mint a fresh clientId so the previous guest's visit
+    // doesn't linger under the admin (those orders stay in the panel).
+    resetCustomerVisitState();
     enterAdminPanel(session);
   } catch (err) {
     errEl.textContent = err.message;
@@ -2454,10 +2501,12 @@ $('#customerLoginForm').addEventListener('submit', async (e) => {
     closeCustomerLogin();
     refreshProfileBtn();
     reconcileCustomerPoints();
-    showToast(`Welcome, ${cust.name}`, 'success');
-    // Auto-redirect into the ordering flow. A table/PIN is still
-    // required to order, so prompt for it when none is set yet.
-    if (!state.tableNumber) openTableModal();
+    // Clear guest leftovers, then resume the account's own active orders
+    // (re-adopts their clientId + table, no PIN needed).
+    const resumed = resumeOrClearOnLogin();
+    showToast(resumed ? `Welcome back, ${cust.name} — resuming your orders` : `Welcome, ${cust.name}`, 'success');
+    // Need a table to order; prompt only if we didn't resume one.
+    if (!resumed && !state.tableNumber) openTableModal();
   } catch (err) {
     errEl.textContent = err.message;
     errEl.hidden = false;
@@ -2465,10 +2514,14 @@ $('#customerLoginForm').addEventListener('submit', async (e) => {
 });
 
 $('#customerLogoutBtn').addEventListener('click', () => {
+  // Save this visit's orders to the account first, so they can be
+  // resumed on next sign-in, then clear the device's guest state.
+  Store.rememberOrdersForAccount();
   Store.logoutCustomer();
   closeProfile();
   refreshProfileBtn();
-  showToast('Signed out');
+  resetCustomerVisitState();
+  showToast('Signed out — your orders are saved to your account');
 });
 
 $('#redeemVoucherBtn').addEventListener('click', () => {
@@ -2508,6 +2561,15 @@ function renderProfile() {
   $('#profileEmail').textContent = c.email || '';
   const perks = Store.getPerks();
   $('#profilePoints').textContent = perks.points;
+
+  // Membership tier (by lifetime spend) + progress to the next one.
+  const tier = Store.tierStatus();
+  $('#profileTierBadge').textContent = `🏅 ${tier.name}`;
+  $('#profileTierSpend').textContent = `${peso(tier.spend)} lifetime`;
+  $('#tierFill').style.width = `${Math.round(tier.progress * 100)}%`;
+  $('#profileTierNext').textContent = tier.next
+    ? `Spend ${peso(tier.remaining)} more to reach ${tier.next}`
+    : `🎉 You're at the top tier!`;
 
   const loy = Store.loyaltyStatus();
   $('#loyaltyText').textContent = `${loy.progress} / ${loy.goal}`;
@@ -2580,11 +2642,20 @@ function enterAdminPanel(session) {
   session = verified;
   adminPanel.hidden = false;
   $('#adminUserName').textContent = session.name || session.email;
-  switchAdminTab('orders');
+  // Restore the last admin tab across refreshes (falls back to Orders).
+  let startTab = 'orders';
+  try {
+    const saved = localStorage.getItem(ADMIN_TAB_KEY);
+    if (['orders', 'chats', 'menu', 'settings'].includes(saved)) startTab = saved;
+  } catch (e) {}
+  switchAdminTab(startTab);
   renderOrders();
   loadSettingsForm();
   refreshAdminHeaderBtn();
   refreshAdminActivity();
+  // Seed the Chats unread badge so it's accurate before the admin
+  // ever opens the Chats tab.
+  renderChatThreads();
   startAdminSessionWatcher();
   // Lock the page-level scroll so we only get the panel's
   // .admin-content scrollbar — not a second one from the
@@ -2620,40 +2691,42 @@ function startAdminSessionWatcher() {
   }, 30 * 1000);
 }
 function exitAdminPanel()  {
+  // Don't strand a docked chat inside the closing panel.
+  if (chatDrawer.classList.contains('docked')) closeChat();
   adminPanel.hidden = true;
   refreshAdminHeaderBtn();
   document.body.classList.remove('admin-open');
 }
 function adminSignOut() {
-  const wasSession = Store.getSession();
   Store.logout();
   exitAdminPanel();
   refreshAdminHeaderBtn();
-  // Fresh clientId again, so the next guest on this device starts
-  // with a clean customer "My orders" (no bleed from staff orders).
-  Store.resetClientId();
-  clearActiveOrder();
-  refreshMyOrdersFab();
-  // The auto-stamped admin-name table belongs to that session.
-  // Clearing it on sign-out drops the visitor back to the
-  // unauthenticated customer flow (forced table prompt).
-  if (wasSession && state.tableNumber === (wasSession.name || wasSession.email)) {
-    setTableLabel(null);
-    openTableModal();
-  }
+  // Clear the device's guest visit (table + active orders) and drop
+  // back to the customer table prompt. Orders placed stay in the store.
+  resetCustomerVisitState();
+  openTableModal();
   showToast('Signed out');
 }
 $('#exitAdminBtn').addEventListener('click', exitAdminPanel);
 $('#adminLogoutBtn').addEventListener('click', adminSignOut);
 
 function switchAdminTab(tab) {
+  // Leaving Chats with a docked conversation open → close it so the
+  // drawer node isn't left inside a hidden pane. Also drop select mode.
+  if (tab !== 'chats') {
+    if (chatDrawer.classList.contains('docked')) closeChat();
+    if (chatSelectMode) exitChatSelect();
+  }
   $$('.admin-tab').forEach(t => t.classList.toggle('active', t.dataset.adminTab === tab));
   $$('.admin-pane').forEach(p => p.hidden = (p.dataset.adminPane !== tab));
   const menuFilter = $('#menuCatFilter');
   if (menuFilter) menuFilter.hidden = (tab !== 'menu');
   if (tab === 'orders')   renderOrders();
+  if (tab === 'chats')    renderChatThreads();
   if (tab === 'menu')   { renderMenuCatFilter(); renderMenuTable(); }
   if (tab === 'settings') loadSettingsForm();
+  // Remember the tab so a refresh returns the admin to where they were.
+  try { localStorage.setItem(ADMIN_TAB_KEY, tab); } catch (e) {}
 }
 $$('.admin-tab').forEach(t => t.addEventListener('click', () => switchAdminTab(t.dataset.adminTab)));
 
@@ -2713,10 +2786,9 @@ function renderOrders() {
     const tableLabel = o.tableNumber ? escapeHtml(String(o.tableNumber)) : '—';
     const cancellable = Store.isCancellableByCustomer(o);
     return `
-      <article class="order-card${orderSelectMode ? ' selectable' : ''}" data-id="${o.id}" data-status="${o.status}">
+      <article class="order-card${orderSelectMode ? ' selectable' : ''}${selectedOrders.has(o.id) ? ' selected' : ''}" data-id="${o.id}" data-status="${o.status}">
         <header class="order-head">
           <div class="order-head-id">
-            ${orderSelectMode ? `<label class="order-select"><input type="checkbox" data-order-select="${o.id}"${selectedOrders.has(o.id) ? ' checked' : ''} aria-label="Select order"></label>` : ''}
             <h3>#${o.number}</h3>
             <span class="table-tag" title="Table">
               <span class="table-tag-label">Table</span>
@@ -2744,7 +2816,6 @@ function renderOrders() {
           ${o.status === 'preparing'  ? `<button class="btn btn-serve"  data-act="served">Mark served</button>`        : ''}
           ${o.status !== 'served' && o.status !== 'cancelled'
             ? `<button class="btn btn-danger" data-act="cancelled">Cancel</button>` : ''}
-          <button class="btn btn-ghost chat-act-btn" data-act="chat">💬 Chat${adminUnreadThreads.has(String(o.tableNumber)) ? '<span class="chat-act-dot" aria-label="unread message"></span>' : ''}</button>
           <button class="btn btn-ghost" data-act="receipt">🧾 Receipt</button>
           <button class="btn btn-ghost" data-act="delete">Delete</button>
         </div>
@@ -2765,6 +2836,15 @@ $('#clearServedBtn').addEventListener('click', async () => {
 });
 
 $('#ordersList').addEventListener('click', async (e) => {
+  // A long-press already handled this tap → swallow the click.
+  if (suppressNextOrderClick) { suppressNextOrderClick = false; return; }
+  // In select mode any tap on a card toggles its selection (no radios;
+  // action buttons are inert while selecting).
+  if (orderSelectMode) {
+    const card = e.target.closest('.order-card');
+    if (card) toggleOrderSelected(card);
+    return;
+  }
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
   const card = btn.closest('.order-card');
@@ -2772,10 +2852,6 @@ $('#ordersList').addEventListener('click', async (e) => {
   const act = btn.dataset.act;
   const order = Store.getOrders().find(o => o.id === id);
   const label = order ? `#${order.number}` : 'Order';
-  if (act === 'chat') {
-    if (order) openChat(order.tableNumber, 'admin');
-    return;
-  }
   if (act === 'receipt') {
     if (order) openReceiptModal(order);
     return;
@@ -2809,42 +2885,125 @@ $('#ordersList').addEventListener('click', async (e) => {
   refreshAdminActivity();
 });
 
-/* ----- Admin multi-select delete (orders) ----- */
+/* ----- Admin multi-select (orders): click-to-select + long-press,
+   then Cancel or Delete the whole selection ----- */
 let orderSelectMode = false;
 const selectedOrders = new Set();
-$('#orderSelectToggle').addEventListener('click', () => {
-  orderSelectMode = !orderSelectMode;
+let suppressNextOrderClick = false;   // long-press already handled this tap
+
+function updateOrdersSelectUI() {
+  const toggle = $('#orderSelectToggle');
+  if (toggle) toggle.textContent = orderSelectMode ? 'Cancel' : 'Select';
+  const n = selectedOrders.size;
+  const del = $('#deleteSelectedOrdersBtn');
+  if (del) {
+    del.hidden = !orderSelectMode;
+    del.disabled = n === 0;
+    del.textContent = n ? `Delete (${n})` : 'Delete';
+  }
+  const can = $('#cancelSelectedOrdersBtn');
+  if (can) {
+    can.hidden = !orderSelectMode;
+    can.disabled = n === 0;
+    can.textContent = n ? `Cancel orders (${n})` : 'Cancel orders';
+  }
+  const all = $('#orderSelectAllBtn');
+  if (all) {
+    all.hidden = !orderSelectMode;
+    // "All" = every currently-RENDERED (i.e. filtered) card; cards
+    // hidden by the filter are intentionally excluded.
+    const cards = [...document.querySelectorAll('#ordersList .order-card')];
+    const allSel = cards.length > 0 && cards.every(c => selectedOrders.has(c.dataset.id));
+    all.textContent = allSel ? 'Deselect all' : 'Select all';
+  }
+}
+function toggleOrderSelected(card) {
+  const id = card.dataset.id;
+  if (selectedOrders.has(id)) { selectedOrders.delete(id); card.classList.remove('selected'); }
+  else                        { selectedOrders.add(id);    card.classList.add('selected'); }
+  updateOrdersSelectUI();
+}
+function enterOrderSelect() {
+  orderSelectMode = true;
   selectedOrders.clear();
-  $('#orderSelectToggle').textContent = orderSelectMode ? 'Cancel select' : 'Select';
-  $('#deleteSelectedOrdersBtn').hidden = !orderSelectMode;
   renderOrders();
+  updateOrdersSelectUI();
+}
+function exitOrderSelect() {
+  orderSelectMode = false;
+  selectedOrders.clear();
+  renderOrders();
+  updateOrdersSelectUI();
+}
+$('#orderSelectToggle').addEventListener('click', () => {
+  if (orderSelectMode) exitOrderSelect(); else enterOrderSelect();
 });
-$('#ordersList').addEventListener('change', (e) => {
-  const cb = e.target.closest('input[data-order-select]');
-  if (!cb) return;
-  if (cb.checked) selectedOrders.add(cb.dataset.orderSelect);
-  else            selectedOrders.delete(cb.dataset.orderSelect);
-  $('#deleteSelectedOrdersBtn').textContent = selectedOrders.size
-    ? `Delete selected (${selectedOrders.size})` : 'Delete selected';
+/* Select all toggles the CURRENTLY FILTERED cards only (the dropdown
+   filter decides which are rendered; anything outside it is left
+   untouched). */
+$('#orderSelectAllBtn').addEventListener('click', () => {
+  const cards = [...document.querySelectorAll('#ordersList .order-card')];
+  if (!cards.length) return;
+  const allSel = cards.every(c => selectedOrders.has(c.dataset.id));
+  cards.forEach(c => {
+    if (allSel) { selectedOrders.delete(c.dataset.id); c.classList.remove('selected'); }
+    else        { selectedOrders.add(c.dataset.id);    c.classList.add('selected'); }
+  });
+  updateOrdersSelectUI();
 });
+
+/* Long-press (hold) any order to enter select mode and pick it. */
+(function wireOrderLongPress() {
+  const host = $('#ordersList');
+  if (!host) return;
+  let timer = null;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  host.addEventListener('pointerdown', (e) => {
+    const card = e.target.closest('.order-card');
+    if (!card) return;
+    const id = card.dataset.id;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      suppressNextOrderClick = true;
+      if (!orderSelectMode) enterOrderSelect();   // re-renders the list
+      const fresh = host.querySelector(`.order-card[data-id="${id}"]`);
+      if (fresh) toggleOrderSelected(fresh);
+    }, 500);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel', 'pointermove', 'scroll']
+    .forEach(ev => host.addEventListener(ev, cancel, { passive: true }));
+})();
+
 $('#deleteSelectedOrdersBtn').addEventListener('click', async () => {
-  if (!selectedOrders.size) { showAdminToast({ title: 'No orders selected', variant: 'info' }); return; }
-  if (!(await confirmAsk(`Delete ${selectedOrders.size} selected order${selectedOrders.size === 1 ? '' : 's'}?`, {
+  const ids = [...selectedOrders];
+  if (!ids.length) { showAdminToast({ title: 'No orders selected', variant: 'info' }); return; }
+  if (!(await confirmAsk(`Delete ${ids.length} selected order${ids.length === 1 ? '' : 's'}? This removes them entirely.`, {
     title: 'Delete orders', confirmLabel: 'Delete', danger: true,
   }))) return;
-  const n = selectedOrders.size;
-  selectedOrders.forEach(id => {
+  ids.forEach(id => {
     Store.deleteOrder(id);
     knownOrderIds.delete(id);
     ORDER_STATUS_BY_ID.delete(id);
   });
-  selectedOrders.clear();
-  orderSelectMode = false;
-  $('#orderSelectToggle').textContent = 'Select';
-  $('#deleteSelectedOrdersBtn').hidden = true;
-  $('#deleteSelectedOrdersBtn').textContent = 'Delete selected';
-  showAdminToast({ title: `Deleted ${n} order${n === 1 ? '' : 's'}`, variant: 'danger' });
-  renderOrders();
+  exitOrderSelect();
+  showAdminToast({ title: `Deleted ${ids.length} order${ids.length === 1 ? '' : 's'}`, variant: 'danger' });
+  refreshAdminActivity();
+});
+$('#cancelSelectedOrdersBtn').addEventListener('click', async () => {
+  const ids = [...selectedOrders];
+  if (!ids.length) { showAdminToast({ title: 'No orders selected', variant: 'info' }); return; }
+  if (!(await confirmAsk(`Cancel ${ids.length} selected order${ids.length === 1 ? '' : 's'}? They stay in the list marked cancelled.`, {
+    title: 'Cancel orders', confirmLabel: 'Cancel orders', cancelLabel: 'Keep them', danger: true,
+  }))) return;
+  let n = 0;
+  ids.forEach(id => {
+    Store.updateOrderStatus(id, 'cancelled');
+    ORDER_STATUS_BY_ID.set(id, 'cancelled');
+    n++;
+  });
+  exitOrderSelect();
+  showAdminToast({ title: `Cancelled ${n} order${n === 1 ? '' : 's'}`, variant: 'danger' });
   refreshAdminActivity();
 });
 
@@ -4286,9 +4445,12 @@ async function openChat(thread, role = 'customer') {
   }
   chatThread = thread;
   chatRole   = role;
-  // Admin opened this table's thread → clear its unread dot.
-  if (role === 'admin' && adminUnreadThreads.delete(String(thread))) {
-    if (!adminPanel.hidden) renderOrders();
+  // Admin opened this table's thread → mark it active + clear its
+  // unread cue, in place (no list rebuild / "Loading…" flash).
+  if (role === 'admin') {
+    activeChatThread = thread;
+    if (adminUnreadThreads.delete(String(thread))) updateChatsBadge();
+    markThreadActiveInList(thread);
   }
   $('#chatTitle').textContent    = role === 'admin' ? `Table ${thread}` : 'Chat with staff';
   updateChatStatus();              // sets the default subtitle
@@ -4296,6 +4458,11 @@ async function openChat(thread, role = 'customer') {
   chatDrawer.classList.add('open');
   chatDrawer.setAttribute('aria-hidden', 'false');
   document.body.classList.add('chat-open');
+  // Desktop admin Chats tab → dock the drawer into the right pane
+  // (two-pane layout). Everywhere else it floats as the sheet/side
+  // drawer. Done before the await so the outside-close guard sees the
+  // 'docked' class on this same click.
+  if (role === 'admin' && chatShouldDock()) dockChat(); else undockChat();
   $('#chatBody').innerHTML = `<p class="empty-state">Loading…</p>`;
   chatMessages = await Store.listMessages(thread);
   setChatReply(null);
@@ -4305,6 +4472,7 @@ async function openChat(thread, role = 'customer') {
   syncChatToViewport(true);
 }
 function closeChat() {
+  const wasDocked = chatDrawer.classList.contains('docked');
   chatDrawer.classList.remove('open');
   chatDrawer.setAttribute('aria-hidden', 'true');
   document.body.classList.remove('chat-open');
@@ -4313,10 +4481,249 @@ function closeChat() {
   if (activeVoiceId) { const a = voiceAudioEls.get(activeVoiceId); if (a) a.pause(); }
   syncChatToViewport(false);          // revert any keyboard sizing
   if (chatThread) markChatSeen(chatThread);
+  // Closing a docked conversation deselects it and returns the right
+  // pane to its placeholder, then refreshes the list (read state).
+  if (wasDocked) {
+    undockChat();
+    chatThread = null;
+    activeChatThread = null;
+    markThreadActiveInList(null);   // clear selection highlight in place
+  }
   refreshChatDot();
 }
 $('#closeChatBtn').addEventListener('click', closeChat);
 $('#fabChatBtn').addEventListener('click', () => openChat(state.tableNumber, 'customer'));
+
+/* ----- Admin Messenger-style conversation list -------------------
+   Replaces the old per-order "Chat" button. Lists every table that
+   has messaged, newest first, with a last-message preview and an
+   unread cue. Selecting a row opens that table's thread in the
+   shared chat drawer. */
+function updateChatsBadge() {
+  const badge = $('#chatsBadge');
+  if (!badge) return;
+  const n = adminUnreadThreads.size;
+  badge.textContent = n;
+  badge.hidden = n === 0;
+}
+/* Two-pane docking: on a wide screen, while the admin is on the Chats
+   tab, the conversation lives inline in the right pane instead of as a
+   floating drawer. We physically move the existing #chatDrawer node so
+   all its wiring (send/voice/image/reply/presence) is reused as-is. */
+function chatShouldDock() {
+  return window.innerWidth >= 800
+    && Store.isAdmin()
+    && adminPanel && !adminPanel.hidden
+    && $('.admin-tab.active')?.dataset.adminTab === 'chats';
+}
+function dockChat() {
+  const area = $('#chatDockArea');
+  if (!area) return;
+  if (chatDrawer.parentElement !== area) area.appendChild(chatDrawer);
+  chatDrawer.classList.add('docked');
+  area.classList.add('has-convo');
+}
+function undockChat() {
+  chatDrawer.classList.remove('docked');
+  const area = $('#chatDockArea');
+  if (area) area.classList.remove('has-convo');
+  if (chatDrawer.parentElement !== document.body) document.body.appendChild(chatDrawer);
+}
+// Re-evaluate docking when the viewport crosses the desktop/mobile line
+// while a conversation is open (e.g. rotating a tablet).
+window.addEventListener('resize', () => {
+  if (!chatDrawer.classList.contains('open')) return;
+  if (chatShouldDock()) dockChat();
+  else if (chatDrawer.classList.contains('docked')) undockChat();
+});
+/* Lightweight "state" for the conversation list: we keep the last
+   fetched threads in memory and the currently-open thread, so a
+   re-render paints instantly from cache instead of flashing "Loading…"
+   and re-fetching on every click. */
+let chatThreadsCache = null;   // last fetched [{ thread, last, count }]
+let activeChatThread = null;   // thread currently shown in the right pane
+let chatSelectMode = false;    // admin multi-select (delete) mode
+const selectedThreads = new Set();   // thread labels marked for deletion
+let suppressNextChatClick = false;   // long-press already handled this tap
+
+function paintChatThreads(threads) {
+  const host = $('#chatThreadList');
+  if (!host) return;
+  // Seed unread from the seen-map so unread state survives a reload
+  // (adminUnreadThreads alone only tracks messages seen live this
+  // session). A thread is unread if its latest message is from a
+  // customer and is newer than the last time the admin opened it.
+  const seen = chatSeenMap();
+  threads.forEach(t => {
+    const m = t.last;
+    if (m.role === 'customer' && new Date(m.ts).getTime() > (seen[t.thread] || 0)) {
+      adminUnreadThreads.add(String(t.thread));
+    }
+  });
+  if (!threads.length) {
+    host.innerHTML = `<p class="empty-state">No conversations yet.</p>`;
+    host.classList.remove('selecting');
+    updateChatsBadge();
+    return;
+  }
+  host.classList.toggle('selecting', chatSelectMode);
+  host.innerHTML = threads.map(t => {
+    const m = t.last;
+    const unread = adminUnreadThreads.has(String(t.thread));
+    const active = !chatSelectMode && String(activeChatThread) === String(t.thread);
+    const sel = selectedThreads.has(String(t.thread));
+    const preview = m.kind === 'image' ? '📷 Photo'
+                  : m.kind === 'audio' ? '🎤 Voice message'
+                  : escapeHtml(m.body || '');
+    const who = m.role === 'admin' ? 'You: ' : '';
+    const label = escapeHtml(String(t.thread));
+    return `
+      <button class="chat-thread${unread ? ' unread' : ''}${active ? ' active' : ''}${sel ? ' selected' : ''}" data-thread="${label}">
+        <span class="ct-avatar">${label.slice(0, 2).toUpperCase()}</span>
+        <span class="ct-main">
+          <span class="ct-top">
+            <strong class="ct-name">Table ${label}</strong>
+            <small class="ct-time">${timeAgo(new Date(m.ts))}</small>
+          </span>
+          <span class="ct-preview">${who}${preview}</span>
+        </span>
+        ${unread ? '<span class="ct-dot" aria-label="unread"></span>' : ''}
+      </button>`;
+  }).join('');
+  updateChatsBadge();
+}
+
+/* Fetch threads from the store. Only shows "Loading…" on the very first
+   load (empty cache); afterwards it repaints in place, so opening a
+   conversation never flashes or reloads the list. */
+async function loadChatThreads() {
+  const host = $('#chatThreadList');
+  if (!host) return;
+  if (!chatThreadsCache) host.innerHTML = `<p class="empty-state">Loading…</p>`;
+  let threads = [];
+  try { threads = await Store.listThreads(); } catch (e) { threads = []; }
+  chatThreadsCache = threads;
+  paintChatThreads(threads);
+}
+
+/* Entry point: paint instantly from cache (no flicker) then refresh in
+   the background. */
+function renderChatThreads() {
+  if (chatThreadsCache) paintChatThreads(chatThreadsCache);
+  loadChatThreads();
+}
+
+/* Mark one row selected + read directly in the DOM — no list rebuild,
+   so selecting a conversation stays snappy and flicker-free. */
+function markThreadActiveInList(thread) {
+  const host = $('#chatThreadList');
+  if (!host) return;
+  host.querySelectorAll('.chat-thread').forEach(row => {
+    const isThis = String(row.dataset.thread) === String(thread);
+    row.classList.toggle('active', isThis);
+    if (isThis) {
+      row.classList.remove('unread');
+      row.querySelector('.ct-dot')?.remove();
+    }
+  });
+}
+
+/* ----- Multi-select + delete for conversations -----
+   Click a row in select mode to toggle it (no radio buttons); a
+   long-press on any row also drops into select mode and picks it. */
+function toggleThreadSelected(row) {
+  const t = String(row.dataset.thread);
+  if (selectedThreads.has(t)) { selectedThreads.delete(t); row.classList.remove('selected'); }
+  else                        { selectedThreads.add(t);    row.classList.add('selected'); }
+  updateChatSelectBar();
+}
+function updateChatSelectBar() {
+  const bar = $('#chatSelectBar');
+  if (bar) bar.hidden = !chatSelectMode;
+  const count = $('#chatSelectCount');
+  if (count) count.textContent = `${selectedThreads.size} selected`;
+  const del = $('#chatDeleteSelected');
+  if (del) del.disabled = selectedThreads.size === 0;
+  const toggle = $('#chatSelectToggle');
+  if (toggle) toggle.textContent = chatSelectMode ? 'Cancel' : 'Select';
+}
+function enterChatSelect() {
+  chatSelectMode = true;
+  selectedThreads.clear();
+  $('#chatThreadList')?.classList.add('selecting');
+  updateChatSelectBar();
+}
+function exitChatSelect() {
+  chatSelectMode = false;
+  selectedThreads.clear();
+  $('#chatThreadList')?.classList.remove('selecting');
+  updateChatSelectBar();
+  if (chatThreadsCache) paintChatThreads(chatThreadsCache);
+}
+
+$('#chatThreadList')?.addEventListener('click', (e) => {
+  const row = e.target.closest('.chat-thread');
+  if (!row) return;
+  if (suppressNextChatClick) { suppressNextChatClick = false; return; }
+  if (chatSelectMode) { toggleThreadSelected(row); return; }
+  const thread = row.dataset.thread;
+  activeChatThread = thread;
+  adminUnreadThreads.delete(String(thread));
+  updateChatsBadge();
+  markThreadActiveInList(thread);   // in-place; no list rebuild / reload
+  openChat(thread, 'admin');
+});
+
+/* Long-press (hold) to enter select mode and pick the held row. */
+(function wireChatLongPress() {
+  const host = $('#chatThreadList');
+  if (!host) return;
+  let timer = null;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  host.addEventListener('pointerdown', (e) => {
+    const row = e.target.closest('.chat-thread');
+    if (!row) return;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      suppressNextChatClick = true;     // the upcoming click is the hold's
+      if (!chatSelectMode) enterChatSelect();
+      toggleThreadSelected(row);
+    }, 500);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel', 'pointermove', 'scroll']
+    .forEach(ev => host.addEventListener(ev, cancel, { passive: true }));
+})();
+
+$('#chatSelectToggle')?.addEventListener('click', () => {
+  if (chatSelectMode) exitChatSelect(); else { enterChatSelect(); if (chatThreadsCache) paintChatThreads(chatThreadsCache); }
+});
+$('#chatSelectCancel')?.addEventListener('click', exitChatSelect);
+$('#chatDeleteSelected')?.addEventListener('click', async () => {
+  const labels = [...selectedThreads];
+  if (!labels.length) return;
+  const ok = await confirmAsk(
+    `Delete ${labels.length} conversation${labels.length === 1 ? '' : 's'}? This permanently clears all messages for ${labels.length === 1 ? 'that table' : 'those tables'}.`,
+    { title: 'Delete conversations', confirmLabel: 'Delete', danger: true });
+  if (!ok) return;
+  for (const label of labels) {
+    try { await Store.clearThread(label); } catch (e) { /* best-effort */ }
+    adminUnreadThreads.delete(String(label));
+    // If a deleted thread is the one open on the right, close it.
+    if (String(activeChatThread) === String(label)) {
+      activeChatThread = null;
+      if (chatDrawer.classList.contains('open')) closeChat();
+    }
+  }
+  if (chatThreadsCache) {
+    chatThreadsCache = chatThreadsCache.filter(t => !labels.includes(String(t.thread)));
+  }
+  exitChatSelect();
+  updateChatsBadge();
+  loadChatThreads();
+  showAdminToast({ title: `Deleted ${labels.length} conversation${labels.length === 1 ? '' : 's'}`, variant: 'danger' });
+});
+$('#refreshChatsBtn')?.addEventListener('click', loadChatThreads);
 
 /* ----- Presence + typing ("Active now" / "typing…") -----------
    Identity-based and role-agnostic: the same code drives every
@@ -4916,7 +5323,8 @@ window.addEventListener('bb-chat', (e) => {
     // card (the customer FAB dot is handled by refreshChatDot).
     if (iAmAdmin && msg.thread) {
       adminUnreadThreads.add(String(msg.thread));
-      if (!adminPanel.hidden && $('.admin-tab.active')?.dataset.adminTab === 'orders') renderOrders();
+      updateChatsBadge();
+      if (!adminPanel.hidden && $('.admin-tab.active')?.dataset.adminTab === 'chats') renderChatThreads();
     } else if (!iAmAdmin) {
       // Customer-side: a clear, unmissable cue that staff replied —
       // a toast plus the bouncing/glowing chat FAB (lit in

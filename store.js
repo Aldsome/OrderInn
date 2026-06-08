@@ -995,6 +995,23 @@ const Store = {
     localStorage.setItem(STORE_KEYS.client, id);
     return id;
   },
+  /* Adopt a specific clientId as THIS device's current id (the inverse
+     of resetClientId). Used when a returning customer signs in: we
+     re-adopt the id that holds their active orders so getMyOrders +
+     the "is this my table?" membership checks recognise them again —
+     letting them resume without re-entering a PIN/table. */
+  adoptClientId(id) {
+    if (!id) return Store.getClientId();
+    const old = localStorage.getItem(STORE_KEYS.client);
+    if (old && old !== id) {
+      const hist = Store.getClientIdHistory().filter(h => h !== old && h !== id);
+      hist.unshift(old);
+      if (hist.length > 10) hist.length = 10;
+      writeJSON(STORE_KEYS.clientHistory, hist);
+    }
+    localStorage.setItem(STORE_KEYS.client, id);
+    return id;
+  },
   /* Past client ids for THIS browser (newest first), capped at 10. */
   getClientIdHistory() { return readJSON(STORE_KEYS.clientHistory, []); },
   /* Current id plus every past id this browser has held — the set
@@ -1178,6 +1195,37 @@ const Store = {
       return [];
     }
     return readJSON('bb_chat_local', []).filter(m => m.thread === thread);
+  },
+  /* Group messages into per-table conversations for the admin's
+     Messenger-style sidebar. Returns [{ thread, last, count }] sorted
+     by most-recent activity (newest first). Only tables that have at
+     least one message appear. Remote mode pulls a recent window and
+     groups client-side (PostgREST has no GROUP BY); local mode groups
+     the cached blob. */
+  async listThreads() {
+    let rows = [];
+    if (REMOTE_MODE && navigator.onLine) {
+      try {
+        const { data, error } = await sb.from('bb_messages')
+          .select('*').order('created_at', { ascending: false }).limit(500);
+        if (!error && data) rows = data.map(ROW_TO_MSG);
+      } catch (e) { rows = []; }
+    } else {
+      rows = readJSON('bb_chat_local', [])
+        .slice()
+        .sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+    }
+    // rows are newest-first, so the first row seen per thread is its
+    // latest message.
+    const byThread = new Map();
+    for (const m of rows) {
+      if (!m.thread) continue;
+      const existing = byThread.get(m.thread);
+      if (existing) existing.count++;
+      else byThread.set(m.thread, { thread: m.thread, last: m, count: 1 });
+    }
+    return [...byThread.values()].sort(
+      (a, b) => new Date(b.last.ts) - new Date(a.last.ts));
   },
   async sendMessage({ thread, role, senderName, kind, body, replyTo = null, replyPreview = null }) {
     const msg = {
@@ -1803,6 +1851,9 @@ const Store = {
       lifetimePoints: p.lifetimePoints || 0,   // never spent — drives loyalty
       vouchers:       Array.isArray(p.vouchers) ? p.vouchers : [],
       awardedOrders:  Array.isArray(p.awardedOrders) ? p.awardedOrders : [],
+      lifetimeSpend:  p.lifetimeSpend  || 0,    // total ₱ on completed orders → tiers
+      spendLog:       Array.isArray(p.spendLog) ? p.spendLog : [],   // [{ ts, amount }]
+      orderClientIds: Array.isArray(p.orderClientIds) ? p.orderClientIds : [],  // device ids whose orders belong to this account
     };
   },
   _savePerks(perks) {
@@ -1835,6 +1886,11 @@ const Store = {
     p.points         += pts;
     p.lifetimePoints += pts;
     p.awardedOrders.push(order.id);
+    // Record the spend for tier progress + "spent this week" summaries.
+    const amt = order.total || 0;
+    p.lifetimeSpend += amt;
+    p.spendLog.push({ ts: new Date().toISOString(), amount: amt });
+    if (p.spendLog.length > 400) p.spendLog = p.spendLog.slice(-400);
     Store._savePerks(p);
     return pts;
   },
@@ -1884,6 +1940,72 @@ const Store = {
     const earned   = Math.floor(lifetimePoints / Store.LOYALTY_GOAL);
     const progress = lifetimePoints % Store.LOYALTY_GOAL;
     return { earned, progress, goal: Store.LOYALTY_GOAL };
+  },
+
+  /* Membership tiers by lifetime spend (₱). Thresholds chosen for a
+     café: a few visits → Silver, a regular → Gold, a loyal local →
+     Platinum. */
+  TIERS: [
+    { name: 'Bronze',   min: 0 },
+    { name: 'Silver',   min: 1000 },
+    { name: 'Gold',     min: 3000 },
+    { name: 'Platinum', min: 7000 },
+  ],
+  tierStatus() {
+    const spend = Store.getPerks().lifetimeSpend || 0;
+    const tiers = Store.TIERS;
+    let cur = tiers[0];
+    for (const t of tiers) if (spend >= t.min) cur = t;
+    const next = tiers[tiers.indexOf(cur) + 1] || null;
+    const span = next ? (next.min - cur.min) : 1;
+    return {
+      name:      cur.name,
+      spend,
+      next:      next ? next.name : null,
+      nextAt:    next ? next.min : null,
+      remaining: next ? Math.max(0, next.min - spend) : 0,
+      progress:  next ? Math.min(1, (spend - cur.min) / span) : 1,
+    };
+  },
+  /* Rolling spend totals from the spend log, for the My Orders summary. */
+  spendSummary() {
+    const { spendLog, lifetimeSpend } = Store.getPerks();
+    const now = Date.now(), DAY = 86400000;
+    const since = (ms) => spendLog.reduce((s, e) =>
+      (now - new Date(e.ts).getTime() <= ms ? s + (e.amount || 0) : s), 0);
+    return { week: since(7 * DAY), month: since(30 * DAY), year: since(365 * DAY), lifetime: lifetimeSpend || 0 };
+  },
+  avgOrderValue() {
+    const log = Store.getPerks().spendLog;
+    if (!log.length) return 0;
+    return log.reduce((s, e) => s + (e.amount || 0), 0) / log.length;
+  },
+  /* Tie this device's order client-ids to the signed-in customer so the
+     orders they placed stay associated with the account after sign-out
+     (the orders themselves persist in the store regardless). Called on
+     logout, before the customer record is cleared. */
+  rememberOrdersForAccount() {
+    if (!Store.getCustomer()) return;
+    const p = Store.getPerks();
+    const ids = new Set([...(p.orderClientIds || []), ...Store.getMyClientIds()]);
+    p.orderClientIds = [...ids].slice(0, 50);
+    Store._savePerks(p);
+  },
+  /* On sign-in, look for the account's own still-active orders (under
+     any client-id it owns) and re-adopt that id so the customer resumes
+     them with no PIN/table re-entry. Returns { clientId, tableNumber }
+     or null when there's nothing active to resume. */
+  resumeAccountOrders() {
+    const p = Store.getPerks();
+    const saved = new Set(p.orderClientIds || []);
+    if (!saved.size) return null;
+    const mine = Store.getOrders()
+      .filter(o => saved.has(o.clientId) && (o.status === 'pending' || o.status === 'preparing'))
+      .sort((a, b) => new Date(b.placedAt) - new Date(a.placedAt));
+    if (!mine.length) return null;
+    const top = mine[0];
+    Store.adoptClientId(top.clientId);
+    return { clientId: top.clientId, tableNumber: top.tableNumber };
   },
 
   /* Staff invite code — single shared secret existing admins
