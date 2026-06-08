@@ -2604,6 +2604,12 @@ body.cart-open .fab-cart {
 }
 .myorders-head small { display: block; }
 .myorders-body {
+  /* flex:1 + min-height:0 are BOTH required so this scrolls instead of
+     overflowing the sheet's max-height — without min-height:0 a flex item
+     won't shrink below its content, clipping the bottom (the Cancelled
+     group) once there are enough active orders to exceed the sheet. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   /* Keep scroll inside the sheet — don't chain to the page behind it
      when the list reaches the top or bottom. */
@@ -2612,6 +2618,7 @@ body.cart-open .fab-cart {
   padding: 10px 14px 14px;
   display: grid;
   gap: 10px;
+  align-content: start;   /* don't stretch rows to fill extra height */
 }
 .myorders-foot {
   border-top: 1px solid var(--line);
@@ -2854,9 +2861,10 @@ body.cart-open .fab-cart {
 
 /* Collapsed "Cancelled" group inside My Orders. */
 .myorders-cancelled {
+  flex-shrink: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow: auto;
 }
 .myorders-cancelled > summary {
   cursor: pointer;
