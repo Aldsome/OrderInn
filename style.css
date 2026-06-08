@@ -2652,7 +2652,12 @@ body.cart-open .fab-cart {
   background: var(--white);
   display: grid;
   gap: 6px;
+  transition: transform .2s ease, opacity .2s ease;
 }
+/* Swipe-to-clear: finished rows can be dragged left to dismiss. pan-y lets
+   the list still scroll vertically; the JS handles the horizontal gesture. */
+.myorder-item.swipeable { touch-action: pan-y; }
+.myorder-item.swiping   { transition: none; cursor: grabbing; user-select: none; }
 .myorder-item header {
   display: flex;
   align-items: center;
@@ -2726,74 +2731,7 @@ body.cart-open .fab-cart {
 }
 .myorder-who.mine { background: var(--brown-100); color: var(--primary-deep); }
 
-/* People-at-this-table row */
-.myorders-people {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 8px 12px;
-  margin-bottom: 10px;
-  border-radius: var(--radius);
-  background: var(--white);
-  border: 1px solid var(--line);
-}
-.people-icons { display: inline-flex; }
-.people-icons .person {
-  font-size: 1rem;
-  margin-left: -4px;
-}
-.people-icons .person:first-child { margin-left: 0; }
-.people-icons .person.plus {
-  color: var(--primary-deep);
-  font-weight: 700;
-}
-.people-label { font-size: .82rem; color: var(--ink-soft); }
-
-/* Table PIN banner at the top of My Orders */
-.myorders-pin {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  margin-bottom: 10px;
-  border-radius: var(--radius);
-  background: var(--brown-100);
-  border: 1px dashed var(--brown-200);
-}
-.myorders-pin-text {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  flex: 1;
-}
-.myorders-pin-text > span {
-  font-size: .72rem;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--ink-soft);
-  font-weight: 600;
-}
-.myorders-pin strong {
-  font-family: var(--font-display);
-  font-size: 1.4rem;
-  letter-spacing: .12em;
-  color: var(--primary-deep);
-}
-.myorders-pin-text small {
-  flex-basis: 100%;
-  color: var(--ink-soft);
-  font-size: .74rem;
-}
-.myorders-pin-copy {
-  flex-shrink: 0;
-  align-self: center;
-  padding: 6px 12px;
-  font-size: .82rem;
-}
-
-/* My-orders toolbar (cancel-all / select-to-clear) */
+/* My-orders toolbar (cancel-all + clear hint) */
 .myorders-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -2801,13 +2739,10 @@ body.cart-open .fab-cart {
   margin-bottom: 10px;
 }
 .myo-select { margin-right: 6px; }
-.myo-select input { width: 16px; height: 16px; vertical-align: middle; }
+.myo-select input { width: 19px; height: 19px; vertical-align: middle; }
 .btn-modify-grace { font-size: .82rem; }
 
-/* Select-to-clear: selectable rows act like tappable cards, and the
-   chosen ones get a clear highlight. */
-.myorder-item.selectable { cursor: pointer; }
-.myorder-item.selectable:hover { border-color: var(--brown-300); }
+/* A ticked finished order gets a clear selected highlight. */
 .myorder-item.selected {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--primary) inset;

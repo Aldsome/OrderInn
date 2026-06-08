@@ -1188,9 +1188,10 @@ function dismissOrders(ids) {
   ids.forEach(id => set.add(id));
   localStorage.setItem('bb_dismissed_orders', JSON.stringify([...set]));
 }
-/* Multi-select "clear" mode for the My-orders list. */
-let myOrdersSelectMode = false;
+/* Finished-order clearing: ticked orders (multi-select) live here; a
+   swipe gesture clears a single one. No separate "select mode" anymore. */
 const selectedToClear = new Set();
+let mySwipeActive = false;   // true while a swipe-to-clear drag is in flight
 // Remembers whether the collapsible "Cancelled" group is expanded so a
 // re-render doesn't snap it shut under the user.
 let cancelledOpen = false;
@@ -1210,13 +1211,13 @@ function myOrdersSignature() {
     `${o.id}:${o.status}:${Store.isCancellableByCustomer(o) ? 1 : 0}`).join('|');
   const perks = (Store.isCustomer && Store.isCustomer())
     ? `${Store.getPerks().points || 0}/${(Store.getPerks().vouchers || []).length}` : 'g';
-  return `${rows}#${myOrdersSelectMode ? 1 : 0}#${[...selectedToClear].sort().join(',')}#${cancelledOpen ? 1 : 0}#${perks}#${bucket}`;
+  return `${rows}#${[...selectedToClear].sort().join(',')}#${cancelledOpen ? 1 : 0}#${perks}#${bucket}`;
 }
 
 /* The interval-driven refresh. Cheap no-op when nothing changed, and it
-   never fires mid-selection (so ticking checkboxes is never interrupted). */
+   never fires mid-selection or mid-swipe (so the gesture isn't interrupted). */
 function tickMyOrders() {
-  if (myOrdersSelectMode) return;             // don't rebuild while selecting
+  if (selectedToClear.size || mySwipeActive) return;   // don't rebuild while clearing
   const sig = myOrdersSignature();
   if (sig === myOrdersSig) return;            // nothing changed → no churn
   renderMyOrdersList();
@@ -1303,47 +1304,42 @@ function renderMyOrdersList() {
     return;
   }
 
-  // Toolbar: cancel-all (any of MY cancellable orders) + multi-select
-  // "clear" of MY finished orders (served/cancelled) from this list.
   // Every order in this list belongs to this session/account.
   const myCancellable = orders.filter(o => Store.isCancellableByCustomer(o));
   const myClearable   = orders.filter(o => o.status === 'served' || o.status === 'cancelled');
-  // In select mode the actions live in a pinned dock at the bottom, so
-  // the top toolbar only carries the entry points. Cancel-all is hidden
-  // while selecting to keep the mode focused on clearing finished orders.
+  // Toolbar: cancel-all for open orders, plus a hint about how to clear
+  // finished ones (swipe a row, or tick to multi-select). Finished orders
+  // always carry a checkbox now — there's no separate "select mode".
   const toolbarBtns = [];
-  if (!myOrdersSelectMode && myCancellable.length) {
+  if (myCancellable.length) {
     toolbarBtns.push(`<button class="btn btn-ghost btn-mini" data-act="cancel-all">Cancel all (${myCancellable.length})</button>`);
   }
-  if (!myOrdersSelectMode && myClearable.length) {
-    toolbarBtns.push(`<button class="btn btn-ghost btn-mini" data-act="select-clear">Select to clear</button>`);
-  }
-  if (myOrdersSelectMode) {
-    toolbarBtns.push(`<span class="myorders-selhint">Tap finished orders to select, then clear them below.</span>`);
+  if (myClearable.length && !selectedToClear.size) {
+    toolbarBtns.push(`<span class="myorders-selhint">Swipe a finished order to clear it, or tick to select several.</span>`);
   }
   const toolbarHtml = toolbarBtns.length
     ? `<div class="myorders-toolbar">${toolbarBtns.join('')}</div>` : '';
 
   const rowHtml = (o) => {
     const info  = STATUS_INFO[o.status] || STATUS_INFO.pending;
-    const selectable = myOrdersSelectMode && (o.status === 'served' || o.status === 'cancelled');
+    // Finished orders (served / cancelled) carry an always-visible
+    // checkbox for multi-select and can be swiped away to clear.
+    const finished = (o.status === 'served' || o.status === 'cancelled');
     const itemsHtml = o.items.map(i => {
       const menuItem = MENU.find(m => m.id === i.itemId);
       const thumb = `<span class="myo-thumb">${thumbMarkup(menuItem, { fallbackClass: 'myo-thumb-ph' })}</span>`;
       return `<li>${thumb}<span class="myo-name">${i.qty}× ${escapeHtml(i.name)}</span><span class="myo-price">${peso(i.unitPrice * i.qty)}</span></li>`;
     }).join('');
     const cancellable = Store.isCancellableByCustomer(o);
-    // Finished orders (served or cancelled) can be re-ordered straight
-    // back into the cart. Hidden during select mode to keep that focused.
-    const reorderable = !myOrdersSelectMode && (o.status === 'served' || o.status === 'cancelled');
-    const isChecked = selectable && selectedToClear.has(o.id);
+    const reorderable = finished;
+    const isChecked = finished && selectedToClear.has(o.id);
     const loc = o.locationIdentifier
       ? `<small class="muted myorder-loc"> · 📍 ${escapeHtml(String(o.locationIdentifier))}</small>` : '';
     return `
-      <article class="myorder-item${selectable ? ' selectable' : ''}${isChecked ? ' selected' : ''}" data-id="${o.id}" data-status="${o.status}"${selectable ? ' data-selectable="1"' : ''}>
+      <article class="myorder-item${finished ? ' swipeable' : ''}${isChecked ? ' selected' : ''}" data-id="${o.id}" data-status="${o.status}">
         <header>
           <div>
-            ${selectable ? `<label class="myo-select"><input type="checkbox" data-clear-id="${o.id}"${isChecked ? ' checked' : ''} aria-label="Select to clear"></label>` : ''}
+            ${finished ? `<label class="myo-select"><input type="checkbox" data-clear-id="${o.id}"${isChecked ? ' checked' : ''} aria-label="Select to clear"></label>` : ''}
             <strong>Order #${o.number}</strong>${loc}
             <small class="muted"> · ${timeAgo(new Date(o.placedAt))}</small>
           </div>
@@ -1370,7 +1366,7 @@ function renderMyOrdersList() {
   const cancelledOrders = orders.filter(o => o.status === 'cancelled');
   const orderRows = activeOrders.map(rowHtml).join('');
   const cancelledHtml = cancelledOrders.length
-    ? `<details class="myorders-cancelled"${(myOrdersSelectMode || cancelledOpen) ? ' open' : ''}>
+    ? `<details class="myorders-cancelled"${cancelledOpen ? ' open' : ''}>
          <summary>Cancelled (${cancelledOrders.length})</summary>
          <div class="myorders-cancelled-list">${cancelledOrders.map(rowHtml).join('')}</div>
        </details>`
@@ -1386,14 +1382,14 @@ function renderMyOrdersList() {
       </div>`;
     }
   }
-  // Pinned action dock for select mode — sits at the bottom of the
-  // scrolling list (position: sticky) so Clear/Done never scroll out of
-  // view while the customer ticks boxes further up the list.
-  const dockHtml = (myOrdersSelectMode && myClearable.length)
+  // Pinned action dock — appears whenever at least one finished order is
+  // ticked, and stays stuck to the bottom (position: sticky) so Clear /
+  // Deselect never scroll out of view while ticking boxes further up.
+  const dockHtml = selectedToClear.size
     ? `<div class="myorders-dock">
          <span class="dock-count">${selectedToClear.size} selected</span>
-         <button class="btn btn-ghost btn-mini" data-act="select-done">Done</button>
-         <button class="btn btn-danger btn-mini" data-act="clear-selected"${selectedToClear.size ? '' : ' disabled'}>Clear${selectedToClear.size ? ` (${selectedToClear.size})` : ''}</button>
+         <button class="btn btn-ghost btn-mini" data-act="select-done">Deselect</button>
+         <button class="btn btn-danger btn-mini" data-act="clear-selected">Clear (${selectedToClear.size})</button>
        </div>`
     : '';
 
@@ -1415,31 +1411,86 @@ function renderMyOrdersList() {
   myOrdersSig = myOrdersSignature();
 }
 
-/* Track checkbox selection for the "clear" multi-select (the 1s
-   re-render reads selectedToClear back, so state survives). */
+/* Track checkbox selection for the multi-select clear (re-render reads
+   selectedToClear back, so state survives). */
 $('#myOrdersList').addEventListener('change', (e) => {
   const cb = e.target.closest('input[data-clear-id]');
   if (!cb) return;
   if (cb.checked) selectedToClear.add(cb.dataset.clearId);
   else            selectedToClear.delete(cb.dataset.clearId);
-  // Re-render so the pinned dock's "N selected" count and the Clear
-  // button's enabled state update immediately.
+  // Re-render so the pinned dock's count + visibility update immediately.
   renderMyOrdersList();
 });
 
-$('#myOrdersList').addEventListener('click', async (e) => {
-  // Tap anywhere on a selectable row (not the checkbox/label, not a
-  // button) to toggle it while selecting — a larger, friendlier target.
-  if (myOrdersSelectMode && !e.target.closest('button[data-act]') && !e.target.closest('.myo-select')) {
-    const row = e.target.closest('.myorder-item.selectable');
-    if (row) {
-      const id = row.dataset.id;
-      if (selectedToClear.has(id)) selectedToClear.delete(id);
-      else                         selectedToClear.add(id);
-      renderMyOrdersList();
-      return;
+/* Swipe-to-clear: drag a finished order row left to dismiss it from the
+   list (touch + mouse). Delegated on the stable list node so it survives
+   re-renders. Vertical drags fall through to normal scrolling. */
+(function wireMyOrdersSwipe() {
+  const list = $('#myOrdersList');
+  if (!list) return;
+  const THRESHOLD = 90;                 // px left before it counts as a clear
+  let row = null, id = null, startX = 0, startY = 0, dx = 0, decided = false, horizontal = false, pid = null;
+
+  const reset = () => { row = null; id = null; dx = 0; decided = false; horizontal = false; pid = null; mySwipeActive = false; };
+
+  list.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.target.closest('input, button, label, a')) return;   // let controls work
+    const r = e.target.closest('.myorder-item.swipeable');
+    if (!r) return;
+    row = r; id = r.dataset.id; startX = e.clientX; startY = e.clientY;
+    dx = 0; decided = false; horizontal = false; pid = e.pointerId;
+  });
+
+  list.addEventListener('pointermove', (e) => {
+    if (!row || e.pointerId !== pid) return;
+    const mx = e.clientX - startX, my = e.clientY - startY;
+    if (!decided) {
+      if (Math.abs(mx) < 6 && Math.abs(my) < 6) return;
+      decided = true;
+      horizontal = Math.abs(mx) > Math.abs(my);
+      if (horizontal) {
+        mySwipeActive = true;
+        row.classList.add('swiping');
+        try { list.setPointerCapture(pid); } catch (_) {}
+      } else {
+        row = null;                     // vertical → release to the scroller
+        return;
+      }
     }
-  }
+    if (!horizontal) return;
+    dx = Math.min(0, mx);               // only allow leftward
+    row.style.transform = `translateX(${dx}px)`;
+    row.style.opacity = String(Math.max(0.25, 1 + dx / 260));
+    e.preventDefault();
+  });
+
+  const endSwipe = (e) => {
+    if (!row || (pid != null && e.pointerId !== pid)) return;
+    const r = row, theId = id, wasHorizontal = horizontal, finalDx = dx;
+    try { if (pid != null) list.releasePointerCapture(pid); } catch (_) {}
+    reset();
+    if (!wasHorizontal) return;
+    r.classList.remove('swiping');
+    if (finalDx <= -THRESHOLD) {
+      r.style.transform = 'translateX(-110%)';
+      r.style.opacity = '0';
+      setTimeout(() => {
+        dismissOrders([theId]);
+        selectedToClear.delete(theId);
+        renderMyOrdersList();
+        refreshMyOrdersFab();
+      }, 180);
+    } else {
+      r.style.transform = '';           // snap back
+      r.style.opacity = '';
+    }
+  };
+  list.addEventListener('pointerup', endSwipe);
+  list.addEventListener('pointercancel', endSwipe);
+})();
+
+$('#myOrdersList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
   const act = btn.dataset.act;
@@ -1458,13 +1509,12 @@ $('#myOrdersList').addEventListener('click', async (e) => {
     renderMyOrdersList(); refreshMyOrdersFab(); refreshOrderStatusBanner();
     return;
   }
-  if (act === 'select-clear') { myOrdersSelectMode = true;  selectedToClear.clear(); renderMyOrdersList(); return; }
-  if (act === 'select-done')  { myOrdersSelectMode = false; selectedToClear.clear(); renderMyOrdersList(); return; }
+  if (act === 'select-done') { selectedToClear.clear(); renderMyOrdersList(); return; }   // Deselect all
   if (act === 'clear-selected') {
-    if (!selectedToClear.size) { showToast('Select orders to clear first', 'error'); return; }
+    if (!selectedToClear.size) return;
     dismissOrders([...selectedToClear]);
     showToast(`Cleared ${selectedToClear.size} from your list`, 'success');
-    myOrdersSelectMode = false; selectedToClear.clear();
+    selectedToClear.clear();
     renderMyOrdersList(); refreshMyOrdersFab(); refreshOrderStatusBanner();
     return;
   }
