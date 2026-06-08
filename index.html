@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=61" />
+  <link rel="stylesheet" href="style.css?v=63" />
 
   <script>
     (function () {
@@ -561,6 +561,9 @@
     <div class="modal-card small-card" role="dialog" aria-labelledby="uiConfirmTitle">
       <header class="modal-head"><h3 id="uiConfirmTitle"></h3></header>
       <p id="uiConfirmMsg" class="muted" style="white-space:pre-line; margin-top:0;"></p>
+      <input type="text" id="uiConfirmInput" class="ui-prompt-input" hidden
+             autocomplete="off" />
+      <p id="uiConfirmInputErr" class="form-error" hidden></p>
       <div id="uiConfirmBtns" style="display:flex; flex-direction:column; gap:8px;"></div>
     </div>
   </div>
@@ -1027,6 +1030,6 @@
   <script src="config.js?v=1"></script>
   <script src="store.js?v=41"></script>
   <script src="common.js?v=2"></script>
-  <script src="script.js?v=85"></script>
+  <script src="script.js?v=86"></script>
 </body>
 </html>

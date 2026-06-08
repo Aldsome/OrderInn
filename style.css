@@ -25,9 +25,9 @@
   --cream:    #FFFDF8;
   --white:    #FFFFFF;
   --ink:      #3D2E1F;
-  --ink-soft: #6B5847;
-  --ink-faint:#9A8870;
-  --line:     #F0E5D5;
+  --ink-soft: #5C4A39;   /* secondary text — darkened for legibility */
+  --ink-faint:#837158;   /* hints / timestamps — darkened from #9A8870 */
+  --line:     #EADFCC;   /* dividers a touch stronger than #F0E5D5 */
   --line-strong:#DDC9A8;
 
   --primary:      var(--brown-500);
@@ -82,9 +82,9 @@
   --cream:    #0c0c0c;   /* app background (darkest) */
   --white:    #2a2112;   /* cards / panels / surfaces */
   --ink:      #ECEEF1;   /* primary text — neutral light gray */
-  --ink-soft: #AAB0B9;   /* secondary text */
-  --ink-faint:#767C86;   /* hints / timestamps */
-  --line:     #2E323A;
+  --ink-soft: #BAC0C9;   /* secondary text — lifted for legibility */
+  --ink-faint:#8A909B;   /* hints / timestamps — lifted from #767C86 */
+  --line:     #34383F;   /* dividers slightly clearer on the dark bg */
   --line-strong:#3E434C;
 
   --primary:      var(--brown-500);
@@ -1531,6 +1531,23 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
 .location-field input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Text input inside the uiConfirm/uiPrompt modal. */
+.ui-prompt-input {
+  width: 100%;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+  color: var(--ink);
+  font-size: .95rem;
+}
+.ui-prompt-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
 /* ==========================================================

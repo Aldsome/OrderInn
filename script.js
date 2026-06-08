@@ -1720,8 +1720,79 @@ async function confirmAsk(message, {
   return val === true;
 }
 
+/* Promise-based text-input modal — the drop-in replacement for native
+   prompt(). Resolves the trimmed string the user entered, or null if
+   they cancel / dismiss. `validate(value)` may return an error string to
+   keep the dialog open with a message. Reuses the uiConfirm modal. */
+function uiPrompt({
+  title = '', message = '', placeholder = '', value = '',
+  confirmLabel = 'OK', cancelLabel = 'Cancel', validate = null, dismissable = true,
+} = {}) {
+  return new Promise(resolve => {
+    const modal = $('#uiConfirmModal');
+    $('#uiConfirmTitle').textContent = title;
+    $('#uiConfirmMsg').textContent   = message;
+    const input = $('#uiConfirmInput');
+    const errEl = $('#uiConfirmInputErr');
+    const host  = $('#uiConfirmBtns');
+    host.innerHTML = '';
+    input.hidden = false;
+    input.value = value || '';
+    input.placeholder = placeholder || '';
+    if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+    let settled = false;
+    const cleanup = () => {
+      input.hidden = true;
+      input.value = '';
+      if (errEl) errEl.hidden = true;
+      modal._uiClose = null;
+      input.removeEventListener('keydown', onKey);
+    };
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      closeModal('#uiConfirmModal');
+      resolve(val);
+    };
+    const submit = () => {
+      const v = input.value.trim();
+      if (validate) {
+        const err = validate(v);
+        if (err) { if (errEl) { errEl.textContent = err; errEl.hidden = false; } input.focus(); return; }
+      }
+      done(v);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    };
+    input.addEventListener('keydown', onKey);
+
+    const ok = document.createElement('button');
+    ok.type = 'button';
+    ok.className = 'btn btn-primary';
+    ok.style.width = '100%';
+    ok.textContent = confirmLabel;
+    ok.addEventListener('click', submit);
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-ghost';
+    cancel.style.width = '100%';
+    cancel.textContent = cancelLabel;
+    cancel.addEventListener('click', () => done(null));
+    host.appendChild(ok);
+    host.appendChild(cancel);
+
+    modal._uiClose = dismissable ? () => done(null) : null;
+    openModal('#uiConfirmModal');
+    setTimeout(() => input.focus(), 60);
+  });
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  const uiC = $('#uiConfirmModal');
+  if (uiC && uiC.classList.contains('open')) { if (uiC._uiClose) uiC._uiClose(); return; }
   if ($('#customizerModal').classList.contains('open'))    return closeCustomizer();
   if ($('#staffLoginModal').classList.contains('open'))    return closeStaffLogin();
   if ($('#itemModal').classList.contains('open'))          return closeItemModal();
@@ -2554,8 +2625,13 @@ $('#menuTable').querySelector('thead').addEventListener('click', (e) => {
   else { menuSort.key = key; menuSort.dir = 'asc'; }
   withScrollAnchor($('.admin-content'), renderMenuTable);
 });
-$('#addCategoryBtn').addEventListener('click', () => {
-  const label = (prompt('New category name (e.g. Smoothies, Sandwiches):') || '').trim();
+$('#addCategoryBtn').addEventListener('click', async () => {
+  const label = await uiPrompt({
+    title: 'New category',
+    message: 'Name the new menu category.',
+    placeholder: 'e.g. Smoothies, Sandwiches',
+    confirmLabel: 'Add category',
+  });
   if (!label) return;
   const { category, created } = Store.addCategory(label);
   if (!category) return;
@@ -2715,13 +2791,21 @@ $('#cancelItemBtn').addEventListener('click', closeItemModal);
 /* "+ New category…" in the item-modal select: prompt for a name,
    add it to the data-driven list, then re-select it (and refresh
    the customer chips + admin filter so it shows everywhere). */
-$('#itemCategorySelect').addEventListener('change', (e) => {
+$('#itemCategorySelect').addEventListener('change', async (e) => {
   const sel = e.target;
   if (sel.value !== NEW_CATEGORY_SENTINEL) { sel.dataset.prev = sel.value; return; }
-  const label = (prompt('New category name (e.g. Smoothies, Sandwiches):') || '').trim();
-  if (!label) { sel.value = sel.dataset.prev || ''; return; }   // cancelled — revert
+  // Revert the select immediately so the "+ New category…" sentinel isn't
+  // left showing while the (async) prompt is open.
+  sel.value = sel.dataset.prev || '';
+  const label = await uiPrompt({
+    title: 'New category',
+    message: 'Name the new menu category.',
+    placeholder: 'e.g. Smoothies, Sandwiches',
+    confirmLabel: 'Add category',
+  });
+  if (!label) return;                          // cancelled — keep previous
   const { category, created } = Store.addCategory(label);
-  if (!category) { sel.value = sel.dataset.prev || ''; return; }
+  if (!category) return;
   CONFIG = Store.getConfig();
   fillItemCategorySelect(category.id);     // rebuild options + select the new/existing one
   renderCategoryChips();                   // customer-facing chips
@@ -2966,10 +3050,16 @@ $('#resetEverythingBtn').addEventListener('click', async () => {
     title: 'Reset everything', confirmLabel: 'Continue', cancelLabel: 'Keep my data', danger: true, dismissable: false,
   }))) return;
   // Type-to-confirm for a destructive, cross-device wipe.
-  // TODO: replace this native prompt() with an input-modal variant of
-  // uiConfirm so no native dialogs remain anywhere in the app.
-  const typed = prompt('Type RESET to confirm the full wipe:');
-  if ((typed || '').trim().toUpperCase() !== 'RESET') { showAdminToast({ title: 'Reset cancelled', variant: 'info' }); return; }
+  const typed = await uiPrompt({
+    title: 'Confirm full wipe',
+    message: 'Type RESET to confirm clearing everything on the cloud and this device.',
+    placeholder: 'RESET',
+    confirmLabel: 'Wipe everything',
+    cancelLabel: 'Cancel',
+    dismissable: false,
+    validate: (v) => v.toUpperCase() === 'RESET' ? null : 'Type RESET (in capitals) to proceed.',
+  });
+  if (typed === null) { showAdminToast({ title: 'Reset cancelled', variant: 'info' }); return; }
   const btn = $('#resetEverythingBtn');
   btn.disabled = true;
   btn.textContent = 'Resetting…';
