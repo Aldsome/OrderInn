@@ -2282,7 +2282,11 @@ body.admin-open { overflow: hidden; }
   pointer-events: none;
   margin: 0;
   box-shadow: var(--shadow-lg);
-  transform: rotate(1.5deg) scale(1.02);
+  /* Initial pose; JS rAF then drives transform each frame (lazy follow +
+     velocity tilt + wobble). transform-origin centres the rotation. */
+  transform: rotate(1.5deg) scale(1.05);
+  transform-origin: 50% 50%;
+  will-change: left, top, transform;
   opacity: .96;
 }
 

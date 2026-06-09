@@ -2416,6 +2416,8 @@ function setOrdersView(v) {
     btn.classList.toggle('active', on);
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
+  const boardDefault = $('#setOrdersBoardDefault');
+  if (boardDefault) boardDefault.checked = board;
   // Leaving board → make sure any select-mode leftovers don't linger.
   renderOrders();
 }
@@ -2505,11 +2507,30 @@ $('#ordersBoard').addEventListener('click', async (e) => {
   let ticket = null, id = null, fromStatus = null, pid = null;
   let startX = 0, startY = 0, decided = false, dragging = false;
   let clone = null, lastCol = null;
+  // rAF-driven "lazy follow": the clone eases toward the cursor (a trailing
+  // delay) and tilts with its own velocity + a gentle constant wobble, so the
+  // drag feels springy and wiggly rather than rigidly pinned to the pointer.
+  let raf = null, tx = 0, ty = 0, cx = 0, cy = 0;
+
+  const animateClone = (now) => {
+    if (!clone) { raf = null; return; }
+    const prevX = cx;
+    cx += (tx - cx) * 0.18;            // lag factor → the "delay"
+    cy += (ty - cy) * 0.18;
+    const vx = cx - prevX;             // horizontal velocity → lean into motion
+    const tilt = Math.max(-14, Math.min(14, vx * 0.9));
+    const wobble = Math.sin(now / 110) * 2.4;   // ever-present jiggle
+    clone.style.left = cx + 'px';
+    clone.style.top  = cy + 'px';
+    clone.style.transform = `rotate(${(tilt + wobble).toFixed(2)}deg) scale(1.05)`;
+    raf = requestAnimationFrame(animateClone);
+  };
 
   const clearDropTargets = () => board.querySelectorAll('.kds-col.drop-target')
     .forEach(c => c.classList.remove('drop-target'));
 
   const cleanup = () => {
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
     if (clone) { clone.remove(); clone = null; }
     if (ticket) ticket.classList.remove('dragging');
     clearDropTargets();
@@ -2548,11 +2569,15 @@ $('#ordersBoard').addEventListener('click', async (e) => {
       clone._dy = e.clientY - r.top;
       document.body.appendChild(clone);
       ticket.classList.add('dragging');
+      // Seed the eased follower at the clone's real spot, then animate.
+      cx = tx = r.left; cy = ty = r.top;
+      raf = requestAnimationFrame(animateClone);
     }
     if (!dragging) return;
     e.preventDefault();
-    clone.style.left = (e.clientX - clone._dx) + 'px';
-    clone.style.top  = (e.clientY - clone._dy) + 'px';
+    // Feed the target; the rAF loop eases the clone toward it (the lag/wiggle).
+    tx = e.clientX - clone._dx;
+    ty = e.clientY - clone._dy;
     // Highlight the column under the pointer.
     clone.style.pointerEvents = 'none';
     const under = document.elementFromPoint(e.clientX, e.clientY);
@@ -3225,8 +3250,16 @@ function loadSettingsForm() {
     if (el.type === 'checkbox') el.checked = !!v;
     else                        el.value   = v;
   });
+  const boardDefault = $('#setOrdersBoardDefault');
+  if (boardDefault) boardDefault.checked = (ordersView === 'board');
   refreshInviteCodeView();
 }
+
+/* Per-device default Orders view. Persisted via setOrdersView (localStorage),
+   not part of the shop config Save, and applied live so the toggle is felt. */
+$('#setOrdersBoardDefault')?.addEventListener('change', (e) => {
+  setOrdersView(e.target.checked ? 'board' : 'list');
+});
 
 function refreshInviteCodeView() {
   const el = $('#inviteCodeView');

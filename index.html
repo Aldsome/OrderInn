@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=65" />
+  <link rel="stylesheet" href="style.css?v=66" />
 
   <script>
     (function () {
@@ -804,6 +804,18 @@
               </span>
             </label>
           </fieldset>
+
+          <!-- Per-device preference (stored in localStorage, not shop config),
+               so it has no name attr and is wired separately from Save. -->
+          <fieldset>
+            <legend>Orders panel</legend>
+            <label class="check-inline">
+              <input type="checkbox" id="setOrdersBoardDefault" />
+              <span>Use the POS board (KDS) as the default Orders view
+                <small class="muted">(this device only; you can still toggle List/Board from the Orders header)</small>
+              </span>
+            </label>
+          </fieldset>
         </form>
 
         <!-- Grant a discount voucher to a customer by their account email. -->
@@ -1038,6 +1050,6 @@
   <script src="config.js?v=1"></script>
   <script src="store.js?v=41"></script>
   <script src="common.js?v=2"></script>
-  <script src="script.js?v=88"></script>
+  <script src="script.js?v=89"></script>
 </body>
 </html>
