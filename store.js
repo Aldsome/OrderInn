@@ -427,8 +427,13 @@ async function syncServerClock() {
   if (!REMOTE_MODE || typeof fetch !== 'function' || !navigator.onLine) return;
   try {
     const t0  = Date.now();
+    // PostgREST resolves the role from BOTH headers; sending apikey alone
+    // 401s on the root endpoint. Mirror exactly what the SDK sends on every
+    // request so this stays correct regardless of the project's auth config.
     const res = await fetch(SUPABASE_URL + '/rest/v1/', {
-      method: 'HEAD', headers: { apikey: SUPABASE_KEY }, cache: 'no-store',
+      method: 'HEAD',
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+      cache: 'no-store',
     });
     const t1  = Date.now();
     const hdr = res.headers.get('date');           // may be hidden by CORS
