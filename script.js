@@ -2227,7 +2227,17 @@ function refreshDayStats() {
   $('#dayActive').textContent  = active;
 }
 
+/* Orders view: 'list' (classic) or 'board' (POS Kanban/KDS). Per-device. */
+let ordersView = (localStorage.getItem('bb_orders_view') === 'board') ? 'board' : 'list';
+
+/* Dispatcher — keeps every existing renderOrders() caller working while
+   routing to whichever view the staff has selected on this device. */
 function renderOrders() {
+  if (ordersView === 'board') renderOrdersBoard();
+  else                        renderOrdersList();
+}
+
+function renderOrdersList() {
   const filter = $('#orderFilter').value;
   let orders = Store.getOrders();
   if (filter === 'active')     orders = orders.filter(o => o.status === 'pending' || o.status === 'preparing');
@@ -2297,6 +2307,123 @@ function renderOrders() {
   refreshDayStats();
 }
 
+/* ==========================================================
+   POS KANBAN / KDS BOARD  (toggleable Orders view)
+   Three columns — Pending → Preparing → Ready(served) — with
+   tap-to-advance and drag-to-advance. Cancelled orders never
+   appear on the board (use List view's All/Served filter).
+   ========================================================== */
+const KDS_COLS = [
+  { key: 'pending',   title: 'Pending',   advance: 'preparing', cta: 'Start ▶' },
+  { key: 'preparing', title: 'Preparing', advance: 'served',    cta: 'Ready ✓' },
+  { key: 'served',    title: 'Ready',     advance: null,        cta: null },
+];
+const KDS_WARN_MS = 5 * 60 * 1000;    // amber after 5 min waiting
+const KDS_LATE_MS = 10 * 60 * 1000;   // red after 10 min waiting
+
+/* Elapsed-time aging class (only meaningful while not yet served). */
+function kdsAgeClass(o) {
+  if (o.status === 'served') return '';
+  const ms = Date.now() - new Date(o.placedAt).getTime();
+  if (ms >= KDS_LATE_MS) return ' aging-late';
+  if (ms >= KDS_WARN_MS) return ' aging-warn';
+  return '';
+}
+
+function kdsTicketHtml(o, col) {
+  const itemsHtml = o.items.map(i =>
+    `<li><span>${i.qty}× ${escapeHtml(i.name)}${i.summary ? `<small> — ${escapeHtml(i.summary)}</small>` : ''}</span></li>`
+  ).join('');
+  const loc = o.locationIdentifier
+    ? `<span class="kds-loc">📍 ${escapeHtml(String(o.locationIdentifier))}</span>` : '';
+  const advanceBtn = col.advance
+    ? `<button class="btn kds-advance ${col.advance === 'served' ? 'btn-serve' : 'btn-prep'}" data-act="${col.advance}">${col.cta}</button>`
+    : '';
+  const modifyBtn = o.status === 'pending'
+    ? `<button class="kds-mini" data-act="modify" title="Modify" aria-label="Modify">✎</button>` : '';
+  const cancelBtn = (o.status !== 'served' && o.status !== 'cancelled')
+    ? `<button class="kds-mini kds-mini-danger" data-act="cancelled" title="Cancel" aria-label="Cancel">✕</button>` : '';
+  const isNew = (o.status === 'pending') && (Date.now() - new Date(o.placedAt).getTime() < 12000);
+  return `
+    <article class="kds-ticket${kdsAgeClass(o)}${isNew ? ' kds-new' : ''}" data-id="${o.id}" data-status="${o.status}" draggable="false">
+      <header class="kds-ticket-head">
+        <span class="kds-num">#${o.number}</span>
+        ${loc}
+        <span class="kds-age" data-placed="${o.placedAt}">${timeAgo(new Date(o.placedAt))}</span>
+      </header>
+      <ul class="kds-items">${itemsHtml}</ul>
+      <div class="kds-ticket-foot">
+        <span class="kds-total">${peso(o.total)}</span>
+        <div class="kds-actions">
+          ${modifyBtn}
+          <button class="kds-mini" data-act="receipt" title="Receipt" aria-label="Receipt">🧾</button>
+          ${cancelBtn}
+          <button class="kds-mini" data-act="delete" title="Delete" aria-label="Delete">🗑</button>
+        </div>
+      </div>
+      ${advanceBtn}
+    </article>`;
+}
+
+function renderOrdersBoard() {
+  const host = $('#ordersBoard');
+  const all = Store.getOrders();
+  // Served column shows TODAY's served only (keeps "Ready" from growing
+  // forever); pending/preparing show all that are active.
+  const now = new Date();
+  const isToday = (iso) => {
+    const t = new Date(iso);
+    return t.getFullYear() === now.getFullYear() && t.getMonth() === now.getMonth() && t.getDate() === now.getDate();
+  };
+  const byCol = (key) => all
+    .filter(o => o.status === key && (key !== 'served' || isToday(o.servedAt || o.placedAt)))
+    // FIFO: oldest first so the next ticket to work is at the top.
+    .sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
+
+  host.innerHTML = KDS_COLS.map(col => {
+    const list = byCol(col.key);
+    const tickets = list.length
+      ? list.map(o => kdsTicketHtml(o, col)).join('')
+      : `<p class="kds-empty">—</p>`;
+    return `
+      <section class="kds-col" data-col="${col.key}" data-status="${col.key}">
+        <header class="kds-col-head kds-col-${col.key}">
+          <span>${col.title}</span>
+          <span class="kds-count">${list.length}</span>
+        </header>
+        <div class="kds-col-body">${tickets}</div>
+      </section>`;
+  }).join('');
+  refreshOrdersBadge();
+  refreshDayStats();
+}
+
+/* Switch + persist the Orders view (per-device). Hides the status filter
+   and the multi-select tools in board mode (columns ARE the statuses). */
+function setOrdersView(v) {
+  ordersView = (v === 'board') ? 'board' : 'list';
+  try { localStorage.setItem('bb_orders_view', ordersView); } catch (_) {}
+  const board = ordersView === 'board';
+  $('#ordersList').hidden  = board;
+  $('#ordersBoard').hidden = !board;
+  // Status filter + select tools only make sense in the list view.
+  const filter = $('#orderFilter'); if (filter) filter.hidden = board;
+  const selToggle = $('#orderSelectToggle'); if (selToggle) selToggle.hidden = board;
+  ['#ordersViewList', '#ordersViewBoard'].forEach(sel => {
+    const btn = $(sel);
+    if (!btn) return;
+    const on = btn.dataset.view === ordersView;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  // Leaving board → make sure any select-mode leftovers don't linger.
+  renderOrders();
+}
+$('#ordersViewList')?.addEventListener('click', () => setOrdersView('list'));
+$('#ordersViewBoard')?.addEventListener('click', () => setOrdersView('board'));
+// Sync the toggle + container visibility to the saved preference on load.
+setOrdersView(ordersView);
+
 $('#orderFilter').addEventListener('change', renderOrders);
 $('#clearServedBtn').addEventListener('click', async () => {
   if (!(await confirmAsk('Clear all served orders?', {
@@ -2306,31 +2433,18 @@ $('#clearServedBtn').addEventListener('click', async () => {
   renderOrders();
 });
 
-$('#ordersList').addEventListener('click', async (e) => {
-  // A long-press already handled this tap → swallow the click.
-  if (suppressNextOrderClick) { suppressNextOrderClick = false; return; }
-  // In select mode any tap on a card toggles its selection (no radios;
-  // action buttons are inert while selecting).
-  if (orderSelectMode) {
-    const card = e.target.closest('.order-card');
-    if (card) toggleOrderSelected(card);
-    return;
-  }
-  const btn = e.target.closest('button[data-act]');
-  if (!btn) return;
-  const card = btn.closest('.order-card');
+/* Shared order-action runner — used by BOTH the list view and the KDS
+   board (tickets carry the same data-act buttons). Reads the order id
+   from the nearest [data-id] so it works for .order-card and .kds-ticket. */
+async function performOrderAction(btn) {
+  const card = btn.closest('[data-id]');
+  if (!card) return;
   const id = card.dataset.id;
   const act = btn.dataset.act;
   const order = Store.getOrders().find(o => o.id === id);
   const label = order ? `#${order.number}` : 'Order';
-  if (act === 'receipt') {
-    if (order) openReceiptModal(order);
-    return;
-  }
-  if (act === 'modify') {
-    if (order) openAdminEditOrder(order);
-    return;
-  }
+  if (act === 'receipt') { if (order) openReceiptModal(order); return; }
+  if (act === 'modify')  { if (order) openAdminEditOrder(order); return; }
   if (act === 'delete') {
     if (!(await confirmAsk('Delete this order?', {
       title: 'Delete order', confirmLabel: 'Delete', danger: true,
@@ -2354,7 +2468,133 @@ $('#ordersList').addEventListener('click', async (e) => {
   }
   renderOrders();
   refreshAdminActivity();
+}
+
+$('#ordersList').addEventListener('click', async (e) => {
+  // A long-press already handled this tap → swallow the click.
+  if (suppressNextOrderClick) { suppressNextOrderClick = false; return; }
+  // In select mode any tap on a card toggles its selection (no radios;
+  // action buttons are inert while selecting).
+  if (orderSelectMode) {
+    const card = e.target.closest('.order-card');
+    if (card) toggleOrderSelected(card);
+    return;
+  }
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  await performOrderAction(btn);
 });
+
+/* Board: tickets use the same data-act buttons; no select mode here. */
+$('#ordersBoard').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  await performOrderAction(btn);
+});
+
+/* ----- KDS board drag-and-drop -------------------------------------
+   Drag a ticket into another column to set its status. Pointer-based so
+   it works with touch + mouse; a short move threshold keeps it from
+   hijacking vertical column scrolling, and starts on buttons are ignored
+   so taps on Start/Ready/⋯ still work. Dropping on the same column (or
+   nowhere) snaps back. */
+(function wireKdsDragDrop() {
+  const board = $('#ordersBoard');
+  if (!board) return;
+  const THRESHOLD = 8;                  // px before a press becomes a drag
+  let ticket = null, id = null, fromStatus = null, pid = null;
+  let startX = 0, startY = 0, decided = false, dragging = false;
+  let clone = null, lastCol = null;
+
+  const clearDropTargets = () => board.querySelectorAll('.kds-col.drop-target')
+    .forEach(c => c.classList.remove('drop-target'));
+
+  const cleanup = () => {
+    if (clone) { clone.remove(); clone = null; }
+    if (ticket) ticket.classList.remove('dragging');
+    clearDropTargets();
+    ticket = null; id = null; fromStatus = null; pid = null;
+    decided = false; dragging = false; lastCol = null;
+  };
+
+  board.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.target.closest('button, a, input, label')) return;   // let controls work
+    const t = e.target.closest('.kds-ticket');
+    if (!t) return;
+    ticket = t; id = t.dataset.id; fromStatus = t.dataset.status;
+    pid = e.pointerId; startX = e.clientX; startY = e.clientY;
+    decided = false; dragging = false;
+  });
+
+  board.addEventListener('pointermove', (e) => {
+    if (!ticket || e.pointerId !== pid) return;
+    const mx = e.clientX - startX, my = e.clientY - startY;
+    if (!decided) {
+      if (Math.abs(mx) < THRESHOLD && Math.abs(my) < THRESHOLD) return;
+      decided = true;
+      // Engage drag only when horizontal intent dominates; otherwise let
+      // the column scroll vertically (release our tracking).
+      if (Math.abs(mx) <= Math.abs(my)) { ticket = null; return; }
+      dragging = true;
+      try { board.setPointerCapture(pid); } catch (_) {}
+      const r = ticket.getBoundingClientRect();
+      clone = ticket.cloneNode(true);
+      clone.classList.add('kds-drag-clone');
+      clone.style.width = r.width + 'px';
+      clone.style.left = r.left + 'px';
+      clone.style.top = r.top + 'px';
+      clone._dx = e.clientX - r.left;
+      clone._dy = e.clientY - r.top;
+      document.body.appendChild(clone);
+      ticket.classList.add('dragging');
+    }
+    if (!dragging) return;
+    e.preventDefault();
+    clone.style.left = (e.clientX - clone._dx) + 'px';
+    clone.style.top  = (e.clientY - clone._dy) + 'px';
+    // Highlight the column under the pointer.
+    clone.style.pointerEvents = 'none';
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const col = under && under.closest('.kds-col');
+    if (col !== lastCol) { clearDropTargets(); if (col) col.classList.add('drop-target'); lastCol = col; }
+  });
+
+  const endDrag = (e) => {
+    if (!ticket || (pid != null && e.pointerId !== pid)) return;
+    const wasDragging = dragging, theId = id, from = fromStatus;
+    let target = null;
+    if (wasDragging) {
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      target = under && under.closest('.kds-col');
+    }
+    try { if (pid != null) board.releasePointerCapture(pid); } catch (_) {}
+    cleanup();
+    if (!wasDragging || !target) return;
+    const toStatus = target.dataset.status;
+    if (!toStatus || toStatus === from) return;           // same column → no-op
+    Store.updateOrderStatus(theId, toStatus);
+    ORDER_STATUS_BY_ID.set(theId, toStatus);
+    const ord = Store.getOrders().find(o => o.id === theId);
+    showAdminToast({
+      title: `#${ord ? ord.number : ''} → ${toStatus === 'served' ? 'ready' : toStatus}`,
+      variant: toStatus === 'served' ? 'success' : 'info',
+    });
+    renderOrders();
+    refreshAdminActivity();
+  };
+  board.addEventListener('pointerup', endDrag);
+  board.addEventListener('pointercancel', endDrag);
+})();
+
+/* Keep the board's elapsed timers + aging colours fresh while it's the
+   active view and the panel is open (re-render is cheap and idempotent). */
+setInterval(() => {
+  if (ordersView !== 'board') return;
+  if (!adminPanel || adminPanel.hidden) return;
+  if ($('.admin-tab.active')?.dataset.adminTab !== 'orders') return;
+  renderOrdersBoard();
+}, 30 * 1000);
 
 /* ----- Admin multi-select (orders): click-to-select + long-press,
    then Cancel or Delete the whole selection ----- */

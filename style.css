@@ -2123,6 +2123,169 @@ body.admin-open { overflow: hidden; }
 }
 .row-gap { display: inline-flex; gap: 8px; flex-wrap: wrap; }
 
+/* ----- Orders view toggle (List / Board) ----- */
+.orders-viewtoggle {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--white);
+}
+.vt-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-weight: 600;
+  font-size: .85rem;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.vt-btn.active { background: var(--primary); color: var(--white); }
+[data-theme="dark"] .vt-btn.active { color: #0E1419; }
+.vt-btn:not(.active):hover { background: var(--brown-50); }
+
+/* ==========================================================
+   POS KANBAN / KDS BOARD
+   ========================================================== */
+.orders-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.kds-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+  max-height: calc(100vh - 280px);
+  background: var(--brown-50);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: box-shadow .15s, border-color .15s;
+}
+.kds-col.drop-target {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary) inset;
+}
+.kds-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-weight: 700;
+  font-size: .9rem;
+  color: var(--ink);
+  border-bottom: 2px solid var(--line-strong);
+  position: sticky;
+  top: 0;
+  background: var(--white);
+  z-index: 1;
+}
+.kds-col-head .kds-count {
+  min-width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--brown-100);
+  color: var(--ink);
+  font-size: .78rem;
+}
+/* Column accent stripes */
+.kds-col-pending   { box-shadow: inset 0 -2px 0 #C9A227; }
+.kds-col-preparing { box-shadow: inset 0 -2px 0 #2F6FB0; }
+.kds-col-served    { box-shadow: inset 0 -2px 0 #3A6E3B; }
+.kds-col-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 10px;
+}
+.kds-empty { text-align: center; color: var(--ink-faint); margin: 8px 0; }
+
+.kds-ticket {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  cursor: grab;
+  touch-action: pan-y;          /* allow vertical scroll; JS handles drag */
+  user-select: none;
+  transition: box-shadow .15s, transform .12s, opacity .15s;
+}
+.kds-ticket:hover { box-shadow: var(--shadow-sm, 0 2px 8px rgba(0,0,0,.08)); }
+.kds-ticket.dragging { opacity: .4; }
+.kds-ticket.aging-warn { border-left-color: #C9A227; }
+.kds-ticket.aging-late { border-left-color: #D14B4B; }
+.kds-ticket.kds-new { animation: kdsNew 1.4s ease-out 2; }
+@keyframes kdsNew {
+  0%   { box-shadow: 0 0 0 0 rgba(201,162,39,.55); }
+  100% { box-shadow: 0 0 0 10px rgba(201,162,39,0); }
+}
+.kds-ticket-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.kds-num { font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; color: var(--ink); }
+.kds-loc { font-size: .78rem; color: var(--ink-soft); }
+.kds-age { margin-left: auto; font-size: .76rem; color: var(--ink-faint); }
+.kds-ticket.aging-late .kds-age { color: #D14B4B; font-weight: 700; }
+.kds-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.kds-items li { font-size: .85rem; color: var(--ink); }
+.kds-items small { color: var(--ink-soft); }
+.kds-ticket-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kds-total { font-weight: 700; color: var(--ink); }
+.kds-actions { display: inline-flex; gap: 4px; }
+.kds-mini {
+  border: 1px solid var(--line);
+  background: var(--white);
+  color: var(--ink-soft);
+  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  font-size: .9rem;
+  cursor: pointer;
+  display: inline-grid;
+  place-items: center;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.kds-mini:hover { border-color: var(--line-strong); color: var(--ink); }
+.kds-mini-danger:hover { border-color: #D14B4B; color: #D14B4B; }
+.kds-advance {
+  width: 100%;
+  padding: 11px;
+  font-size: .95rem;
+  font-weight: 700;
+}
+/* Floating clone that follows the pointer while dragging. */
+.kds-drag-clone {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  margin: 0;
+  box-shadow: var(--shadow-lg);
+  transform: rotate(1.5deg) scale(1.02);
+  opacity: .96;
+}
+
 /* ----- Orders list ----- */
 .orders-list { display: grid; gap: 12px; }
 .order-card {
@@ -3497,6 +3660,22 @@ body.cart-open .fab-cart {
 /* ==========================================================
    RESPONSIVE
    ========================================================== */
+/* KDS board: on narrower screens the three columns become a horizontal
+   swipeable strip (one near-full-width column at a time) instead of a
+   cramped 3-up grid. List view stays the better phone option. */
+@media (max-width: 720px) {
+  .orders-board {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 82%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    gap: 10px;
+    padding-bottom: 6px;
+  }
+  .kds-col { scroll-snap-align: start; max-height: calc(100vh - 240px); }
+}
 @media (max-width: 540px) {
   .brand-tagline { display: none; }
   .order-card .order-actions { flex-direction: column; align-items: stretch; }

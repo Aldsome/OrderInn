@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=64" />
+  <link rel="stylesheet" href="style.css?v=65" />
 
   <script>
     (function () {
@@ -671,6 +671,11 @@
         <div class="pane-head">
           <h2>Active Orders</h2>
           <div class="row-gap">
+            <!-- View toggle: classic List vs POS Kanban Board (per-device). -->
+            <div class="orders-viewtoggle" role="group" aria-label="Orders view">
+              <button type="button" class="vt-btn" id="ordersViewList"  data-view="list"  aria-pressed="true">☰ List</button>
+              <button type="button" class="vt-btn" id="ordersViewBoard" data-view="board" aria-pressed="false">▦ Board</button>
+            </div>
             <select id="orderFilter">
               <option value="active">Active (pending + preparing)</option>
               <option value="pending">Pending only</option>
@@ -686,9 +691,12 @@
             <button class="btn btn-danger" id="deleteSelectedOrdersBtn" hidden>Delete</button>
           </div>
         </div>
+        <!-- Classic list view -->
         <div class="orders-list" id="ordersList">
           <p class="empty-state">No orders yet.</p>
         </div>
+        <!-- POS Kanban / KDS board view (hidden until toggled) -->
+        <div class="orders-board" id="ordersBoard" hidden></div>
       </section>
 
       <!-- ----- Chats (Messenger-style table conversations) -----
@@ -1030,6 +1038,6 @@
   <script src="config.js?v=1"></script>
   <script src="store.js?v=41"></script>
   <script src="common.js?v=2"></script>
-  <script src="script.js?v=87"></script>
+  <script src="script.js?v=88"></script>
 </body>
 </html>
