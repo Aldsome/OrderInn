@@ -427,10 +427,12 @@ async function syncServerClock() {
   if (!REMOTE_MODE || typeof fetch !== 'function' || !navigator.onLine) return;
   try {
     const t0  = Date.now();
-    // PostgREST resolves the role from BOTH headers; sending apikey alone
-    // 401s on the root endpoint. Mirror exactly what the SDK sends on every
-    // request so this stays correct regardless of the project's auth config.
-    const res = await fetch(SUPABASE_URL + '/rest/v1/', {
+    // Read the server's `Date` header off a normal table the anon role can
+    // read (bb_products has `for select using(true)`). The PostgREST ROOT
+    // (/rest/v1/) is the OpenAPI spec endpoint and 401s even when authed, so
+    // we hit a real data path instead. HEAD + limit=0 transfers no rows.
+    // Both headers are required so PostgREST can resolve the anon role.
+    const res = await fetch(SUPABASE_URL + '/rest/v1/bb_products?select=id&limit=0', {
       method: 'HEAD',
       headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
       cache: 'no-store',
