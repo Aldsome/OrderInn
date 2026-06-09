@@ -2423,8 +2423,11 @@ function setOrdersView(v) {
 }
 $('#ordersViewList')?.addEventListener('click', () => setOrdersView('list'));
 $('#ordersViewBoard')?.addEventListener('click', () => setOrdersView('board'));
-// Sync the toggle + container visibility to the saved preference on load.
-setOrdersView(ordersView);
+// NOTE: the initial setOrdersView(ordersView) sync runs in boot(), NOT here.
+// Calling it at module-parse time would execute renderOrders() before the
+// admin selection-state `let`s below are initialized — a temporal-dead-zone
+// ReferenceError that aborts the whole script (blanking the customer menu
+// whenever there were orders to render). boot() runs after all decls exist.
 
 $('#orderFilter').addEventListener('change', renderOrders);
 $('#clearServedBtn').addEventListener('click', async () => {
@@ -5285,6 +5288,10 @@ async function boot() {
     ensureTable();
   }
   syncTopbarHeight();
+  // Sync the admin Orders view toggle + container visibility to the saved
+  // preference. Deferred here (not at module-parse time) so the selection
+  // -state declarations it transitively touches are already initialized.
+  setOrdersView(ordersView);
   renderCategoryChips();
   renderMenu();
   updateCart();
