@@ -15,7 +15,7 @@ jobs:
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             "${{ secrets.SUPABASE_URL }}/rest/v1/bb_products?select=id&limit=1")
           echo "HTTP status: $status"
-          cat /tmp/body.txt
           if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            cat /tmp/body.txt
             exit 1
           fi
