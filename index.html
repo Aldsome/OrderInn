@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=67" />
+  <link rel="stylesheet" href="style.css?v=70" />
 
   <script>
     (function () {
@@ -182,6 +182,27 @@
         <path d="M12 19V6"/><path d="M5 12l7-7 7 7"/>
       </svg>
     </button>
+
+    <!-- Welcome band — the first-impression moment. A time-aware
+         greeting, the shop name as a display headline (the brand's one
+         real moment; the topbar mark is tiny), the tagline, and a live
+         "customer favorite" chip pulled from real order data. Sits in
+         normal flow so it scrolls away as the customer starts browsing —
+         present on arrival, out of the way during the task. Populated by
+         renderHero() in script.js. -->
+    <section class="hero container" id="hero" aria-label="Welcome">
+      <p class="hero-greeting" id="heroGreeting"></p>
+      <h1 class="hero-title" id="heroTitle"></h1>
+      <p class="hero-tagline" id="heroTagline"></p>
+      <button type="button" class="hero-fav" id="heroFav" hidden>
+        <span class="hero-fav-thumb" id="heroFavThumb" aria-hidden="true"></span>
+        <span class="hero-fav-text">
+          <span class="hero-fav-label">Customer favorite</span>
+          <span class="hero-fav-name" id="heroFavName"></span>
+        </span>
+        <span class="hero-fav-cta" aria-hidden="true">Try it →</span>
+      </button>
+    </section>
 
     <!-- Category chips -->
     <nav class="chips container" id="categoryChips" aria-label="Menu categories">
@@ -393,6 +414,9 @@
        ========================================================== -->
   <div class="modal" id="orderPlacedModal" aria-hidden="true">
     <div class="modal-card placed-card" role="dialog">
+      <!-- Confetti bursts here on a fresh placement (behind the tick).
+           Populated by launchPlacedConfetti(); empty otherwise. -->
+      <div class="placed-confetti" id="placedConfetti" aria-hidden="true"></div>
       <div class="placed-tick" id="placedTickIcon" aria-hidden="true">✓</div>
       <h3 id="placedTitle">Order placed!</h3>
       <p class="muted" id="placedSubtitle">Show this number to your server.</p>

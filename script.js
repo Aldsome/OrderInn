@@ -98,7 +98,9 @@ function renderMenu() {
   }
 
   menuGrid.innerHTML = items.map(item => `
-    <article class="product-card" data-id="${item.id}">
+    <article class="product-card" data-id="${item.id}"
+             role="button" tabindex="0"
+             aria-label="Customize and add ${escapeHtml(item.name)}, ${peso(item.price)}">
       <div class="placeholder-img" aria-hidden="true">
         ${thumbMarkup(item, { alt: item.name })}
       </div>
@@ -150,6 +152,59 @@ function renderCategoryChips() {
     `<button class="chip${state.category === id ? ' active' : ''}" data-category="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
   nav.innerHTML = chip('all', 'All') + cats.map(c => chip(c.id, c.label)).join('');
 }
+
+/* Welcome band. Time-aware greeting + shop name + tagline + a live
+   "customer favorite" chip (top best-seller from real order data).
+   The reveal is enhancement-only: content is written first (so it's
+   present even if the animation never runs), then .hero-in is added
+   to replay the staggered rise. Called on boot and again whenever the
+   config or menu changes so the favorite stays current. */
+let heroRevealed = false;
+function renderHero() {
+  const hero = $('#hero');
+  if (!hero) return;
+
+  const h = new Date().getHours();
+  const greeting =
+    h < 5  ? 'Late night ☕'   :
+    h < 12 ? 'Good morning ☕'  :
+    h < 17 ? 'Good afternoon ☕':
+    h < 22 ? 'Good evening ☕'  :
+             'Winding down ☕';
+  $('#heroGreeting').textContent = greeting;
+  $('#heroTitle').textContent    = CONFIG.shopName || 'OrderInn Coffee';
+  $('#heroTagline').textContent  = CONFIG.tagline || '';
+
+  // Live favorite — the #1 best-seller (falls back to the first menu
+  // item when there's no order history yet). Hidden if the menu is empty.
+  const fav = getBestSellers(1)[0];
+  const favBtn = $('#heroFav');
+  if (fav && favBtn) {
+    $('#heroFavThumb').innerHTML = thumbMarkup(fav, { alt: fav.name });
+    $('#heroFavName').textContent = fav.name;
+    favBtn.dataset.id = fav.id;
+    favBtn.hidden = false;
+  } else if (favBtn) {
+    favBtn.hidden = true;
+  }
+
+  // Play the entrance once per page load (not on every config refresh).
+  if (!heroRevealed) {
+    heroRevealed = true;
+    // Next frame so the browser has painted the resting state first,
+    // giving the animation something to animate FROM.
+    requestAnimationFrame(() => hero.classList.add('hero-in'));
+  }
+}
+
+/* Tapping the hero's favorite chip opens that item's customizer —
+   the "try it" hook that turns the first impression into an action. */
+(function wireHeroFav() {
+  const favBtn = $('#heroFav');
+  if (favBtn) favBtn.addEventListener('click', () => {
+    if (favBtn.dataset.id) openCustomizer(favBtn.dataset.id);
+  });
+})();
 /* Align the menu so its first item sits just BELOW the sticky chips
    bar (instead of hidden behind it). The tricky part: scrolling up
    toward the menu start crosses back under the 30vh dock threshold,
@@ -191,6 +246,17 @@ $('#categoryChips').addEventListener('click', (e) => {
 menuGrid.addEventListener('click', (e) => {
   const card = e.target.closest('.product-card');
   if (!card) return;
+  openCustomizer(card.dataset.id);
+});
+
+/* Keyboard activation for the product cards. They're role="button"
+   tabindex="0" (see renderMenu), so Enter/Space must open the
+   customizer just like a click — and Space must not scroll the page. */
+menuGrid.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  const card = e.target.closest('.product-card');
+  if (!card) return;
+  e.preventDefault();
   openCustomizer(card.dataset.id);
 });
 
@@ -837,6 +903,95 @@ function refreshOrderStatusBanner() {
 function openOrderPlacedModal(order) {
   updatePlacedModalForOrder(order);
   openModal('#orderPlacedModal');
+  // Fresh placement = the emotional peak of the flow. Play the
+  // one-shot celebration (tick spring, number count-up, confetti,
+  // staggered rise-in). Reopening this modal from the status banner
+  // goes through updatePlacedModalForOrder directly and never
+  // celebrates again.
+  playPlacedCelebration(order);
+}
+
+/* The order-placed celebration. Additive and self-cleaning: toggles
+   .celebrate on the card to drive the CSS choreography, counts the
+   order number up, and bursts confetti. Honors reduced-motion by
+   resolving straight to the final state. */
+let placedCelebrateTimer = null;
+function playPlacedCelebration(order) {
+  const card   = $('#placedTickIcon').closest('.placed-card');
+  const numEl  = $('#placedOrderNumber');
+  if (!card || !numEl) return;
+
+  const reduce = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Restart cleanly if a previous celebration is mid-flight.
+  clearTimeout(placedCelebrateTimer);
+  card.classList.remove('celebrate');
+  void card.offsetWidth;                    // reflow so the animation re-fires
+
+  const finalNumber = order.number;
+  if (reduce) {
+    numEl.textContent = finalNumber;
+    return;                                 // no motion, no confetti
+  }
+
+  card.classList.add('celebrate');
+  launchPlacedConfetti();
+  countUpNumber(numEl, finalNumber, 650, 520);   // (el, target, duration, startDelay)
+
+  // Strip the class once the longest delay + duration has elapsed so
+  // the modal returns to its resting state (and can celebrate again
+  // on the next order).
+  placedCelebrateTimer = setTimeout(() => card.classList.remove('celebrate'), 1500);
+}
+
+/* Count an integer up to `target` over `duration` ms, easing out, after
+   an optional `delay` (synced to when the number rises into view). */
+function countUpNumber(el, target, duration = 600, delay = 0) {
+  const t = Number(target);
+  if (!Number.isFinite(t) || t <= 0) { el.textContent = target; return; }
+  const run = () => {
+    const start = performance.now();
+    const from  = Math.max(0, Math.floor(t * 0.4));   // start partway, not from 0
+    const step = (now) => {
+      const p = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);            // ease-out cubic
+      el.textContent = Math.round(from + (t - from) * eased);
+      if (p < 1) requestAnimationFrame(step);
+      else       el.textContent = t;                   // land exact
+    };
+    requestAnimationFrame(step);
+  };
+  el.textContent = Math.max(0, Math.floor(t * 0.4));
+  delay > 0 ? setTimeout(run, delay) : run();
+}
+
+/* Confetti fan for the placed card — a tighter, classier burst than
+   the full thank-you takeover. Bits radiate up-and-out from behind
+   the tick, then fall + fade. Pure CSS animation via per-bit vars. */
+function launchPlacedConfetti() {
+  const host = $('#placedConfetti');
+  if (!host) return;
+  host.innerHTML = '';
+  const colors = ['#C18F1E', '#3A6E3B', '#E8B84B', '#A0855E', '#DDC9A8', '#6F5A3E'];
+  const N = 26;
+  for (let i = 0; i < N; i++) {
+    const bit = document.createElement('span');
+    bit.className = 'pc-bit';
+    // Fan across a 200° arc, biased upward; distance + fall vary per bit.
+    const ang  = (-190 + Math.random() * 200) * Math.PI / 180;
+    const dist = 60 + Math.random() * 70;
+    const x = Math.cos(ang) * dist;
+    const y = Math.sin(ang) * dist + (40 + Math.random() * 50);  // gravity pulls down
+    bit.style.setProperty('--x', `${x.toFixed(0)}px`);
+    bit.style.setProperty('--y', `${y.toFixed(0)}px`);
+    bit.style.setProperty('--r', `${Math.round(Math.random() * 540 - 270)}deg`);
+    bit.style.background = colors[i % colors.length];
+    bit.style.animationDelay = (Math.random() * 0.12 + 0.15) + 's';
+    if (i % 4 === 0) bit.style.borderRadius = '50%';
+    host.appendChild(bit);
+  }
+  setTimeout(() => { host.innerHTML = ''; }, 1400);
 }
 
 function updatePlacedModalForOrder(order) {
@@ -4177,6 +4332,7 @@ window.addEventListener('storage', (e) => {
     // Categories live in config — a new one added on another device
     // should appear in this tab's chips (and admin filter) too.
     renderCategoryChips();
+    renderHero();       // brand name / tagline / favorite may have changed
     renderMenu();
     if (!adminPanel.hidden && $('.admin-tab.active')?.dataset.adminTab === 'menu') {
       renderMenuCatFilter();
@@ -5297,6 +5453,7 @@ async function boot() {
   // -state declarations it transitively touches are already initialized.
   setOrdersView(ordersView);
   renderCategoryChips();
+  renderHero();
   renderMenu();
   updateCart();
   refreshOrdersBadge();
