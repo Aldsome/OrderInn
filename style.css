@@ -318,6 +318,18 @@ select option,
 .icon-btn:hover { background: var(--brown-50); }
 .close-btn { border: none; background: transparent; font-size: 1.05rem; }
 
+/* Keeps content readable to assistive tech / future use without
+   taking up visual space. */
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .link-mini {
   background: transparent;
   border: none;
@@ -860,7 +872,6 @@ body.has-myorders-fab .back-to-top { bottom: calc(env(safe-area-inset-bottom, 0p
    rotate) so FABs don't animate/jut as the layout recalculates. */
 body.vp-resizing .fab-myorders,
 body.vp-resizing .fab-chat,
-body.vp-resizing .fab-cart,
 body.vp-resizing .back-to-top,
 body.vp-resizing .nav-handle,
 body.vp-resizing .topbar,
@@ -877,13 +888,62 @@ body.vp-resizing .chips { transition: none !important; }
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
-  padding-block: 8px 120px;          /* room for floating cart */
+  padding-block: 8px 88px;          /* room for the my-orders / chat FABs */
 }
 @media (min-width: 540px) {
   .menu { grid-template-columns: repeat(2, 1fr); gap: 14px; }
 }
 @media (min-width: 800px) {
   .menu { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* Menu loading state — skeleton cards + a small spinner note, shown
+   until renderMenu() overwrites #menuGrid's innerHTML with real data.
+   Spans every column so it reads as one loading block, not a lone
+   card in the grid. */
+.menu-skeleton {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  gap: inherit;
+}
+@supports not (grid-template-columns: subgrid) {
+  .menu-skeleton {
+    grid-template-columns: repeat(auto-fill, minmax(0, 1fr));
+  }
+}
+.skeleton-card {
+  height: 96px;
+  border-radius: var(--radius);
+  background: linear-gradient(100deg, var(--brown-50) 30%, var(--brown-100) 45%, var(--brown-50) 60%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+}
+@keyframes skeletonShimmer {
+  from { background-position: 150% 0; }
+  to   { background-position: -50% 0; }
+}
+.menu-loading-note {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 18px 0 0;
+  color: var(--ink-faint);
+  font-size: .85rem;
+}
+.spinner {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--brown-200);
+  border-top-color: var(--primary);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-card { animation: none; background: var(--brown-100); }
+  .spinner { animation: spin 1.4s linear infinite; }
 }
 
 .product-card {
@@ -1008,91 +1068,52 @@ body.vp-resizing .chips { transition: none !important; }
 .placeholder-img .ph-fallback { position: relative; z-index: 0; opacity: .7; }
 
 /* ==========================================================
-   FLOATING CART (FAB)
+   HEADER CART BUTTON
+   Lives in .topbar-actions (upper right) next to theme/profile,
+   so it's always reachable without a floating element competing
+   for thumb space at the bottom of the screen.
    ========================================================== */
-.fab-cart {
-  position: fixed;
-  bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
+.cart-btn {
+  position: relative;
+  overflow: visible;         /* let the badge sit outside the 38×38 box */
+}
+/* Count badge — hidden while the cart is empty, so the icon reads
+   clean with nothing attached until there's something to show. */
+.cart-btn-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
   background: var(--primary);
   color: var(--white);
-  border: none;
-  /* radius = half the height → renders as pill ends at full width AND a
-     perfect circle once width shrinks to the height (the empty state). */
-  border-radius: 28px;
-  height: 56px;
-  padding: 0 22px;
-  font-size: .95rem;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 14px;
-  box-shadow: var(--shadow-lg);
-  z-index: 40;
-  width: min(420px, 92vw);
-  justify-content: space-between;
-  white-space: nowrap;
-  overflow: hidden;          /* clip the label/meta as the bar contracts */
-  /* Morph between the full bar and the empty circle. The slight overshoot
-     on width/padding gives the "stretch" as it expands or pulls back in.
-     transform/opacity keep their own easing for centering + the open-hide. */
-  transition:
-    width   .5s cubic-bezier(.5, 1.5, .5, 1),
-    padding .5s cubic-bezier(.5, 1.5, .5, 1),
-    transform .25s ease,
-    opacity .25s ease,
-    background .15s;
-}
-.fab-cart:hover { background: var(--primary-deep); }
-.fab-cart.hidden-empty {
-  transform: translateX(-50%) translateY(120px);
-  opacity: 0;
-  pointer-events: none;
-}
-/* Empty cart: contract symmetrically (centered) into a circular icon. */
-.fab-cart.is-empty {
-  width: 56px;
-  padding: 0;
-  gap: 0;
-  justify-content: center;
-}
-.fab-cart-text {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-/* The "View Cart" label + the count/total pill fade and collapse to zero
-   width as the bar becomes a circle, so only the cart glyph remains. */
-.fab-cart-text > span,
-.fab-cart-meta {
-  max-width: 240px;
-  overflow: hidden;
-  transition: opacity .25s ease, max-width .45s cubic-bezier(.5, 1.5, .5, 1),
-              margin .45s ease, padding .45s ease;
-}
-.fab-cart.is-empty .fab-cart-text { gap: 0; }
-.fab-cart.is-empty .fab-cart-text > span,
-.fab-cart.is-empty .fab-cart-meta {
-  opacity: 0;
-  max-width: 0;
-  margin: 0;
-  padding: 0;
-}
-.fab-cart-meta {
-  background: rgba(255, 255, 255, 0.2);
-  padding: 4px 12px;
-  border-radius: 999px;
+  font-size: .68rem;
   font-weight: 700;
-  font-size: .88rem;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--white);
+  transition: transform .2s cubic-bezier(.5, 1.5, .5, 1), opacity .15s;
 }
+.cart-btn.is-empty .cart-btn-badge {
+  opacity: 0;
+  transform: scale(.4);
+}
+[data-theme="dark"] .cart-btn-badge { box-shadow: 0 0 0 2px var(--white); color: #0E1419; }
+
+@keyframes cartBtnShake {
+  0%   { transform: translateY(0)   scale(1); }
+  15%  { transform: translateY(-3px) scale(1.06) rotate(-4deg); }
+  35%  { transform: translateY(0)   scale(1.04) rotate(4deg); }
+  55%  { transform: translateY(-2px) scale(1.03) rotate(-2deg); }
+  100% { transform: translateY(0)   scale(1); }
+}
+.cart-btn.shake { animation: cartBtnShake .55s cubic-bezier(.36,.07,.19,.97); }
 @media (prefers-reduced-motion: reduce) {
-  .fab-cart,
-  .fab-cart-text > span,
-  .fab-cart-meta { transition: background .15s, opacity .15s; }
+  .cart-btn.shake { animation: none; }
+  .cart-btn-badge { transition: opacity .15s; }
 }
-[data-theme="dark"] .fab-cart { color: #0E1419; }
-[data-theme="dark"] .fab-cart-meta { background: rgba(0, 0, 0, .18); color: inherit; }
 
 /* ==========================================================
    FOOTER
@@ -2643,17 +2664,9 @@ body.admin-open { overflow: hidden; }
 [data-theme="dark"] .toast.success { color: #0E1419; }
 
 /* ==========================================================
-   ADD-TO-CART SHAKE  (cart FAB + source product card)
+   ADD-TO-CART SHAKE  (source product card; the header cart
+   button's own shake keyframe lives with its other rules above)
    ========================================================== */
-@keyframes addShake {
-  0%   { transform: translateX(-50%) translateY(0)   scale(1); }
-  15%  { transform: translateX(-50%) translateY(-3px) scale(1.06) rotate(-2deg); }
-  35%  { transform: translateX(-50%) translateY(0)   scale(1.04) rotate(2deg); }
-  55%  { transform: translateX(-50%) translateY(-2px) scale(1.03) rotate(-1deg); }
-  100% { transform: translateX(-50%) translateY(0)   scale(1); }
-}
-.fab-cart.shake { animation: addShake .55s cubic-bezier(.36,.07,.19,.97); }
-
 @keyframes cardShake {
   0%, 100% { transform: translateX(0); }
   20%      { transform: translateX(-4px) rotate(-1deg); }
@@ -2662,15 +2675,6 @@ body.admin-open { overflow: hidden; }
   80%      { transform: translateX(2px); }
 }
 .product-card.shake { animation: cardShake .5s cubic-bezier(.36,.07,.19,.97); }
-
-/* Hide the floating cart FAB while the drawer is already open
-   — it's redundant noise once the panel is showing. */
-body.cart-open .fab-cart {
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-50%, 20px);
-  transition: opacity .18s, transform .18s;
-}
 
 /* ==========================================================
    ADMIN — DAY STATS + FLASH
@@ -2727,7 +2731,7 @@ body.cart-open .fab-cart {
 .fab-myorders {
   position: fixed;
   right: 18px;
-  bottom: 18px;             /* cart FAB is bottom-center, so no overlap */
+  bottom: 18px;
   z-index: 80;
   display: inline-flex;
   align-items: center;

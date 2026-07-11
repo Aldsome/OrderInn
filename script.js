@@ -84,6 +84,10 @@ function customerChatName() {
    ========================================================== */
 const menuGrid = $('#menuGrid');
 function renderMenu() {
+  // First real render replaces the boot-time skeleton; drop aria-busy
+  // now that the grid reflects actual (possibly empty) menu data.
+  menuGrid.removeAttribute('aria-busy');
+
   const items = state.category === 'all'
     ? MENU
     : MENU.filter(m => m.category === state.category);
@@ -406,8 +410,8 @@ document.addEventListener('click', (e) => {
 });
 
 /* Shake animation — called whenever an item is added to the
-   cart. The cart FAB pulses to draw the eye toward where the
-   item went; the source product card briefly rocks so the
+   cart. The header cart icon pulses to draw the eye toward where
+   the item went; the source product card briefly rocks so the
    customer can see "yes, this one." */
 function bumpShake(itemId) {
   const fab = $('#fabCartBtn');

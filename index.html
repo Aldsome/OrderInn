@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=66" />
+  <link rel="stylesheet" href="style.css?v=67" />
 
   <script>
     (function () {
@@ -127,6 +127,17 @@
               <path d="M5 20c0-3.6 3.1-5.5 7-5.5s7 1.9 7 5.5z" fill="currentColor"/>
             </svg>
           </button>
+          <!-- Cart: compact icon button in the header so it's reachable
+               without scrolling back down, with a live count badge.
+               Opens the same drawer as before (#cartDrawer). -->
+          <button class="icon-btn cart-btn is-empty" id="fabCartBtn" aria-label="Open cart">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path fill="currentColor" d="M7 4h-2l-1 2v2h2l3.6 7.59-1.35 2.44A2 2 0 0 0 10 21h12v-2H10.42a.25.25 0 0 1-.22-.37L11.1 17h7.45a2 2 0 0 0 1.8-1.11l3.24-6.5A1 1 0 0 0 22.7 8H6.21L5.27 6H3V4z"/>
+              <circle cx="10" cy="22" r="1.5" fill="currentColor"/>
+              <circle cx="20" cy="22" r="1.5" fill="currentColor"/>
+            </svg>
+            <span class="cart-btn-badge" id="fabCartCount">0</span>
+          </button>
         </div>
       </div>
 
@@ -177,9 +188,21 @@
       <!-- chips injected via script.js from the data-driven category list -->
     </nav>
 
-    <!-- Menu grid -->
-    <main class="menu container" id="menuGrid">
-      <!-- cards injected via script.js -->
+    <!-- Menu grid. Starts with skeleton placeholders so there's an
+         immediate visual signal that the menu is loading (not stuck)
+         while boot() awaits the Supabase fetch; renderMenu() replaces
+         this innerHTML wholesale once real data arrives. -->
+    <main class="menu container" id="menuGrid" aria-busy="true">
+      <div class="menu-skeleton" aria-hidden="true">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
+      <p class="menu-loading-note">
+        <span class="spinner" aria-hidden="true"></span>
+        Loading menu…
+      </p>
     </main>
 
     <!-- Floating "My orders" pill — appears when this customer
@@ -198,20 +221,11 @@
       <span class="fab-chat-dot" id="fabChatDot" hidden></span>
     </button>
 
-    <!-- Floating cart button -->
-    <button class="fab-cart is-empty" id="fabCartBtn" aria-label="Open cart">
-      <span class="fab-cart-text">
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-          <path fill="currentColor" d="M7 4h-2l-1 2v2h2l3.6 7.59-1.35 2.44A2 2 0 0 0 10 21h12v-2H10.42a.25.25 0 0 1-.22-.37L11.1 17h7.45a2 2 0 0 0 1.8-1.11l3.24-6.5A1 1 0 0 0 22.7 8H6.21L5.27 6H3V4z"/>
-          <circle cx="10" cy="22" r="1.5" fill="currentColor"/>
-          <circle cx="20" cy="22" r="1.5" fill="currentColor"/>
-        </svg>
-        <span>View Cart</span>
-      </span>
-      <span class="fab-cart-meta">
-        <span id="fabCartCount">0</span> items · <span id="fabCartTotal">₱0</span>
-      </span>
-    </button>
+    <!-- fabCartTotal is written by refreshCartChrome() but no longer
+         shown in the compact header cart icon; kept off-screen so the
+         subtotal text is still available to assistive tech / future use
+         without touching script.js. -->
+    <span id="fabCartTotal" class="visually-hidden"></span>
 
     <!-- Footer (discreet Staff Login link) -->
     <footer class="site-footer container">
