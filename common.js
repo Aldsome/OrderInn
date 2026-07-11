@@ -62,6 +62,98 @@ let CONFIG = Store.getConfig();
 const peso = (n) => `${CONFIG.currency}${Number(n).toFixed(2)}`;
 const getOpt = (list, id) => list.find(o => o.id === id);
 
+/* ==========================================================
+   PRODUCT IMAGE RESOLVER  (dynamic, keyword-driven)
+   ----------------------------------------------------------
+   A product's photo is resolved at RENDER time from its name +
+   category, so ANY item an admin adds gets a sensible café photo
+   with no per-item hand-picking. Order of resolution:
+
+     1. An explicit item.img (admin-set) always wins — intentional
+        beats inferred.
+     2. Otherwise match the name against a curated keyword→photo
+        map of verified Unsplash shots. Longer/more-specific
+        keywords are tried first ("cold brew" before "coffee") so
+        the closest match wins.
+     3. Otherwise fall back to a known-good photo for the item's
+        category.
+     4. Otherwise (no match, no category) the emoji placeholder in
+        thumbMarkup shows.
+
+   Every URL here is a stable Unsplash CDN link, verified to load
+   and to actually depict the subject — no keyword-lottery service
+   that can return an off-topic image.
+   ========================================================== */
+const UNSPLASH = (id, w = 600, h = 420) =>
+  `https://images.unsplash.com/photo-${id}?w=${w}&h=${h}&fit=crop&crop=entropy&q=80`;
+
+/* Curated keyword → photo. Keys are lowercase substrings matched
+   against the product name. Ordered by specificity (most specific
+   first) via PRODUCT_IMAGE_ORDER below. */
+const PRODUCT_IMAGE_MAP = {
+  // --- specific drinks (checked before generic "coffee"/"tea") ---
+  'cold brew':    '1517701550927-30cf4ba1dba5',
+  'iced caramel': '1461023058943-07fcbe16d735',
+  'iced':         '1461023058943-07fcbe16d735',
+  'caramel':      '1572442388796-11668a67e53d',
+  'macchiato':    '1572442388796-11668a67e53d',
+  'spanish':      '1541167760496-1628856ab772',
+  'cappuccino':   '1517256064527-09c73fc73e38',
+  'americano':    '1551030173-122aabc4489c',
+  'espresso':     '1510707577719-ae7c14805e3a',
+  'mocha':        '1578374173705-969cbe6f2d6b',
+  'flat white':   '1517256064527-09c73fc73e38',
+  'latte':        '1503481766315-7a586b20f66d',
+  'matcha':       '1536256263959-770b48d82b0a',
+  'jasmine':      '1627435601361-ec25f5b1d0e5',
+  'green tea':    '1627435601361-ec25f5b1d0e5',
+  'chai':         '1571934811356-5cc061b6821f',
+  'tea':          '1627435601361-ec25f5b1d0e5',
+  'chocolate':    '1499636136210-6f4ee915583e',
+  'cookie':       '1499636136210-6f4ee915583e',
+  'croissant':    '1555507036-ab1f4038808a',
+  'muffin':       '1607958996333-41aef7caefaa',
+  'cake':         '1565958011703-44f9829ba187',
+  'tart':         '1565958011703-44f9829ba187',
+  'strawberry':   '1565958011703-44f9829ba187',
+  'bread':        '1509440159596-0249088772ff',
+  'sandwich':     '1528735602780-2552fd46c7af',
+  'donut':        '1551024601-bec78aea704b',
+  'coffee':       '1447933601403-0c6688de566e',
+};
+/* Try longer keys first so "cold brew" wins over "coffee", etc. */
+const PRODUCT_IMAGE_ORDER = Object.keys(PRODUCT_IMAGE_MAP)
+  .sort((a, b) => b.length - a.length);
+
+/* One reliable photo per category as the mid-tier fallback. */
+const CATEGORY_IMAGE = {
+  coffee: '1447933601403-0c6688de566e',
+  tea:    '1627435601361-ec25f5b1d0e5',
+  cold:   '1517701550927-30cf4ba1dba5',
+  pastry: '1509440159596-0249088772ff',
+};
+
+/* Legacy seed URLs (loremflickr's keyword lottery) are NOT
+   intentional admin choices — they're the stale source of the
+   mismatched images we're fixing. Treat them as unset so the
+   resolver replaces them, while still honoring any real URL an
+   admin pasted. */
+function isLegacySeedImg(url) {
+  return /loremflickr\.com|source\.unsplash\.com|placeimg\.com|lorempixel/i.test(url);
+}
+
+function resolveProductImage(item) {
+  if (!item) return '';
+  if (item.img && !isLegacySeedImg(item.img)) return item.img;  // real admin-set wins
+  const name = String(item.name || '').toLowerCase();
+  for (const key of PRODUCT_IMAGE_ORDER) {
+    if (name.includes(key)) return UNSPLASH(PRODUCT_IMAGE_MAP[key]);
+  }
+  const catId = CATEGORY_IMAGE[String(item.category || '').toLowerCase()];
+  if (catId) return UNSPLASH(catId);
+  return '';                                           // → emoji fallback
+}
+
 /* Thumbnail markup — show the product image when present; the emoji
    only appears as a fallback when there is NO image (or it fails to
    load), so it never overlays a real photo. The fallback starts
@@ -72,9 +164,13 @@ function thumbMarkup(item, opts = {}) {
   const extra   = opts.fallbackStyle || '';
   const loading = opts.loading || 'lazy';
   const emoji   = (item && item.emoji) || '☕';
-  if (item && item.img) {
+  // Resolve the photo dynamically from name/category (admin-set img
+  // still wins) so any product gets a matching café shot, not just
+  // the seeded ones. See resolveProductImage above.
+  const src = resolveProductImage(item);
+  if (src) {
     const hide = ['display:none', extra].filter(Boolean).join(';');
-    return `<img src="${item.img}" alt="${escapeHtml(opts.alt || '')}" loading="${loading}" `
+    return `<img src="${src}" alt="${escapeHtml(opts.alt || '')}" loading="${loading}" `
       + `onerror="this.style.display='none';var f=this.parentNode.querySelector('.${cls}');if(f)f.style.display='';">`
       + `<span class="${cls}" style="${hide}">${emoji}</span>`;
   }

@@ -13,6 +13,9 @@
 const state = {
   cart:        [],
   category:    'all',
+  search:      '',          // live menu search query (feature: menu search)
+  sort:        'relevance', // menu sort: relevance | price-asc | price-desc | name
+  favoritesOnly: false,     // filter: show only favorited items
   tableNumber: null,        // repurposed: holds the SESSION ID (never shown)
   locationIdentifier: null, // optional checkout location note (from QR ?table=)
   editingLineKey: null,
@@ -83,27 +86,93 @@ function customerChatName() {
    MENU RENDERING
    ========================================================== */
 const menuGrid = $('#menuGrid');
+
+/* The single menu filter+sort pipeline. Applies, in order:
+   category → favorites-only → text search → sort. Every menu render
+   goes through here so the four controls compose predictably. */
+function filterMenuItems() {
+  let items = MENU.slice();
+
+  // 1. Category (chips / sidebar). 'all' = no category filter.
+  if (state.category !== 'all') {
+    items = items.filter(m => m.category === state.category);
+  }
+
+  // 2. Favorites-only toggle.
+  if (state.favoritesOnly) {
+    const favs = new Set(Store.getFavorites());
+    items = items.filter(m => favs.has(m.id));
+  }
+
+  // 3. Text search — case-insensitive substring over name + description
+  //    + category label, the way food-ordering search behaves (type
+  //    "choc" → Chocolate Cookie; "iced" → all iced drinks).
+  const q = (state.search || '').trim().toLowerCase();
+  if (q) {
+    items = items.filter(m => {
+      const hay = `${m.name} ${m.desc || ''} ${m.category || ''} ${m.tag || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  // 4. Sort.
+  switch (state.sort) {
+    case 'price-asc':  items.sort((a, b) => a.price - b.price); break;
+    case 'price-desc': items.sort((a, b) => b.price - a.price); break;
+    case 'name':       items.sort((a, b) => a.name.localeCompare(b.name)); break;
+    // 'relevance' = leave in menu (curated) order, except when searching
+    // we surface name-start matches first so the best hit leads.
+    default:
+      if (q) {
+        items.sort((a, b) => {
+          const as = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+          const bs = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+          return as - bs;
+        });
+      }
+  }
+  return items;
+}
+
+/* Context-appropriate empty-state copy so a no-results view explains
+   WHY it's empty (bad search vs. no favorites vs. empty category). */
+function emptyMenuMessage() {
+  const q = (state.search || '').trim();
+  if (q)                 return `No items match “${escapeHtml(q)}”. Try another search.`;
+  if (state.favoritesOnly) return 'No favorites yet. Tap the ♥ on any item to save it here.';
+  return 'No items in this category.';
+}
+
 function renderMenu() {
   // First real render replaces the boot-time skeleton; drop aria-busy
   // now that the grid reflects actual (possibly empty) menu data.
   menuGrid.removeAttribute('aria-busy');
 
-  const items = state.category === 'all'
-    ? MENU
-    : MENU.filter(m => m.category === state.category);
+  const items = filterMenuItems();
 
   if (items.length === 0) {
-    menuGrid.innerHTML = `<p class="empty-state" style="grid-column:1/-1">No items in this category.</p>`;
+    menuGrid.innerHTML =
+      `<p class="empty-state" style="grid-column:1/-1">${emptyMenuMessage()}</p>`;
     return;
   }
 
-  menuGrid.innerHTML = items.map(item => `
+  menuGrid.innerHTML = items.map(item => {
+    const faved = Store.isFavorite(item.id);
+    return `
     <article class="product-card" data-id="${item.id}"
              role="button" tabindex="0"
              aria-label="Customize and add ${escapeHtml(item.name)}, ${peso(item.price)}">
       <div class="placeholder-img" aria-hidden="true">
         ${thumbMarkup(item, { alt: item.name })}
       </div>
+      <button type="button" class="fav-heart${faved ? ' is-fav' : ''}"
+              data-fav="${escapeHtml(item.id)}"
+              aria-pressed="${faved}"
+              aria-label="${faved ? 'Remove from' : 'Add to'} favorites">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 21s-7.5-4.6-10-9.3C.4 8.4 1.9 4.9 5.2 4.3 7.3 3.9 9.3 5 12 7.6 14.7 5 16.7 3.9 18.8 4.3c3.3.6 4.8 4.1 3.2 7.4C19.5 16.4 12 21 12 21z"/>
+        </svg>
+      </button>
       <div class="product-body">
         ${item.tag ? `<span class="tag">${escapeHtml(item.tag)}</span>` : ''}
         <h3>${escapeHtml(item.name)}</h3>
@@ -113,7 +182,8 @@ function renderMenu() {
         </div>
       </div>
     </article>
-  `).join('');
+  `;
+  }).join('');
   updateInCartBadges();
 }
 
@@ -153,6 +223,168 @@ function renderCategoryChips() {
   nav.innerHTML = chip('all', 'All') + cats.map(c => chip(c.id, c.label)).join('');
 }
 
+/* ==========================================================
+   FILTERS  (desktop sidebar + mobile bottom sheet)
+   Both surfaces render the SAME control markup via renderFilters()
+   into their respective host (#sidebarFilters / #sheetFilters), and
+   a single delegated handler on each host drives category, sort, and
+   favorites. Keeping one markup builder avoids the two surfaces
+   drifting out of sync.
+   ========================================================== */
+const SORT_OPTIONS = [
+  { id: 'relevance',  label: 'Relevance' },
+  { id: 'price-asc',  label: 'Price: low to high' },
+  { id: 'price-desc', label: 'Price: high to low' },
+  { id: 'name',       label: 'Name (A–Z)' },
+];
+
+function filtersMarkup() {
+  const cats = Store.getCategories();
+  const favN = Store.favoriteCount();
+
+  const catRow = (id, label) => `
+    <button type="button" class="filter-cat${state.category === id ? ' active' : ''}"
+            data-filter-cat="${escapeHtml(id)}">
+      <span>${escapeHtml(label)}</span>
+    </button>`;
+
+  const sortRow = (o) => `
+    <label class="filter-radio">
+      <input type="radio" name="menuSort" value="${o.id}" ${state.sort === o.id ? 'checked' : ''}>
+      <span>${escapeHtml(o.label)}</span>
+    </label>`;
+
+  return `
+    <section class="filter-group">
+      <h4 class="filter-title">Categories</h4>
+      <div class="filter-cats">
+        ${catRow('all', 'All items')}
+        ${cats.map(c => catRow(c.id, c.label)).join('')}
+      </div>
+    </section>
+
+    <section class="filter-group">
+      <h4 class="filter-title">Sort by</h4>
+      <div class="filter-sorts">
+        ${SORT_OPTIONS.map(sortRow).join('')}
+      </div>
+    </section>
+
+    <section class="filter-group">
+      <button type="button"
+              class="filter-fav-toggle${state.favoritesOnly ? ' on' : ''}${favN ? ' has-favs' : ''}"
+              data-fav-toggle
+              aria-pressed="${state.favoritesOnly}">
+        <span class="ff-heart" aria-hidden="true">♥</span>
+        <span class="ff-label">Favorites only</span>
+        <span class="ff-count" data-fav-count>${favN}</span>
+      </button>
+    </section>`;
+}
+
+function renderFilters() {
+  ['#sidebarFilters', '#sheetFilters'].forEach(sel => {
+    const host = $(sel);
+    if (host) host.innerHTML = filtersMarkup();
+  });
+  refreshFilterActiveDot();
+}
+
+/* Delegated handler shared by both filter hosts. */
+function onFilterHostClick(e) {
+  const cat = e.target.closest('[data-filter-cat]');
+  if (cat) { setCategory(cat.dataset.filterCat); return; }
+
+  const favToggle = e.target.closest('[data-fav-toggle]');
+  if (favToggle) {
+    state.favoritesOnly = !state.favoritesOnly;
+    renderFilters();
+    renderMenu();
+    return;
+  }
+}
+function onFilterHostChange(e) {
+  const radio = e.target.closest('input[name="menuSort"]');
+  if (radio) {
+    state.sort = radio.value;
+    renderFilters();
+    renderMenu();
+  }
+}
+
+/* Shows a dot on the mobile "Filters" button when any non-default
+   filter is active, so users know a filter is narrowing results. */
+function refreshFilterActiveDot() {
+  const active = state.category !== 'all' || state.sort !== 'relevance' || state.favoritesOnly;
+  const dot = $('#filterActiveDot');
+  if (dot) dot.hidden = !active;
+}
+
+/* ----- Mobile filter sheet open/close ----- */
+function openFilterSheet() {
+  const sheet = $('#filterSheet'), back = $('#filterSheetBackdrop');
+  if (!sheet) return;
+  back.hidden = false; sheet.hidden = false;
+  requestAnimationFrame(() => { back.classList.add('open'); sheet.classList.add('open'); });
+  document.body.style.overflow = 'hidden';
+}
+function closeFilterSheet() {
+  const sheet = $('#filterSheet'), back = $('#filterSheetBackdrop');
+  if (!sheet) return;
+  back.classList.remove('open'); sheet.classList.remove('open');
+  document.body.style.overflow = '';
+  setTimeout(() => { back.hidden = true; sheet.hidden = true; }, 260);
+}
+
+function wireFilters() {
+  $('#sidebarFilters')?.addEventListener('click', onFilterHostClick);
+  $('#sidebarFilters')?.addEventListener('change', onFilterHostChange);
+  $('#sheetFilters')?.addEventListener('click', onFilterHostClick);
+  $('#sheetFilters')?.addEventListener('change', onFilterHostChange);
+
+  $('#filterOpenBtn')?.addEventListener('click', openFilterSheet);
+  $('#filterSheetClose')?.addEventListener('click', closeFilterSheet);
+  $('#filterSheetBackdrop')?.addEventListener('click', closeFilterSheet);
+  $('#filterDoneBtn')?.addEventListener('click', closeFilterSheet);
+  $('#filterClearBtn')?.addEventListener('click', () => {
+    state.category = 'all'; state.sort = 'relevance'; state.favoritesOnly = false;
+    $$('.chip', $('#categoryChips')).forEach(c =>
+      c.classList.toggle('active', c.dataset.category === 'all'));
+    renderFilters(); renderMenu();
+  });
+
+  // Drag-to-dismiss the sheet.
+  wireSheetDrag();
+}
+
+/* Lightweight drag-down-to-close on the sheet handle. */
+function wireSheetDrag() {
+  const sheet = $('#filterSheet'), handle = $('#filterSheetHandle');
+  if (!sheet || !handle) return;
+  let startY = 0, dy = 0, dragging = false;
+  const onDown = (y) => { startY = y; dragging = true; sheet.style.transition = 'none'; };
+  const onMove = (y) => {
+    if (!dragging) return;
+    dy = Math.max(0, y - startY);
+    sheet.style.transform = `translateY(${dy}px)`;
+  };
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    sheet.style.transition = '';
+    sheet.style.transform = '';
+    if (dy > 90) closeFilterSheet();
+    dy = 0;
+  };
+  handle.addEventListener('touchstart', (e) => onDown(e.touches[0].clientY), { passive: true });
+  handle.addEventListener('touchmove',  (e) => onMove(e.touches[0].clientY), { passive: true });
+  handle.addEventListener('touchend', onUp);
+  handle.addEventListener('mousedown', (e) => { onDown(e.clientY);
+    const mm = (ev) => onMove(ev.clientY), mu = () => { onUp(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu);
+  });
+}
+
 /* Welcome band. Time-aware greeting + shop name + tagline + a live
    "customer favorite" chip (top best-seller from real order data).
    The reveal is enhancement-only: content is written first (so it's
@@ -172,8 +404,9 @@ function renderHero() {
     h < 22 ? 'Good evening ☕'  :
              'Winding down ☕';
   $('#heroGreeting').textContent = greeting;
-  $('#heroTitle').textContent    = CONFIG.shopName || 'OrderInn Coffee';
-  $('#heroTagline').textContent  = CONFIG.tagline || '';
+  // Logo replaces the old text name+tagline; keep it labeled for AT.
+  const logo = $('#heroLogo');
+  if (logo) logo.alt = CONFIG.shopName || 'OrderInn Coffee';
 
   // Live favorite — the #1 best-seller (falls back to the first menu
   // item when there's no order history yet). Hidden if the menu is empty.
@@ -236,18 +469,94 @@ $('#categoryChips').addEventListener('click', (e) => {
   const chip = e.target.closest('.chip');
   if (!chip) return;
   if (chip.dataset.category === state.category) return;   // no-op, no reflow
-  $$('.chip', $('#categoryChips')).forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-  state.category = chip.dataset.category;
-  renderMenu();
+  setCategory(chip.dataset.category);
   alignMenuUnderChips();
 });
 
+/* Single entry point for changing category — keeps the chip row and
+   the sidebar/sheet category lists in sync, then re-renders. */
+function setCategory(id) {
+  state.category = id;
+  $$('.chip', $('#categoryChips')).forEach(c =>
+    c.classList.toggle('active', c.dataset.category === id));
+  renderFilters();     // reflect active category in sidebar + sheet
+  renderMenu();
+}
+
+/* ==========================================================
+   MENU SEARCH
+   ========================================================== */
+const menuSearchEl = $('#menuSearch');
+const menuSearchClear = $('#menuSearchClear');
+if (menuSearchEl) {
+  menuSearchEl.addEventListener('input', () => {
+    state.search = menuSearchEl.value;
+    menuSearchClear.hidden = !menuSearchEl.value;
+    renderMenu();
+  });
+  // Esc clears the field (standard search behavior).
+  menuSearchEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && menuSearchEl.value) { e.preventDefault(); clearMenuSearch(); }
+  });
+  menuSearchClear.addEventListener('click', clearMenuSearch);
+}
+function clearMenuSearch() {
+  state.search = '';
+  if (menuSearchEl) menuSearchEl.value = '';
+  if (menuSearchClear) menuSearchClear.hidden = true;
+  renderMenu();
+  if (menuSearchEl) menuSearchEl.focus();
+}
+
 menuGrid.addEventListener('click', (e) => {
+  // Favorite heart — handle first and swallow the click so it doesn't
+  // bubble up to the card and open the customizer.
+  const heart = e.target.closest('.fav-heart');
+  if (heart) {
+    e.stopPropagation();
+    toggleFavorite(heart.dataset.fav, heart);
+    return;
+  }
   const card = e.target.closest('.product-card');
   if (!card) return;
   openCustomizer(card.dataset.id);
 });
+
+/* Toggle a product's favorite state, update the heart's visual +
+   a11y state, and replay the pop animation. Also refreshes the
+   favorites filter count and re-renders if we're currently showing
+   the favorites-only view (so un-favoriting removes the card live). */
+function toggleFavorite(id, heartEl) {
+  const nowFav = Store.toggleFavorite(id);
+  // Update every heart for this id currently on screen (a product can
+  // appear in more than one place, e.g. future "order again" rails).
+  document.querySelectorAll(`.fav-heart[data-fav="${CSS.escape(id)}"]`).forEach(h => {
+    h.classList.toggle('is-fav', nowFav);
+    h.setAttribute('aria-pressed', String(nowFav));
+    h.setAttribute('aria-label', (nowFav ? 'Remove from' : 'Add to') + ' favorites');
+  });
+  // Replay the burst animation on the heart the user actually tapped.
+  if (heartEl && nowFav) {
+    heartEl.classList.remove('burst'); void heartEl.offsetWidth;
+    heartEl.classList.add('burst');
+  }
+  refreshFavFilterUI();
+  // If the favorites-only filter is active, un-favoriting should drop
+  // the card from the list immediately.
+  if (state.favoritesOnly) renderMenu();
+}
+
+/* Updates the favorites-filter control's count/label wherever it
+   appears (sidebar + mobile sheet). Defined here so toggleFavorite
+   can call it; the filter UI that it targets is built in the filter
+   feature. Safe no-op if those elements aren't present yet. */
+function refreshFavFilterUI() {
+  const n = Store.favoriteCount();
+  document.querySelectorAll('[data-fav-count]').forEach(el => { el.textContent = n; });
+  document.querySelectorAll('[data-fav-toggle]').forEach(el => {
+    el.classList.toggle('has-favs', n > 0);
+  });
+}
 
 /* Keyboard activation for the product cards. They're role="button"
    tabindex="0" (see renderMenu), so Enter/Space must open the
@@ -4332,6 +4641,7 @@ window.addEventListener('storage', (e) => {
     // Categories live in config — a new one added on another device
     // should appear in this tab's chips (and admin filter) too.
     renderCategoryChips();
+    renderFilters();    // categories may have changed
     renderHero();       // brand name / tagline / favorite may have changed
     renderMenu();
     if (!adminPanel.hidden && $('.admin-tab.active')?.dataset.adminTab === 'menu') {
@@ -5453,6 +5763,8 @@ async function boot() {
   // -state declarations it transitively touches are already initialized.
   setOrdersView(ordersView);
   renderCategoryChips();
+  renderFilters();
+  wireFilters();
   renderHero();
   renderMenu();
   updateCart();
@@ -5559,6 +5871,63 @@ window.addEventListener('resize', syncTopbarHeight);
   if (toTop) toTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 
   apply();
+})();
+
+/* ==========================================================
+   SCROLL-DIRECTION HEADER REVEAL  (mobile)
+   The header (topbar with logo, search jump, cart, account) hides
+   when the user scrolls DOWN so the menu gets full height, and comes
+   back when they scroll UP or PAUSE scrolling for a beat — the
+   standard food-app behavior. Desktop keeps the header always
+   visible (the sidebar layout needs no reveal).
+   ========================================================== */
+(function wireHeaderReveal() {
+  const view = $('#customerView');
+  if (!view) return;
+
+  const MOBILE = () => window.matchMedia('(max-width: 859px)').matches;
+  const HIDE_AFTER = 90;     // px scrolled before hiding is allowed (clear the hero)
+  const DELTA = 6;           // min move to count as a direction change
+  const PAUSE_MS = 650;      // deliberate stop → reveal after this idle time
+                             // (long enough that a brief pause mid-scroll
+                             //  doesn't flash the header back in)
+
+  let lastY = window.scrollY;
+  let ticking = false;
+  let pauseTimer = null;
+
+  function hide() { view.classList.add('header-hidden'); }
+  function show() { view.classList.remove('header-hidden'); }
+
+  function onScroll() {
+    const y = Math.max(0, window.scrollY);
+
+    // Desktop: never hide.
+    if (!MOBILE()) { show(); lastY = y; return; }
+
+    // Always show near the very top.
+    if (y <= HIDE_AFTER) { show(); lastY = y; schedulePauseReveal(); return; }
+
+    const dy = y - lastY;
+    if (dy > DELTA)      hide();          // scrolling down
+    else if (dy < -DELTA) show();         // scrolling up
+    lastY = y;
+
+    schedulePauseReveal();
+  }
+
+  /* Reveal when scrolling stops for a moment (the "pause" behavior). */
+  function schedulePauseReveal() {
+    clearTimeout(pauseTimer);
+    pauseTimer = setTimeout(() => { if (MOBILE()) show(); }, PAUSE_MS);
+  }
+
+  window.addEventListener('scroll', () => {
+    if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; onScroll(); }); }
+  }, { passive: true });
+
+  // On resize into desktop, ensure the header is shown.
+  window.addEventListener('resize', () => { if (!MOBILE()) show(); });
 })();
 
 /* During pinch-zoom / rotate the layout viewport recalculates and

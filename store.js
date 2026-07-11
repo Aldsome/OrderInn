@@ -35,6 +35,7 @@ const STORE_KEYS = {
   pendingWrites:  'bb_pending_writes',  // queue of remote writes that haven't been flushed yet
   customer:       'bb_customer',        // signed-in customer profile { id, email, name }
   cartSession:    'bb_cart_session',    // { sessionId, restaurantId, cartItems, createdAt, expiresAt }
+  favorites:      'bb_favorites',       // array of favorited product ids (per-device, no login)
 };
 
 /* Single-restaurant deployment id — scopes the cart session so the same
@@ -113,56 +114,62 @@ const DEFAULT_CONFIG = {
   optionGroups: [],
 };
 
-const img = (topic, lock, w = 600, h = 420) =>
-  `https://loremflickr.com/${w}/${h}/${encodeURIComponent(topic)}?lock=${lock}`;
+/* Curated product photography. loremflickr's keyword lottery was
+   returning off-topic shots (a pink matcha box for "matcha", cookies
+   for "iced caramel"), which looks broken to a customer. Each product
+   now points at a HAND-PICKED, verified Unsplash photo so the image
+   always matches the item and reads like a real café's menu shot.
+   photo() builds a stable, sized Unsplash CDN URL from a photo id. */
+const photo = (id, w = 600, h = 420) =>
+  `https://images.unsplash.com/photo-${id}?w=${w}&h=${h}&fit=crop&crop=entropy&q=80`;
 
 const DEFAULT_MENU = [
   { id: 'c1', name: 'Classic Espresso',  category: 'coffee', price: 90,  emoji: '☕',
     desc: 'Bold double shot, rich crema.', tag: 'Bestseller',
-    img: img('espresso,coffee', 101),
+    img: photo('1510707577719-ae7c14805e3a'),
     options: { size: true, temp: false, milk: false, sugar: true } },
   { id: 'c2', name: 'Caramel Macchiato', category: 'coffee', price: 130, emoji: '☕',
     desc: 'Vanilla, caramel, layered milk.',
-    img: img('caramel,latte', 102),
+    img: photo('1572442388796-11668a67e53d'),
     options: { size: true, temp: true, milk: true, sugar: true } },
   { id: 'c3', name: 'Cafe Latte',        category: 'coffee', price: 120, emoji: '☕',
     desc: 'Smooth espresso with steamed milk.',
-    img: img('latte,coffeeart', 103),
+    img: photo('1503481766315-7a586b20f66d'),
     options: { size: true, temp: true, milk: true, sugar: true } },
   { id: 'c4', name: 'Spanish Latte',     category: 'coffee', price: 135, emoji: '☕',
     desc: 'Condensed milk + espresso.',
-    img: img('latte,coffee', 104),
+    img: photo('1541167760496-1628856ab772'),
     options: { size: true, temp: true, milk: true, sugar: true } },
 
   { id: 't1', name: 'Matcha Latte',      category: 'tea',    price: 140, emoji: '🍵',
     desc: 'Ceremonial matcha, vanilla cream.', tag: 'New',
-    img: img('matcha,green,tea', 201),
+    img: photo('1536256263959-770b48d82b0a'),
     options: { size: true, temp: true, milk: true, sugar: true } },
   { id: 't2', name: 'Jasmine Green',     category: 'tea',    price: 100, emoji: '🍵',
     desc: 'Hand-picked jasmine blossoms.',
-    img: img('greentea,teacup', 202),
+    img: photo('1627435601361-ec25f5b1d0e5'),
     options: { size: true, temp: true, milk: false, sugar: true } },
 
   { id: 'b1', name: 'Cold Brew',         category: 'cold',   price: 130, emoji: '🧊',
     desc: '12-hour steep, smooth.',
-    img: img('coldbrew,icedcoffee', 301),
+    img: photo('1517701550927-30cf4ba1dba5'),
     options: { size: true, temp: false, milk: true, sugar: true } },
   { id: 'b2', name: 'Iced Caramel',      category: 'cold',   price: 145, emoji: '🧊',
     desc: 'Iced espresso with caramel.',
-    img: img('icedcoffee,caramel', 302),
+    img: photo('1517701550927-30cf4ba1dba5', 601, 421),
     options: { size: true, temp: false, milk: true, sugar: true } },
 
   { id: 'p1', name: 'Butter Croissant',  category: 'pastry', price: 75,  emoji: '🥐',
     desc: 'Flaky, golden, baked daily.',
-    img: img('croissant,bread', 401),
+    img: photo('1555507036-ab1f4038808a'),
     options: { size: false, temp: false, milk: false, sugar: false } },
   { id: 'p2', name: 'Chocolate Cookie',  category: 'pastry', price: 55,  emoji: '🍪',
     desc: 'Gooey center, sea-salt finish.',
-    img: img('cookie,chocolate', 402),
+    img: photo('1499636136210-6f4ee915583e'),
     options: { size: false, temp: false, milk: false, sugar: false } },
   { id: 'p3', name: 'Strawberry Tart',   category: 'pastry', price: 110, emoji: '🍰',
     desc: 'Vanilla custard, fresh berries.',
-    img: img('tart,strawberry', 403),
+    img: photo('1565958011703-44f9829ba187'),
     options: { size: false, temp: false, milk: false, sugar: false } },
 ];
 
@@ -658,6 +665,22 @@ const Store = {
   getMenu()        { return readJSON(STORE_KEYS.menu, DEFAULT_MENU); },
   setMenu(menu)    { return writeJSON(STORE_KEYS.menu, menu); },
   resetMenu()      { localStorage.removeItem(STORE_KEYS.menu); },
+
+  /* ----- Favorites (per-device, no login required) -----
+     A plain array of product ids kept in localStorage so any guest
+     can favorite instantly. Stale ids (for items later removed from
+     the menu) are harmless — callers filter against the live menu. */
+  getFavorites()      { return readJSON(STORE_KEYS.favorites, []); },
+  isFavorite(id)      { return Store.getFavorites().includes(id); },
+  toggleFavorite(id) {
+    const favs = Store.getFavorites();
+    const idx  = favs.indexOf(id);
+    if (idx === -1) favs.push(id);
+    else            favs.splice(idx, 1);
+    writeJSON(STORE_KEYS.favorites, favs);
+    return idx === -1;              // true = now favorited, false = un-favorited
+  },
+  favoriteCount()     { return Store.getFavorites().length; },
   upsertMenuItem(item) {
     const menu = Store.getMenu();
     const idx  = menu.findIndex(m => m.id === item.id);

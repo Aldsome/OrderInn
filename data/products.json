@@ -7,8 +7,13 @@
     "emoji": "☕",
     "desc": "Bold double shot, rich crema.",
     "tag": "Bestseller",
-    "img": "https://loremflickr.com/600/420/espresso%2Ccoffee?lock=101",
-    "options": { "size": true, "temp": false, "milk": false, "sugar": true }
+    "img": "https://images.unsplash.com/photo-1510707577719-ae7c14805e3a?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": true,
+      "temp": false,
+      "milk": false,
+      "sugar": true
+    }
   },
   {
     "id": "c2",
@@ -17,8 +22,13 @@
     "price": 130,
     "emoji": "☕",
     "desc": "Vanilla, caramel, layered milk.",
-    "img": "https://loremflickr.com/600/420/caramel%2Clatte?lock=102",
-    "options": { "size": true, "temp": true, "milk": true, "sugar": true }
+    "img": "https://images.unsplash.com/photo-1572442388796-11668a67e53d?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": true,
+      "temp": true,
+      "milk": true,
+      "sugar": true
+    }
   },
   {
     "id": "c3",
@@ -27,8 +37,13 @@
     "price": 120,
     "emoji": "☕",
     "desc": "Smooth espresso with steamed milk.",
-    "img": "https://loremflickr.com/600/420/latte%2Ccoffeeart?lock=103",
-    "options": { "size": true, "temp": true, "milk": true, "sugar": true }
+    "img": "https://images.unsplash.com/photo-1503481766315-7a586b20f66d?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": true,
+      "temp": true,
+      "milk": true,
+      "sugar": true
+    }
   },
   {
     "id": "c4",
@@ -37,8 +52,13 @@
     "price": 135,
     "emoji": "☕",
     "desc": "Condensed milk + espresso.",
-    "img": "https://loremflickr.com/600/420/latte%2Ccoffee?lock=104",
-    "options": { "size": true, "temp": true, "milk": true, "sugar": true }
+    "img": "https://images.unsplash.com/photo-1541167760496-1628856ab772?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": true,
+      "temp": true,
+      "milk": true,
+      "sugar": true
+    }
   },
   {
     "id": "t1",
@@ -48,8 +68,13 @@
     "emoji": "🍵",
     "desc": "Ceremonial matcha, vanilla cream.",
     "tag": "New",
-    "img": "https://loremflickr.com/600/420/matcha%2Cgreen%2Ctea?lock=201",
-    "options": { "size": true, "temp": true, "milk": true, "sugar": true }
+    "img": "https://images.unsplash.com/photo-1536256263959-770b48d82b0a?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": true,
+      "temp": true,
+      "milk": true,
+      "sugar": true
+    }
   },
   {
     "id": "t2",
@@ -58,8 +83,13 @@
     "price": 100,
     "emoji": "🍵",
     "desc": "Hand-picked jasmine blossoms.",
-    "img": "https://loremflickr.com/600/420/greentea%2Cteacup?lock=202",
-    "options": { "size": true, "temp": true, "milk": false, "sugar": true }
+    "img": "https://images.unsplash.com/photo-1627435601361-ec25f5b1d0e5?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": true,
+      "temp": true,
+      "milk": false,
+      "sugar": true
+    }
   },
   {
     "id": "b1",
@@ -68,8 +98,13 @@
     "price": 130,
     "emoji": "🧊",
     "desc": "12-hour steep, smooth.",
-    "img": "https://loremflickr.com/600/420/coldbrew%2Cicedcoffee?lock=301",
-    "options": { "size": true, "temp": false, "milk": true, "sugar": true }
+    "img": "https://images.unsplash.com/photo-1517701550927-30cf4ba1dba5?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": true,
+      "temp": false,
+      "milk": true,
+      "sugar": true
+    }
   },
   {
     "id": "b2",
@@ -78,8 +113,13 @@
     "price": 145,
     "emoji": "🧊",
     "desc": "Iced espresso with caramel.",
-    "img": "https://loremflickr.com/600/420/icedcoffee%2Ccaramel?lock=302",
-    "options": { "size": true, "temp": false, "milk": true, "sugar": true }
+    "img": "https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": true,
+      "temp": false,
+      "milk": true,
+      "sugar": true
+    }
   },
   {
     "id": "p1",
@@ -88,8 +128,13 @@
     "price": 75,
     "emoji": "🥐",
     "desc": "Flaky, golden, baked daily.",
-    "img": "https://loremflickr.com/600/420/croissant%2Cbread?lock=401",
-    "options": { "size": false, "temp": false, "milk": false, "sugar": false }
+    "img": "https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": false,
+      "temp": false,
+      "milk": false,
+      "sugar": false
+    }
   },
   {
     "id": "p2",
@@ -98,8 +143,13 @@
     "price": 55,
     "emoji": "🍪",
     "desc": "Gooey center, sea-salt finish.",
-    "img": "https://loremflickr.com/600/420/cookie%2Cchocolate?lock=402",
-    "options": { "size": false, "temp": false, "milk": false, "sugar": false }
+    "img": "https://images.unsplash.com/photo-1499636136210-6f4ee915583e?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": false,
+      "temp": false,
+      "milk": false,
+      "sugar": false
+    }
   },
   {
     "id": "p3",
@@ -108,7 +158,12 @@
     "price": 110,
     "emoji": "🍰",
     "desc": "Vanilla custard, fresh berries.",
-    "img": "https://loremflickr.com/600/420/tart%2Cstrawberry?lock=403",
-    "options": { "size": false, "temp": false, "milk": false, "sugar": false }
+    "img": "https://images.unsplash.com/photo-1565958011703-44f9829ba187?w=600&h=420&fit=crop&crop=entropy&q=80",
+    "options": {
+      "size": false,
+      "temp": false,
+      "milk": false,
+      "sugar": false
+    }
   }
 ]

@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=70" />
+  <link rel="stylesheet" href="style.css?v=72" />
 
   <script>
     (function () {
@@ -184,16 +184,16 @@
     </button>
 
     <!-- Welcome band — the first-impression moment. A time-aware
-         greeting, the shop name as a display headline (the brand's one
-         real moment; the topbar mark is tiny), the tagline, and a live
-         "customer favorite" chip pulled from real order data. Sits in
-         normal flow so it scrolls away as the customer starts browsing —
-         present on arrival, out of the way during the task. Populated by
-         renderHero() in script.js. -->
+         greeting, the brand LOGO (replaces the old text name+tagline),
+         and a live "customer favorite" chip pulled from real order data.
+         Sits in normal flow so it scrolls away as the customer starts
+         browsing — present on arrival, out of the way during the task.
+         Populated by renderHero() in script.js. -->
     <section class="hero container" id="hero" aria-label="Welcome">
       <p class="hero-greeting" id="heroGreeting"></p>
-      <h1 class="hero-title" id="heroTitle"></h1>
-      <p class="hero-tagline" id="heroTagline"></p>
+      <h1 class="hero-title">
+        <img class="hero-logo" id="heroLogo" src="icon/logo-web.png" alt="" />
+      </h1>
       <button type="button" class="hero-fav" id="heroFav" hidden>
         <span class="hero-fav-thumb" id="heroFavThumb" aria-hidden="true"></span>
         <span class="hero-fav-text">
@@ -204,27 +204,80 @@
       </button>
     </section>
 
-    <!-- Category chips -->
-    <nav class="chips container" id="categoryChips" aria-label="Menu categories">
-      <!-- chips injected via script.js from the data-driven category list -->
-    </nav>
-
-    <!-- Menu grid. Starts with skeleton placeholders so there's an
-         immediate visual signal that the menu is loading (not stuck)
-         while boot() awaits the Supabase fetch; renderMenu() replaces
-         this innerHTML wholesale once real data arrives. -->
-    <main class="menu container" id="menuGrid" aria-busy="true">
-      <div class="menu-skeleton" aria-hidden="true">
-        <div class="skeleton-card"></div>
-        <div class="skeleton-card"></div>
-        <div class="skeleton-card"></div>
-        <div class="skeleton-card"></div>
+    <!-- Search bar — live-filters the menu by name/description as you
+         type. Sits above the menu area at container width. -->
+    <div class="search-bar container">
+      <div class="search-field">
+        <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+          <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <input type="search" id="menuSearch" autocomplete="off"
+               placeholder="Search the menu…" aria-label="Search the menu" />
+        <button type="button" class="search-clear" id="menuSearchClear" hidden aria-label="Clear search">✕</button>
       </div>
-      <p class="menu-loading-note">
-        <span class="spinner" aria-hidden="true"></span>
-        Loading menu…
-      </p>
-    </main>
+    </div>
+
+    <!-- Mobile filter bar — horizontal category chips for quick access
+         + a Filters button that opens the bottom sheet (sort + more).
+         Hidden on desktop, where the left sidebar takes over. -->
+    <div class="filter-bar container" id="filterBar">
+      <button type="button" class="filter-open-btn" id="filterOpenBtn" aria-haspopup="dialog">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16">
+          <path fill="currentColor" d="M3 5h18v2l-7 7v5l-4 2v-9L3 7z"/>
+        </svg>
+        <span>Filters</span>
+        <span class="filter-open-dot" id="filterActiveDot" hidden></span>
+      </button>
+      <!-- Category chips injected via script.js from the data-driven list -->
+      <nav class="chips" id="categoryChips" aria-label="Menu categories"></nav>
+    </div>
+
+    <!-- Two-column menu layout: left filter sidebar (desktop) + grid. -->
+    <div class="menu-layout container">
+      <!-- Desktop filter sidebar — categories + sort + favorites.
+           Sticky so it stays in view while the menu scrolls. Its
+           controls are cloned/shared with the mobile sheet via
+           renderFilters(). -->
+      <aside class="menu-sidebar" id="menuSidebar" aria-label="Filters">
+        <div class="filters-host" id="sidebarFilters"></div>
+      </aside>
+
+      <!-- Menu grid. Starts with skeleton placeholders so there's an
+           immediate visual signal that the menu is loading (not stuck)
+           while boot() awaits the Supabase fetch; renderMenu() replaces
+           this innerHTML wholesale once real data arrives. -->
+      <main class="menu" id="menuGrid" aria-busy="true">
+        <div class="menu-skeleton" aria-hidden="true">
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+        </div>
+        <p class="menu-loading-note">
+          <span class="spinner" aria-hidden="true"></span>
+          Loading menu…
+        </p>
+      </main>
+    </div>
+
+    <!-- Mobile filter bottom sheet — slides up from the bottom with the
+         full filter set (categories + sort + favorites). Drag handle at
+         top; tap backdrop or Done to dismiss. Populated by renderFilters(). -->
+    <div class="filter-sheet-backdrop" id="filterSheetBackdrop" hidden></div>
+    <div class="filter-sheet" id="filterSheet" role="dialog" aria-modal="true"
+         aria-label="Filters" hidden>
+      <div class="filter-sheet-handle" id="filterSheetHandle" aria-hidden="true"></div>
+      <header class="filter-sheet-head">
+        <strong>Filters</strong>
+        <button type="button" class="icon-btn close-btn" id="filterSheetClose" aria-label="Close filters">✕</button>
+      </header>
+      <div class="filter-sheet-body filters-host" id="sheetFilters"></div>
+      <footer class="filter-sheet-foot">
+        <button type="button" class="btn btn-ghost" id="filterClearBtn">Clear all</button>
+        <button type="button" class="btn btn-primary" id="filterDoneBtn">Show results</button>
+      </footer>
+    </div>
 
     <!-- Floating "My orders" pill — appears when this customer
          has any orders in flight. Tapping it opens a scrollable
