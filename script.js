@@ -404,9 +404,12 @@ function renderHero() {
     h < 22 ? 'Good evening ☕'  :
              'Winding down ☕';
   $('#heroGreeting').textContent = greeting;
-  // Logo replaces the old text name+tagline; keep it labeled for AT.
-  const logo = $('#heroLogo');
-  if (logo) logo.alt = CONFIG.shopName || 'OrderInn Coffee';
+  // Brand logo lives in the topbar now; the hero leads with a warm
+  // welcome line + the shop tagline.
+  const title = $('#heroTitle');
+  if (title) title.textContent = `Welcome to ${CONFIG.shopName || 'OrderInn Coffee'}`;
+  const tagline = $('#heroTagline');
+  if (tagline) tagline.textContent = CONFIG.tagline || '';
 
   // Live favorite — the #1 best-seller (falls back to the first menu
   // item when there's no order history yet). Hidden if the menu is empty.
@@ -5811,15 +5814,24 @@ async function boot() {
    cover the chips. ResizeObserver tracks every height change. */
 function syncTopbarHeight() {
   const topbar = $('.topbar');
-  if (!topbar) return;
-  const h = Math.round(topbar.getBoundingClientRect().height);
-  document.documentElement.style.setProperty('--topbar-h', h + 'px');
+  if (topbar) {
+    const h = Math.round(topbar.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--topbar-h', h + 'px');
+  }
+  // The sticky search bar pins below the topbar; the filter bar pins
+  // below the search bar. Measure the search bar so the filter bar's
+  // offset (top: topbar-h + search-h) tracks its real height.
+  const search = $('.search-bar');
+  if (search) {
+    const sh = Math.round(search.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--search-h', sh + 'px');
+  }
 }
 if (typeof ResizeObserver !== 'undefined') {
   const ro = new ResizeObserver(syncTopbarHeight);
   document.addEventListener('DOMContentLoaded', () => {
-    const topbar = $('.topbar');
-    if (topbar) ro.observe(topbar);
+    const topbar = $('.topbar');   if (topbar) ro.observe(topbar);
+    const search = $('.search-bar'); if (search) ro.observe(search);
   });
 }
 window.addEventListener('resize', syncTopbarHeight);

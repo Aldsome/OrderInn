@@ -295,8 +295,10 @@ function adminPanelOpenForToasts() {
    ========================================================== */
 function applyConfigToDOM() {
   document.title = `${CONFIG.shopName} — Order`;
-  $('#brandName').textContent    = CONFIG.shopName;
-  $('#brandTagline').textContent = CONFIG.tagline;
+  const bn = $('#brandName');    if (bn) bn.textContent = CONFIG.shopName;
+  const bt = $('#brandTagline'); if (bt) bt.textContent = CONFIG.tagline;
+  // Keep the topbar logo labeled with the (possibly rebranded) name.
+  const bl = $('#brandLogo');    if (bl) bl.alt = CONFIG.shopName || 'OrderInn';
   // Logo initials follow the shop name automatically, so a rebrand
   // from Settings updates every brand mark on the page — no more
   // hardcoded letters to hunt down.

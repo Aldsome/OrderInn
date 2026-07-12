@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=72" />
+  <link rel="stylesheet" href="style.css?v=73" />
 
   <script>
     (function () {
@@ -88,8 +88,11 @@
     <header class="topbar">
       <div class="container topbar-row">
         <div class="brand">
-          <span class="brand-mark">OI</span>
-          <div>
+          <img class="brand-logo" id="brandLogo" src="icon/logo-web.png" alt="OrderInn Coffee" />
+          <!-- Fallback text brand (hidden while the logo image is used;
+               kept in the DOM so applyConfigToDOM's rebrand still works
+               and screen readers have a text name). -->
+          <div class="brand-text" hidden>
             <strong class="brand-name" id="brandName">OrderInn Coffee</strong>
             <small class="brand-tagline" id="brandTagline">Freshly brewed, locally loved.</small>
           </div>
@@ -184,16 +187,15 @@
     </button>
 
     <!-- Welcome band — the first-impression moment. A time-aware
-         greeting, the brand LOGO (replaces the old text name+tagline),
-         and a live "customer favorite" chip pulled from real order data.
-         Sits in normal flow so it scrolls away as the customer starts
-         browsing — present on arrival, out of the way during the task.
+         greeting + shop tagline, and a live "customer favorite" chip
+         pulled from real order data. The brand logo lives in the topbar
+         now, so the hero leads with the greeting instead. Sits in normal
+         flow so it scrolls away as the customer starts browsing.
          Populated by renderHero() in script.js. -->
     <section class="hero container" id="hero" aria-label="Welcome">
       <p class="hero-greeting" id="heroGreeting"></p>
-      <h1 class="hero-title">
-        <img class="hero-logo" id="heroLogo" src="icon/logo-web.png" alt="" />
-      </h1>
+      <h1 class="hero-title" id="heroTitle"></h1>
+      <p class="hero-tagline" id="heroTagline"></p>
       <button type="button" class="hero-fav" id="heroFav" hidden>
         <span class="hero-fav-thumb" id="heroFavThumb" aria-hidden="true"></span>
         <span class="hero-fav-text">
