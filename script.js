@@ -5836,110 +5836,25 @@ if (typeof ResizeObserver !== 'undefined') {
 }
 window.addEventListener('resize', syncTopbarHeight);
 
-/* Customer topbar → pull-down on deep scroll.
-   Past 30vh the topbar slides up out of view and a small handle tab
-   appears; tapping it pulls the real topbar (shop name + table strip)
-   back down as an overlay. Near the top it reverts (hysteresis avoids
-   boundary flicker), and the open state resets. A separate right-side
-   back-to-top button appears on deeper scrolls. All fixed transforms,
-   so document flow never shifts. */
-(function wireScrollNav() {
-  const view   = $('#customerView');
-  const handle = $('#navHandle');
-  const toTop  = $('#backToTop');
-  if (!view || !handle) return;
-  let docked = false, open = false, ticking = false, lastY = window.scrollY;
-  const dockAt = () => window.innerHeight * 0.30;
-  const topAt  = () => window.innerHeight * 0.60;
-
-  function setOpen(on) {
-    open = on;
-    view.classList.toggle('nav-open', on);
-    handle.setAttribute('aria-expanded', String(on));
-    handle.setAttribute('aria-label', on ? 'Hide navigation bar' : 'Show navigation bar');
-  }
-  function setDocked(on) {
-    if (on === docked) return;
-    docked = on;
-    view.classList.toggle('nav-docked', on);
-    if (!on) setOpen(false);        // reset the pulled-open override on revert
-  }
+/* Back-to-top button — appears once the customer has scrolled well
+   down the page (both mobile and desktop), scrolls smoothly to top on
+   click. The topbar itself is a plain fixed/sticky header now (no
+   hide-on-scroll, no peek-handle) — it stays visible at all times. */
+(function wireBackToTop() {
+  const toTop = $('#backToTop');
+  if (!toTop) return;
+  let ticking = false;
+  const topAt = () => window.innerHeight * 0.60;
   function apply() {
     ticking = false;
-    const y = window.scrollY;
-    if (!docked && y > dockAt())            setDocked(true);
-    else if (docked && y < dockAt() * 0.8)  setDocked(false);   // hysteresis
-    // The pulled-open topbar is a peek — any real scroll tucks it back.
-    if (open && Math.abs(y - lastY) > 4)    setOpen(false);
-    if (toTop) toTop.classList.toggle('show', y > topAt());
-    lastY = y;
+    toTop.classList.toggle('show', window.scrollY > topAt());
   }
   window.addEventListener('scroll', () => {
     if (!ticking) { ticking = true; requestAnimationFrame(apply); }
   }, { passive: true });
   window.addEventListener('resize', apply);
-
-  handle.addEventListener('click', () => setOpen(!open));
-  if (toTop) toTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
-
+  toTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
   apply();
-})();
-
-/* ==========================================================
-   SCROLL-DIRECTION HEADER REVEAL  (mobile)
-   The header (topbar with logo, search jump, cart, account) hides
-   when the user scrolls DOWN so the menu gets full height, and comes
-   back when they scroll UP or PAUSE scrolling for a beat — the
-   standard food-app behavior. Desktop keeps the header always
-   visible (the sidebar layout needs no reveal).
-   ========================================================== */
-(function wireHeaderReveal() {
-  const view = $('#customerView');
-  if (!view) return;
-
-  const MOBILE = () => window.matchMedia('(max-width: 859px)').matches;
-  const HIDE_AFTER = 90;     // px scrolled before hiding is allowed (clear the hero)
-  const DELTA = 6;           // min move to count as a direction change
-  const PAUSE_MS = 650;      // deliberate stop → reveal after this idle time
-                             // (long enough that a brief pause mid-scroll
-                             //  doesn't flash the header back in)
-
-  let lastY = window.scrollY;
-  let ticking = false;
-  let pauseTimer = null;
-
-  function hide() { view.classList.add('header-hidden'); }
-  function show() { view.classList.remove('header-hidden'); }
-
-  function onScroll() {
-    const y = Math.max(0, window.scrollY);
-
-    // Desktop: never hide.
-    if (!MOBILE()) { show(); lastY = y; return; }
-
-    // Always show near the very top.
-    if (y <= HIDE_AFTER) { show(); lastY = y; schedulePauseReveal(); return; }
-
-    const dy = y - lastY;
-    if (dy > DELTA)      hide();          // scrolling down
-    else if (dy < -DELTA) show();         // scrolling up
-    lastY = y;
-
-    schedulePauseReveal();
-  }
-
-  /* Reveal when scrolling stops for a moment (the "pause" behavior). */
-  function schedulePauseReveal() {
-    clearTimeout(pauseTimer);
-    pauseTimer = setTimeout(() => { if (MOBILE()) show(); }, PAUSE_MS);
-  }
-
-  window.addEventListener('scroll', () => {
-    if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; onScroll(); }); }
-  }, { passive: true });
-
-  // On resize into desktop, ensure the header is shown.
-  window.addEventListener('resize', () => { if (!MOBILE()) show(); });
 })();
 
 /* During pinch-zoom / rotate the layout viewport recalculates and

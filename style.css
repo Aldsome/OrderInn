@@ -385,6 +385,10 @@ select option,
 
 /* ==========================================================
    TOPBAR
+   A plain fixed header: sticky at the top of the viewport on both
+   mobile and desktop, always visible — no hide-on-scroll, no peek
+   handle. `position: sticky; top: 0` alone keeps it pinned through
+   scroll without any JS driving its visibility.
    ========================================================== */
 .topbar {
   position: sticky;
@@ -393,39 +397,8 @@ select option,
   backdrop-filter: saturate(160%) blur(10px);
   border-bottom: 1px solid var(--line);
   z-index: 30;
-  transition: transform .32s cubic-bezier(.4, .2, .2, 1), opacity .26s ease;
-}
-/* Docked: the topbar slides up out of view, leaving just the pull
-   handle. transform keeps it in flow (no layout jump). */
-.nav-docked .topbar {
-  transform: translateY(-100%);
-  pointer-events: none;
-}
-/* Pulled open: the real topbar (shop name + table strip) slides back
-   down as an overlay above the category chips. */
-.nav-docked.nav-open .topbar {
-  transform: translateY(0);
-  pointer-events: auto;
 }
 [data-theme="dark"] .topbar { background: rgba(26, 20, 14, .92); }
-
-/* Scroll-direction reveal (mobile): the header slides up when the
-   user scrolls DOWN and slides back when they scroll UP or pause.
-   Driven by .header-hidden on #customerView (see wireHeaderReveal).
-   Only active on mobile — on desktop the sticky sidebar layout keeps
-   the header always visible. Takes precedence over the older
-   nav-dock peek by also neutralizing that transform below. */
-@media (max-width: 859px) {
-  .header-hidden .topbar {
-    transform: translateY(-100%);
-    pointer-events: none;
-  }
-  /* Let the reveal own the topbar transform on mobile: cancel the
-     dock's hide so the two don't fight (the pull-handle peek is
-     superseded by the up/down reveal here). */
-  .nav-docked .topbar { transform: translateY(0); }
-  .nav-docked.header-hidden .topbar { transform: translateY(-100%); }
-}
 .topbar-row {
   display: flex;
   align-items: center;
@@ -841,9 +814,7 @@ select option,
   transition: top .3s cubic-bezier(.4, .2, .2, 1);
 }
 /* Chips live inside .filter-bar (which owns stickiness); this base
-   sticky only applies if .chips is used standalone. The filter-bar's
-   own docked/hidden offsets are set in its rules below. */
-.nav-docked .chips { top: 0; }
+   sticky only applies if .chips is used standalone. */
 .chips::-webkit-scrollbar { display: none; }
 .chip {
   flex-shrink: 0;
@@ -869,54 +840,11 @@ select option,
 }
 
 /* ==========================================================
-   PULL-DOWN HANDLE + BACK-TO-TOP
-   When scrolled past 30vh the topbar hides and .nav-handle (a small
-   centred tab) appears; tapping it pulls the real topbar back down.
-   .back-to-top is a separate right-side button for deep scrolls.
+   BACK-TO-TOP
+   Appears once scrolled well down the page; scrolls smoothly back to
+   top on click. The topbar is a plain always-visible fixed header
+   now, so there's no peek-handle to coordinate with.
    ========================================================== */
-.nav-handle {
-  position: fixed;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%) translateY(-100%);  /* tucked away */
-  z-index: 31;                                     /* above topbar (30) */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 22px;
-  border: 1px solid var(--line);
-  border-top: none;
-  border-radius: 0 0 13px 13px;
-  background: rgba(255, 253, 248, .96);
-  backdrop-filter: saturate(160%) blur(10px);
-  box-shadow: var(--shadow-sm);
-  color: var(--ink-soft);
-  opacity: 0;
-  pointer-events: none;
-  transition: transform .3s cubic-bezier(.4, .2, .2, 1), opacity .22s ease, color .15s;
-}
-[data-theme="dark"] .nav-handle { background: rgba(26, 20, 14, .96); }
-.nav-handle:hover { color: var(--ink); }
-/* Docked: slide the tab down into view at the very top. */
-.nav-docked .nav-handle {
-  transform: translateX(-50%) translateY(0);
-  opacity: 1;
-  pointer-events: auto;
-}
-/* The scroll-direction reveal replaces the peek pull-tab on mobile,
-   so hide the handle there to avoid two competing affordances. */
-@media (max-width: 859px) {
-  .nav-handle { display: none; }
-}
-/* Pulled open: ride down to sit just under the revealed topbar. */
-.nav-docked.nav-open .nav-handle {
-  transform: translateX(-50%) translateY(var(--topbar-h, 87px));
-}
-/* Arrow reflects the action: ▾ = pull down to open, ▴ = push up to close. */
-.nav-handle-arrow::before { content: '▾'; font-size: .82rem; line-height: 1; }
-.nav-docked.nav-open .nav-handle-arrow::before { content: '▴'; }
-
 .back-to-top {
   position: fixed;
   right: 18px;
@@ -952,12 +880,10 @@ body.has-myorders-fab .back-to-top { bottom: calc(env(safe-area-inset-bottom, 0p
 body.vp-resizing .fab-myorders,
 body.vp-resizing .fab-chat,
 body.vp-resizing .back-to-top,
-body.vp-resizing .nav-handle,
-body.vp-resizing .topbar,
 body.vp-resizing .chips { transition: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
-  .topbar, .chips, .nav-handle, .back-to-top { transition: none; }
+  .chips, .back-to-top { transition: none; }
 }
 
 /* ==========================================================
@@ -1085,22 +1011,19 @@ body.vp-resizing .chips { transition: none !important; }
 /* ==========================================================
    SEARCH BAR
    ========================================================== */
-/* Sticky search + filter bar: both pin below the topbar so the
-   customer can search/filter no matter how far they've scrolled. The
-   search bar sticks first; the filter bar sticks just beneath it.
-   --search-h is measured live (syncStickyHeights in script.js) so the
-   filter bar's offset tracks the real search-bar height across
-   breakpoints and wrapping. */
+/* Sticky search + filter bar: both pin below the always-visible
+   fixed topbar so the customer can search/filter no matter how far
+   they've scrolled. The search bar sticks first; the filter bar
+   sticks just beneath it. --search-h is measured live
+   (syncTopbarHeight in script.js) so the filter bar's offset tracks
+   the real search-bar height across breakpoints and wrapping. */
 .search-bar {
   padding-block: 8px 6px;
   position: sticky;
   top: var(--topbar-h, 87px);
   background: var(--cream);
   z-index: 21;                 /* above the filter bar */
-  transition: top .3s cubic-bezier(.4, .2, .2, 1);
 }
-.nav-docked .search-bar,
-.header-hidden .search-bar { top: 0; }
 .search-field {
   position: relative;
   display: flex;
@@ -1147,10 +1070,7 @@ body.vp-resizing .chips { transition: none !important; }
   top: calc(var(--topbar-h, 87px) + var(--search-h, 56px));
   background: var(--cream);
   z-index: 20;
-  transition: top .3s cubic-bezier(.4, .2, .2, 1);
 }
-.nav-docked .filter-bar,
-.header-hidden .filter-bar { top: var(--search-h, 56px); }
 .filter-open-btn {
   position: relative;
   flex-shrink: 0;
