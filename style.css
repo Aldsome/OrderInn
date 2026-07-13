@@ -8,12 +8,12 @@
    TOKENS — light theme
    ========================================================== */
 :root {
-  --brown-50:  #FAF6F1;
-  --brown-100: #F0E5D5;
-  --brown-200: #DDC9A8;
-  --brown-300: #C8AC81;
-  --brown-500: #A0855E;
-  --brown-700: #6F5A3E;
+  --brown-50:  #FBF3EC;
+  --brown-100: #F5E1CE;
+  --brown-200: #E8BE96;
+  --brown-300: #D89A66;
+  --brown-500: #B5652F;
+  --brown-700: #8A4A1F;
 
   --yellow-50:  #FFFBEF;
   --yellow-100: #FFF1C8;
@@ -75,8 +75,8 @@
   --brown-100: #2B2F36;   /* selected / grouped rows */
   --brown-200: #353A42;
   --brown-300: #495059;   /* stronger borders */
-  --brown-500: #C8AC81;   /* brand accent (kept tan) */
-  --brown-700: #DDC9A8;   /* brand accent deep (kept tan) */
+  --brown-500: #E0894F;   /* brand accent (copper) */
+  --brown-700: #F0A46B;   /* brand accent deep (copper, lighter for contrast) */
 
   --yellow-50:  #2A2310;
   --yellow-100: #3A2F18;
@@ -85,8 +85,8 @@
   --yellow-500: #FFD865;
   --yellow-700: #FFE48A;
 
-  --cream:    #0c0c0c;   /* app background (darkest) */
-  --white:    #2a2112;   /* cards / panels / surfaces */
+  --cream:    #121212;   /* app background (darkest) — neutral, not warm-tinted */
+  --white:    #1E2127;   /* cards / panels / surfaces — neutral gray, pairs with copper accent */
   --ink:      #ECEEF1;   /* primary text — neutral light gray */
   --ink-soft: #BAC0C9;   /* secondary text — lifted for legibility */
   --ink-faint:#8A909B;   /* hints / timestamps — lifted from #767C86 */
@@ -237,7 +237,7 @@ textarea {
 input::placeholder,
 textarea::placeholder { color: var(--ink-soft); opacity: .7; }
 input::selection,
-textarea::selection { background: rgba(160,133,94,.30); color: var(--ink); }
+textarea::selection { background: rgba(181,101,47,.30); color: var(--ink); }
 
 /* Chrome / Edge autofill overrides our background with its own
    yellow box — which destroys dark-mode contrast (yellow bg +
@@ -259,11 +259,11 @@ input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--primary);
   background: var(--white);
-  box-shadow: 0 0 0 3px rgba(160, 133, 94, 0.12);
+  box-shadow: 0 0 0 3px rgba(181,101,47, 0.12);
 }
 [data-theme="dark"] input:focus,
 [data-theme="dark"] select:focus,
-[data-theme="dark"] textarea:focus { box-shadow: 0 0 0 3px rgba(200, 172, 129, 0.16); }
+[data-theme="dark"] textarea:focus { box-shadow: 0 0 0 3px rgba(224, 137, 79, 0.18); }
 textarea { resize: vertical; min-height: 64px; }
 
 /* Native select dropdown arrow — no custom SVG. Browser draws
@@ -329,6 +329,42 @@ select option,
   color: var(--white);
 }
 .btn-danger:hover { background: var(--danger-deep); }
+
+/* Google sign-in — follows Google's brand guideline of a neutral
+   white/outlined button with the full-color "G" mark, not a themed
+   button, so it reads as the standard, trustworthy Google button
+   users already recognize. */
+.btn-google {
+  background: var(--white);
+  color: #3C4043;
+  border-color: var(--line-strong);
+}
+.btn-google:hover { background: var(--brown-50); border-color: var(--ink-faint); }
+[data-theme="dark"] .btn-google {
+  background: #2A2A2A;
+  color: #E8EAED;
+  border-color: #4a4a4a;
+}
+[data-theme="dark"] .btn-google:hover { background: #333; }
+
+/* "or" divider between the Google button and the email/password
+   form beneath it. */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  color: var(--ink-faint);
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.auth-divider::before, .auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
 
 /* Action-by-purpose colors used in admin order cards.
    Mark preparing = warm yellow (in progress), Mark served = green (done). */
@@ -398,7 +434,7 @@ select option,
   border-bottom: 1px solid var(--line);
   z-index: 30;
 }
-[data-theme="dark"] .topbar { background: rgba(26, 20, 14, .92); }
+[data-theme="dark"] .topbar { background: rgba(24, 26, 30, .92); }
 .topbar-row {
   display: flex;
   align-items: center;
@@ -420,7 +456,7 @@ select option,
   width: auto;
   max-width: min(60vw, 260px);
   object-fit: contain;
-  filter: drop-shadow(0 1px 4px rgba(160, 133, 94, .16));
+  filter: drop-shadow(0 1px 4px rgba(181,101,47, .16));
 }
 [data-theme="dark"] .brand-logo {
   filter: drop-shadow(0 1px 6px rgba(232, 184, 75, .14));
@@ -730,7 +766,7 @@ select option,
   animation: tickPulse 1.6s ease-in-out infinite;
 }
 .status-banner-btn[data-status="preparing"] .status-icon {
-  box-shadow: 0 0 14px rgba(160, 133, 94, .35);
+  box-shadow: 0 0 14px rgba(181,101,47, .35);
 }
 .status-banner-btn[data-status="preparing"] .status-icon::before {
   content: "";
@@ -1231,7 +1267,7 @@ body.vp-resizing .chips { transition: none !important; }
   color: var(--primary-deep);
   font-weight: 600;
 }
-[data-theme="dark"] .filter-cat.active { background: rgba(160,133,94,.18); }
+[data-theme="dark"] .filter-cat.active { background: rgba(181,101,47,.18); }
 
 .filter-sorts { display: flex; flex-direction: column; gap: 4px; }
 .filter-radio {
@@ -1433,8 +1469,8 @@ body.vp-resizing .chips { transition: none !important; }
   fill: var(--danger);
   stroke: var(--danger);
 }
-[data-theme="dark"] .fav-heart { background: rgba(30, 24, 17, .72); }
-[data-theme="dark"] .fav-heart:hover { background: rgba(40, 32, 22, .95); }
+[data-theme="dark"] .fav-heart { background: rgba(26, 28, 33, .72); }
+[data-theme="dark"] .fav-heart:hover { background: rgba(36, 39, 45, .95); }
 
 /* Once the image stacks on top (desktop card), keep the heart in the
    image's top-right corner. */
@@ -2401,7 +2437,7 @@ html[data-theme="dark"] textarea::placeholder {
 }
 .placed-card[data-status="preparing"] .placed-tick {
   background: var(--brown-100);
-  box-shadow: 0 0 18px rgba(160,133,94,.35);
+  box-shadow: 0 0 18px rgba(181,101,47,.35);
 }
 @keyframes yinyangSpin { to { transform: rotate(360deg); } }
 
@@ -2899,7 +2935,7 @@ body.admin-open { overflow: hidden; }
 .order-card.selectable:hover { border-color: var(--brown-300); }
 .order-card.selected {
   border-color: var(--primary);
-  background: rgba(200, 172, 129, 0.22);
+  background: rgba(181,101,47, 0.22);
   box-shadow: inset 0 0 0 2px var(--primary);
 }
 .order-card .order-head {
@@ -3528,14 +3564,14 @@ body.admin-open { overflow: hidden; }
   padding: 4px 10px;
   border: 1px solid var(--primary);
   border-radius: 999px;
-  background: rgba(200, 172, 129, 0.18);
+  background: rgba(181,101,47, 0.18);
   color: var(--ink);
   font-size: .76rem;
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
 }
-.tier-chip:hover { background: rgba(200, 172, 129, 0.30); }
+.tier-chip:hover { background: rgba(181,101,47, 0.30); }
 
 /* Logged-in My Orders CTA (savings / spend note). */
 .myorders-cta.loggedin {
@@ -3708,7 +3744,7 @@ body.admin-open { overflow: hidden; }
   /* Tan tint reads clearly over both the light (#fff) and dark (gray)
      surfaces, unlike --brown-100 which is too close to the dark card. */
   border-color: var(--primary);
-  background: rgba(200, 172, 129, 0.22);
+  background: rgba(181,101,47, 0.22);
   box-shadow: inset 0 0 0 2px var(--primary);
 }
 .chat-thread.selected .ct-avatar { position: relative; }
@@ -3799,7 +3835,7 @@ body.admin-open { overflow: hidden; }
   border-style: solid;
   border-color: var(--primary);
   background: var(--brown-200);
-  box-shadow: 0 0 0 3px rgba(160, 133, 94, .28), 0 8px 22px rgba(160, 133, 94, .30);
+  box-shadow: 0 0 0 3px rgba(181,101,47, .28), 0 8px 22px rgba(181,101,47, .30);
 }
 .pin-hint-callout {
   position: absolute;
@@ -4102,7 +4138,7 @@ body.admin-open { overflow: hidden; }
   max-height: 60vh;
   overflow-y: auto;
 }
-[data-theme="dark"] .receipt-preview { background: #1A140C; }
+[data-theme="dark"] .receipt-preview { background: #191B1F; }
 .receipt {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: .82rem;

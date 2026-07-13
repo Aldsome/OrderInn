@@ -1285,7 +1285,7 @@ function launchPlacedConfetti() {
   const host = $('#placedConfetti');
   if (!host) return;
   host.innerHTML = '';
-  const colors = ['#C18F1E', '#3A6E3B', '#E8B84B', '#A0855E', '#DDC9A8', '#6F5A3E'];
+  const colors = ['#C18F1E', '#3A6E3B', '#E8B84B', '#B5652F', '#E8BE96', '#8A4A1F'];
   const N = 26;
   for (let i = 0; i < N; i++) {
     const bit = document.createElement('span');
@@ -2079,7 +2079,7 @@ function launchConfetti() {
   const host = $('#confettiLayer');
   if (!host) return;
   host.innerHTML = '';
-  const colors = ['#C18F1E', '#A0855E', '#3A6E3B', '#E8B84B', '#6F5A3E', '#DDC9A8'];
+  const colors = ['#C18F1E', '#B5652F', '#3A6E3B', '#E8B84B', '#8A4A1F', '#E8BE96'];
   const N = 50;
   for (let i = 0; i < N; i++) {
     const bit = document.createElement('span');
@@ -2430,6 +2430,20 @@ $('#closeCustomerLoginBtn').addEventListener('click', closeCustomerLogin);
 $('#closeProfileBtn').addEventListener('click', closeProfile);
 bindBackdropClose('#customerLoginModal', closeCustomerLogin);
 bindBackdropClose('#profileModal', closeProfile);
+
+$('#googleSignInBtn')?.addEventListener('click', async () => {
+  const errEl = $('#customerLoginError');
+  errEl.hidden = true;
+  try {
+    // Redirects the whole page to Google; nothing after this line
+    // runs in the current page load. The return trip is handled by
+    // resumeAuthSession() + the freshOAuth block in boot().
+    await Store.loginCustomerWithGoogle();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.hidden = false;
+  }
+});
 
 $('#customerLoginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -5734,6 +5748,15 @@ async function boot() {
   localStorage.removeItem('bossb_table');
   await Store.bootSeed();
 
+  // Pick up a real Supabase Auth session — either one already
+  // restored from its own storage (returning customer) or one just
+  // delivered by the Google OAuth redirect-back landing on this page.
+  // Must happen before the UI below reads Store.getCustomer()/
+  // isCustomer() so a signed-in customer never flashes as signed-out.
+  let authResume = { customer: null, freshOAuth: false };
+  try { authResume = await Store.resumeAuthSession(); }
+  catch (e) { console.warn('[boot] resumeAuthSession failed', e); }
+
   // If a remembered session (admin OR customer) no longer matches
   // a live account — the account was renamed/removed on the server,
   // e.g. after the admin-email rebrand — drop it and prompt a fresh
@@ -5791,6 +5814,17 @@ async function boot() {
     if (c) Store.linkSessionOrdersToAccount(c.id);
   }
   reconcileCustomerPoints();
+
+  // Just landed back from the Google OAuth redirect: greet the
+  // customer (the generic linking above already ran) and strip the
+  // ?code=... param so a refresh doesn't try to re-consume it.
+  if (authResume.freshOAuth && authResume.customer) {
+    refreshProfileBtn();
+    showToast(`Welcome, ${authResume.customer.name}`, 'success');
+    const url = new URL(location.href);
+    url.searchParams.delete('code');
+    history.replaceState({}, '', url.pathname + url.search + url.hash);
+  }
 
   // Restore the customer's order state on reload — banner, FAB,
   // and polling all derive from the same client's orders.

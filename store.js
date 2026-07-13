@@ -211,7 +211,7 @@ function enhancePasswordFields(root) {
     btn.setAttribute('aria-label', 'Show password');
     Object.assign(btn.style, {
       position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
-      border: 'none', background: 'transparent', color: '#A0855E',
+      border: 'none', background: 'transparent', color: '#B5652F',
       font: 'inherit', fontSize: '12px', fontWeight: '700',
       cursor: 'pointer', padding: '2px 4px', lineHeight: '1',
     });
@@ -358,15 +358,17 @@ const ROW_TO_USER = (r) => r && ({
   passwordHash: r.password_hash,
   createdAt:    r.created_at,
   perks:        r.perks || null,        // jsonb: customer points/vouchers/loyalty
+  authUserId:   r.auth_user_id || null, // links to auth.users once on Supabase Auth
 });
 const USER_TO_ROW = (u) => ({
   id:            u.id,
   email:         u.email,
   name:          u.name,
   role:          u.role,
-  password_hash: u.passwordHash,
+  password_hash: u.passwordHash || null,  // null for Supabase-Auth customers
   created_at:    u.createdAt,
   perks:         u.perks || null,       // self-heals if the column isn't migrated yet
+  auth_user_id:  u.authUserId || null,  // self-heals if the column isn't migrated yet
 });
 /* Normalize a Postgres timestamptz into a value `new Date()` parses
    correctly. PostgREST returns proper ISO ("...T...+00:00"), but the
@@ -1952,17 +1954,161 @@ const Store = {
   LOYALTY_GOAL:  100,   // lifetime points per free muffin
   VOUCHER_COST:  50,    // spendable points to mint one discount voucher
 
+  /* ----- Real customer auth (Supabase Auth) -----
+     Customer sign-in/sign-up goes through Supabase Auth (email/
+     password AND Google OAuth) instead of the old client-side
+     password-hash compare — the hash never leaves Supabase, and a
+     session can't be forged by pasting JSON into localStorage.
+
+     bb_accounts.id stays the stable identity every other feature
+     (orders, perks, profile) already joins on, so nothing downstream
+     changes: _syncCustomerFromAuthSession() links/creates a
+     bb_accounts row for the auth.users identity, then writes
+     STORE_KEYS.customer with the SAME {id, email, name} shape
+     Store.getCustomer() has always returned.
+
+     LOCAL mode (no Supabase configured) falls back to the previous
+     client-side hash check so the app still works standalone. */
+
+  async signupCustomer({ email, name, password }) {
+    email = String(email || '').trim().toLowerCase();
+    name  = String(name  || '').trim();
+    if (!email || !name || !password) throw new Error('Missing field');
+    if (!/^[A-Za-z0-9_-]{2,30}$/.test(name)) {
+      throw new Error('Name can use only letters, numbers, _ or - (2–30 chars, no spaces or @)');
+    }
+    if (password.length < 8) throw new Error('Password must be at least 8 characters');
+
+    if (!REMOTE_MODE) {
+      const account = await Store.registerAccount({ email, name, password, role: 'customer' });
+      return { ...account, needsEmailConfirmation: false };
+    }
+
+    const { data, error } = await sb.auth.signUp({
+      email, password, options: { data: { display_name: name } },
+    });
+    if (error) {
+      throw new Error(/already registered|already exists/i.test(error.message)
+        ? 'An account with that email already exists' : (error.message || 'Could not create account'));
+    }
+    // Two possible outcomes depending on the project's Auth settings
+    // (Supabase dashboard -> Authentication -> Providers -> Email ->
+    // "Confirm email"):
+    //   - OFF: signUp returns an active session immediately — link/
+    //     create the bb_accounts row right away, caller is signed in.
+    //   - ON (this project's current setting): no session yet: the
+    //     account exists in auth.users but is unconfirmed. The caller
+    //     must check their email and click the link before signing in.
+    if (data.session) {
+      await Store._syncCustomerFromAuthSession(data.session, name);
+      return { ...Store.getCustomer(), needsEmailConfirmation: false };
+    }
+    return { id: null, email, name, needsEmailConfirmation: true };
+  },
+
   async loginCustomer({ email, password }) {
-    const users = await Store.getUsers();
-    const user  = users.find(u => (u.email || '').toLowerCase() === String(email || '').toLowerCase());
-    if (!user) throw new Error('No account found for that email');
-    const hash = await hashPassword(password);
-    if (hash !== user.passwordHash) throw new Error('Incorrect password');
-    writeJSON(STORE_KEYS.customer, { id: user.id, email: user.email, name: user.name });
+    if (!REMOTE_MODE) {
+      const users = await Store.getUsers();
+      const user  = users.find(u => (u.email || '').toLowerCase() === String(email || '').toLowerCase());
+      if (!user) throw new Error('No account found for that email');
+      const hash = await hashPassword(password);
+      if (hash !== user.passwordHash) throw new Error('Incorrect password');
+      writeJSON(STORE_KEYS.customer, { id: user.id, email: user.email, name: user.name });
+      return Store.getCustomer();
+    }
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      if (error.message === 'Invalid login credentials') throw new Error('Incorrect email or password');
+      if (error.message === 'Email not confirmed') {
+        throw new Error('Please confirm your email first — check your inbox for the link we sent.');
+      }
+      throw new Error(error.message || 'Sign-in failed');
+    }
+    await Store._syncCustomerFromAuthSession(data.session);
     return Store.getCustomer();
   },
+
+  /* Google sign-in — redirects the browser to Google, then back to
+     index.html (the ordering page, where the signed-in experience
+     lives — same landing spot signup.html already redirects to after
+     a normal email/password signup). There's no return value: the
+     redirect-back is handled by Store.resumeAuthSession() on the next
+     page load (see boot() in script.js), which calls
+     _syncCustomerFromAuthSession the same way the password path does. */
+  async loginCustomerWithGoogle() {
+    if (!REMOTE_MODE) throw new Error('Google sign-in requires Supabase to be configured');
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin + '/index.html' },
+    });
+    if (error) throw new Error(error.message || 'Could not start Google sign-in');
+  },
+
+  /* Call once on boot (after bootSeed). Picks up either: (a) a
+     returning session Supabase Auth already restored from its own
+     storage, or (b) a fresh session just delivered by the Google
+     OAuth redirect-back — detected via the PKCE `?code=` param the
+     SDK's default OAuth flow leaves in the URL, so the caller can
+     tell "just signed in via Google" apart from "was already signed
+     in" and only show a welcome toast / link guest orders for the
+     former. No-op in LOCAL mode or when signed out. Returns
+     { customer, freshOAuth: boolean }. */
+  async resumeAuthSession() {
+    if (!REMOTE_MODE) return { customer: null, freshOAuth: false };
+    const freshOAuth = new URLSearchParams(location.search).has('code');
+    const { data } = await sb.auth.getSession();
+    if (data.session) await Store._syncCustomerFromAuthSession(data.session);
+    return { customer: Store.getCustomer(), freshOAuth: freshOAuth && !!data.session };
+  },
+
+  /* Given an active Supabase Auth session, ensure a linked
+     bb_accounts row exists (creating one on a customer's first
+     sign-in) and populate STORE_KEYS.customer from it. `nameHint` is
+     used only when creating a brand-new row (e.g. from signupCustomer,
+     where the display name was just typed in); Google sign-ins fall
+     back to the name Google provides, then the email's local part. */
+  async _syncCustomerFromAuthSession(session, nameHint) {
+    const authUser = session.user;
+    if (!authUser) return;
+    const users = await Store.getUsers();
+    let account = users.find(u => u.authUserId === authUser.id);
+
+    if (!account) {
+      // First time this auth identity has been seen — link it to an
+      // existing email-matched row (e.g. a legacy password-hash
+      // account being upgraded) or create a fresh customer row.
+      const email = (authUser.email || '').toLowerCase();
+      account = users.find(u => (u.email || '').toLowerCase() === email && u.role === 'customer');
+      const name = (nameHint || authUser.user_metadata?.full_name
+        || authUser.user_metadata?.name || email.split('@')[0] || 'Guest')
+        .replace(/[^A-Za-z0-9_-]/g, '').slice(0, 30) || 'Guest';
+      if (account) {
+        account = { ...account, authUserId: authUser.id };
+      } else {
+        account = {
+          id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+          email, name, role: 'customer',
+          authUserId: authUser.id,
+          createdAt: new Date().toISOString(),
+        };
+      }
+      const idx = users.findIndex(u => u.id === account.id);
+      if (idx === -1) users.push(account); else users[idx] = account;
+      writeJSON(STORE_KEYS.users, users);
+      remoteUpsert('bb_accounts', USER_TO_ROW(account));
+    }
+
+    writeJSON(STORE_KEYS.customer, { id: account.id, email: account.email, name: account.name });
+  },
+
   getCustomer()    { return readJSON(STORE_KEYS.customer, null); },
-  logoutCustomer() { localStorage.removeItem(STORE_KEYS.customer); },
+  logoutCustomer() {
+    localStorage.removeItem(STORE_KEYS.customer);
+    // Clear the real Supabase Auth session too (fire-and-forget — the
+    // local state above is what the UI actually reacts to, so callers
+    // don't need to await this). No-op in LOCAL mode.
+    if (REMOTE_MODE) sb.auth.signOut().catch(() => {});
+  },
   isCustomer()     { return !!Store.getCustomer(); },
 
   /* The signed-in customer's full account record (with perks). */
