@@ -42,6 +42,19 @@ const STORE_KEYS = {
    browser used across different OrderInn deployments wouldn't share a
    cart. (One value today; kept explicit for the QR/kiosk model.) */
 const RESTAURANT_ID = 'orderinn';
+
+/* Absolute URL to index.html in the CURRENT deployment, whatever the
+   host or base path. window.location.origin drops the path, so
+   `origin + '/index.html'` breaks when the app is served from a
+   subpath (e.g. GitHub Pages at /OrderInn/). Deriving it from the
+   current document's directory works everywhere — root or subpath,
+   localhost or live — so the Google OAuth + password-reset redirects
+   land back on the real app instead of 404ing.
+   Pass extra query with `q`, e.g. appUrl('index.html', 'staffOAuth=1'). */
+function appUrl(page = 'index.html', q = '') {
+  const dir = window.location.href.replace(/[?#].*$/, '').replace(/[^/]*$/, '');
+  return dir + page + (q ? (q[0] === '?' ? q : '?' + q) : '');
+}
 /* Cart session lifetime — the cart persists across refreshes and QR
    re-scans, and only resets after this much inactivity. */
 const CART_SESSION_TTL_MS = 18 * 60 * 60 * 1000;   // 18h
@@ -1655,7 +1668,7 @@ const Store = {
      tampered with or omitted). */
   async loginStaffWithGoogle(inviteCode) {
     if (!REMOTE_MODE) throw new Error('Google sign-in requires Supabase to be configured');
-    let redirectTo = `${window.location.origin}/index.html?${STAFF_OAUTH_PARAM}=1`;
+    let redirectTo = appUrl('index.html', `${STAFF_OAUTH_PARAM}=1`);
     if (inviteCode) redirectTo += `&inviteCode=${encodeURIComponent(inviteCode)}`;
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
@@ -2324,7 +2337,7 @@ const Store = {
     if (!REMOTE_MODE) throw new Error('Google sign-in requires Supabase to be configured');
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin + '/index.html' },
+      options: { redirectTo: appUrl('index.html') },
     });
     if (error) throw new Error(error.message || 'Could not start Google sign-in');
   },
@@ -2341,7 +2354,7 @@ const Store = {
     email = String(email || '').trim().toLowerCase();
     if (!email) throw new Error('Enter your email first');
     const { error } = await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + '/index.html',
+      redirectTo: appUrl('index.html'),
     });
     if (error) {
       // Supabase throttles repeat requests for the same user (the
