@@ -2668,22 +2668,37 @@ $('#customerLoginForm').addEventListener('submit', async (e) => {
 const RESET_COOLDOWN_SECONDS = 59;
 
 /* Disable a button and tick down a "Try again in Ns" label until the
-   cooldown elapses, then restore it. Returns nothing; self-clears. */
-function startButtonCooldown(btn, seconds, restoreLabel) {
-  if (btn._cooldownTimer) clearInterval(btn._cooldownTimer);
+   cooldown elapses, then restore it. Self-clears.
+
+   The cooldown is per-email (that's how the server throttles), so if
+   `cancelOnField` is given we cancel early the moment its value
+   changes — a different address isn't subject to the previous one's
+   wait. That listener is attached ONLY for the cooldown's lifetime and
+   removed when it ends, so nothing is monitored during normal use. */
+function startButtonCooldown(btn, seconds, restoreLabel, cancelOnField) {
+  if (btn._cooldownCleanup) btn._cooldownCleanup();   // supersede any running one
   let left = Math.max(1, Math.ceil(seconds));
+
+  const end = () => {
+    clearInterval(timer);
+    if (cancelOnField && onEdit) cancelOnField.removeEventListener('input', onEdit);
+    btn._cooldownCleanup = null;
+    btn.disabled = false;
+    btn.textContent = restoreLabel;
+  };
+  btn._cooldownCleanup = end;
+
+  const onEdit = cancelOnField
+    ? (() => { const startVal = cancelOnField.value; return () => { if (cancelOnField.value !== startVal) end(); }; })()
+    : null;
+  if (onEdit) cancelOnField.addEventListener('input', onEdit);
+
   btn.disabled = true;
   btn.textContent = `Try again in ${left}s`;
-  btn._cooldownTimer = setInterval(() => {
+  const timer = setInterval(() => {
     left -= 1;
-    if (left <= 0) {
-      clearInterval(btn._cooldownTimer);
-      btn._cooldownTimer = null;
-      btn.disabled = false;
-      btn.textContent = restoreLabel;
-    } else {
-      btn.textContent = `Try again in ${left}s`;
-    }
+    if (left <= 0) end();
+    else btn.textContent = `Try again in ${left}s`;
   }, 1000);
 }
 
@@ -2697,20 +2712,22 @@ $('#forgotPasswordBtn')?.addEventListener('click', async () => {
     return;
   }
   const btn = $('#forgotPasswordBtn');
+  const emailField = $('#customerLoginForm input[name="email"]');
   const original = btn.dataset.label || (btn.dataset.label = btn.textContent);
   btn.disabled = true; btn.textContent = 'Sending…';
   try {
     await Store.requestPasswordReset(email);
     showToast(`If an account exists for ${email}, a reset link is on its way.`, 'success');
     // Cool the button down so the user doesn't hammer it into the
-    // server's per-user interval (which would 429 the next tap).
-    startButtonCooldown(btn, RESET_COOLDOWN_SECONDS, original);
+    // server's per-user interval (which would 429 the next tap). Cancels
+    // early if they switch to a different email.
+    startButtonCooldown(btn, RESET_COOLDOWN_SECONDS, original, emailField);
   } catch (err) {
     if (err.rateLimited) {
       const wait = err.retryAfter || RESET_COOLDOWN_SECONDS;
       errEl.textContent = `You just requested a reset — please wait ${wait}s before trying again.`;
       errEl.hidden = false;
-      startButtonCooldown(btn, wait, original);
+      startButtonCooldown(btn, wait, original, emailField);
     } else {
       errEl.textContent = err.message;
       errEl.hidden = false;
