@@ -238,7 +238,7 @@ const SORT_OPTIONS = [
   { id: 'name',       label: 'Name (A–Z)' },
 ];
 
-function filtersMarkup() {
+function filtersMarkup(groupName) {
   const cats = Store.getCategories();
   const favN = Store.favoriteCount();
 
@@ -250,7 +250,7 @@ function filtersMarkup() {
 
   const sortRow = (o) => `
     <label class="filter-radio">
-      <input type="radio" name="menuSort" value="${o.id}" ${state.sort === o.id ? 'checked' : ''}>
+      <input type="radio" name="${groupName}" value="${o.id}" ${state.sort === o.id ? 'checked' : ''}>
       <span>${escapeHtml(o.label)}</span>
     </label>`;
 
@@ -282,10 +282,18 @@ function filtersMarkup() {
     </section>`;
 }
 
+/* Each host gets its own radio-group name. Without this, the sidebar
+   and the mobile sheet both render <input name="menuSort">, and the
+   browser treats same-name radios as ONE mutually-exclusive group
+   across the whole document — not scoped per container — so setting
+   one host's selection could silently uncheck the other's, leaving
+   neither visibly selected. */
+const FILTER_HOSTS = { '#sidebarFilters': 'menuSort-sidebar', '#sheetFilters': 'menuSort-sheet' };
+
 function renderFilters() {
-  ['#sidebarFilters', '#sheetFilters'].forEach(sel => {
+  Object.entries(FILTER_HOSTS).forEach(([sel, groupName]) => {
     const host = $(sel);
-    if (host) host.innerHTML = filtersMarkup();
+    if (host) host.innerHTML = filtersMarkup(groupName);
   });
   refreshFilterActiveDot();
 }
@@ -304,8 +312,8 @@ function onFilterHostClick(e) {
   }
 }
 function onFilterHostChange(e) {
-  const radio = e.target.closest('input[name="menuSort"]');
-  if (radio) {
+  const radio = e.target.closest('input[type="radio"]');
+  if (radio && SORT_OPTIONS.some(o => o.id === radio.value)) {
     state.sort = radio.value;
     renderFilters();
     renderMenu();
@@ -828,13 +836,19 @@ function buildOpts(container, list, currentId, onPick) {
   });
 }
 
+/* opts.forceDetails — always show the modal, even for an item with no
+   options to configure. Callers where the tap IS the "add" gesture
+   (the menu grid, the hero favorite chip) leave this off and keep the
+   quick-add shortcut below. The carousel sets it: those cards are a
+   browsing prompt, so a tap should open the product and let the
+   customer decide, never silently drop it in the cart. */
 function openCustomizer(itemId, opts = {}) {
   const item = MENU.find(m => m.id === itemId);
   if (!item) return;
   const o = item.options || {};
   const canCustomize = optionDefs().some(def => o[def.key]);
 
-  if (!canCustomize && !opts.editLineKey) {
+  if (!canCustomize && !opts.editLineKey && !opts.forceDetails) {
     addLine(item.id, defaultConfigFor(item), 1);
     showToast(`${item.name} added`, 'success');
     bumpShake(item.id);
@@ -854,7 +868,11 @@ function openCustomizer(itemId, opts = {}) {
   $('#czBasePrice').textContent = `Base ${peso(item.price)}`;
   $('#czImage').innerHTML = thumbMarkup(item, { loading: 'eager', fallbackStyle: 'font-size:2rem' });
   $('#czAddLabel').textContent = opts.editLineKey ? 'Save changes' : 'Add to cart';
-  $('#czTitle').textContent    = opts.editLineKey ? 'Edit item'    : 'Customize';
+  // "Customize" is a lie for an item with nothing to configure (a
+  // cookie, a croissant) — reachable now that the carousel opens the
+  // modal for those too. It's a plain product view in that case.
+  $('#czTitle').textContent = opts.editLineKey ? 'Edit item'
+    : (canCustomize ? 'Customize' : item.name);
 
   $('#czSizeSection').hidden  = !o.size;
   $('#czTempSection').hidden  = !o.temp;
@@ -929,6 +947,13 @@ function readCheckoutLocation() {
 }
 $('#placeOrderBtn').addEventListener('click', async () => {
   if (state.cart.length === 0) return;
+  // Staff browse the customer view to check the menu, but an order
+  // placed under an admin session has no customer to attribute it to.
+  // Hiding the button isn't enough — guard the action itself.
+  if (Store.isAdmin()) {
+    showToast('Staff accounts can browse but not order. Sign out to order as a customer.', 'error');
+    return;
+  }
   const btn = $('#placeOrderBtn');
   if (btn.dataset.placing === '1') return;   // guard against double-tap
   btn.dataset.placing = '1';
@@ -1002,9 +1027,9 @@ $('#placeOrderBtn').addEventListener('click', async () => {
   openOrderPlacedModal(order);
   refreshOrdersBadge();
   refreshMyOrdersFab();
-  // A new order resets the "show thanks" lockout so a second
-  // visit will retrigger it after all orders are served.
-  thanksShown = false;
+  // No explicit "show thanks" reset needed here — maybeShowThanks()
+  // keys its lockout off the newest order's id, and this new order
+  // just became the newest, so it re-arms itself automatically.
   refreshAdminActivity();
   // Realtime: refresh the admin panel if it happens to be open
   // in this same tab, and seed the new order into the local
@@ -1094,12 +1119,15 @@ function clearActiveOrder() {
    orders don't linger when a customer/admin signs in or out. Orders
    already placed stay in the store; the fresh id just detaches them
    from this device's "My orders" view. */
-function resetCustomerVisitState() {
+function resetCustomerVisitState({ hard = false } = {}) {
   clearActiveOrder();
   finishEditingOrder();
   clearCart();
   Store.clearSessionTable();
-  Store.resetClientId();            // fresh device id → clean guest slate
+  // hard → also drop the clientId history, so a previous persona's
+  // orders stop counting as "this session's" on the next sign-in.
+  if (hard) Store.hardResetClientId();
+  else Store.resetClientId();       // fresh device id → clean guest slate
   Store.touchCartSession();         // rebind the cart session to the new id
   state.cart = Store.getCart() || [];
   syncSession();                    // re-read the (new) session id
@@ -1113,9 +1141,15 @@ function resetCustomerVisitState() {
    active orders if it has any (re-adopting its clientId + table so no
    PIN/table re-entry is needed). Returns true if orders were resumed. */
 async function resumeOrClearOnLogin() {
-  // One role at a time: signing in as a customer drops any admin
-  // session on this device (and vice versa, in the staff login).
+  // One role at a time. ensureSignedOutForRole() gates every sign-in
+  // entry point, so an admin session should already be gone by the
+  // time a customer sign-in completes. This stays as a backstop for
+  // any path that slips past the guard (e.g. a Google redirect-back
+  // that resumed a stale session) — without it the two local caches
+  // would disagree about who's signed in, which is the exact
+  // confusion the guard exists to prevent.
   if (Store.getSession()) {
+    console.warn('[auth] customer sign-in completed with an admin session still present — clearing it');
     Store.logout();
     if (typeof exitAdminPanel === 'function') exitAdminPanel();
     if (typeof refreshAdminHeaderBtn === 'function') refreshAdminHeaderBtn();
@@ -1176,7 +1210,6 @@ function getActiveOrder() {
 
 function refreshOrderStatusBanner() {
   const order = getActiveOrder();
-  const banner = $('#orderStatusBanner');
 
   // Whatever we do with the banner, the FAB count + thank-you
   // logic always need a tick. Also surface any status changes
@@ -1186,28 +1219,17 @@ function refreshOrderStatusBanner() {
   maybeShowThanks();
   reactToCustomerOrderChanges();
 
-  if (!order) {
-    banner.hidden = true;
-    osbReset();
-    return;
-  }
-  const info = STATUS_INFO[order.status] || STATUS_INFO.pending;
-  const wasHidden = banner.hidden;
-  banner.hidden = false;
-  $('#orderStatusBtn').dataset.status = order.status;
-  $('#bannerOrderNumber').textContent = order.number;
-  $('#bannerStatusText').textContent  = info.text;
-  $('#bannerStatusIcon').textContent  = info.icon;
-  // Start the collapse countdown when the banner first appears; pop it
-  // back out if the status changed while it was tucked into the cube.
-  if (wasHidden) { osbLastStatus = order.status; osbScheduleCollapse(); }
-  else if (order.status !== osbLastStatus) {
-    osbLastStatus = order.status;
-    if (banner.classList.contains('collapsed')) osbExpand();
-  }
+  // The strip is purely the best-seller carousel now (live order status
+  // moved to the My Orders pill's badge), so it no longer hides when
+  // there's no active order — showing the shop's best picks to someone
+  // who hasn't ordered YET is the whole point of it.
+  showBestSellerCarousel();
 
   // If the placed modal is currently visible, sync its status too.
-  if ($('#orderPlacedModal').classList.contains('open')) {
+  // Guarded on `order`: this function no longer bails early when there
+  // isn't one (the carousel below shows regardless), and
+  // updatePlacedModalForOrder dereferences order.status straight away.
+  if (order && $('#orderPlacedModal').classList.contains('open')) {
     updatePlacedModalForOrder(order);
   }
 }
@@ -1343,19 +1365,14 @@ $('#placedMyOrdersBtn').addEventListener('click', () => {
 });
 
 /* ==========================================================
-   ORDER-STATUS BANNER — auto-collapse + best-seller carousel
-   A few seconds after the status banner appears it tucks itself
-   into a small cube on the right (arrow flips to ‹), freeing the
-   space for an auto-scrolling Top-10 best-seller carousel. Tapping
-   the cube restores the full status (and re-arms the countdown);
-   a status change also pops it back out so the customer sees it.
-   Tapping a carousel card opens that product.
+   BEST-SELLER CAROUSEL  (under the topbar)
+   An auto-scrolling Top-10 strip, shown while this session has an
+   order in flight. Tapping a card opens that product. Live order
+   status isn't shown here — it lives on the My Orders pill's count
+   badge instead.
    ========================================================== */
-const OSB_COLLAPSE_MS = 5000;     // delay before the status tucks away
-const OSB_SLIDE_MS    = 3000;     // carousel auto-advance cadence
-let osbCollapseTimer = null;
-let osbAutoTimer     = null;
-let osbLastStatus    = null;
+const OSB_SLIDE_MS = 3000;     // carousel auto-advance cadence
+let osbAutoTimer   = null;
 
 function getBestSellers(limit = 10) {
   const counts = new Map();
@@ -1377,8 +1394,9 @@ function getBestSellers(limit = 10) {
 function renderBestSellerCarousel() {
   const track = $('#osbTrack');
   if (!track) return;
+  // data-rank drives the top-3 gold/silver/bronze label tint in CSS.
   track.innerHTML = getBestSellers(10).map((m, i) => `
-    <button type="button" class="osb-card" data-id="${escapeHtml(m.id)}">
+    <button type="button" class="osb-card" data-id="${escapeHtml(m.id)}" data-rank="${i + 1}">
       <span class="osb-thumb">${thumbMarkup(m, { alt: m.name })}</span>
       <span class="osb-info">
         <span class="osb-rank">#${i + 1} Best seller</span>
@@ -1386,6 +1404,22 @@ function renderBestSellerCarousel() {
       </span>
       <span class="osb-price">${peso(m.price)}</span>
     </button>`).join('');
+}
+
+/* Reveal + populate the strip, idempotently — safe to call on every
+   poll tick. Renders and starts autoplay only on the first call, so a
+   later tick never restarts the scroll out from under the customer.
+   Re-renders when the ranking data changes (see renderBestSellerCarousel
+   callers) rather than on a timer. */
+function showBestSellerCarousel() {
+  const banner = $('#orderStatusBanner');
+  if (!banner) return;
+  const wasHidden = banner.hidden;
+  banner.hidden = false;
+  if (wasHidden) {
+    renderBestSellerCarousel();
+    osbAutoplayStart();
+  }
 }
 
 function osbAutoplayStop() { if (osbAutoTimer) { clearInterval(osbAutoTimer); osbAutoTimer = null; } }
@@ -1403,57 +1437,43 @@ function osbAutoplayStart() {
   }, OSB_SLIDE_MS);
 }
 
-function osbCollapse() {
-  const banner = $('#orderStatusBanner');
-  if (!banner || banner.hidden) return;
-  renderBestSellerCarousel();
-  banner.classList.add('collapsed');
-  const car = $('#osbCarousel');
-  if (car) car.setAttribute('aria-hidden', 'false');
-  osbAutoplayStart();
-}
-function osbExpand() {
-  const banner = $('#orderStatusBanner');
-  if (!banner) return;
-  banner.classList.remove('collapsed');
-  const car = $('#osbCarousel');
-  if (car) car.setAttribute('aria-hidden', 'true');
-  osbAutoplayStop();
-  osbScheduleCollapse();          // re-arm so it tucks away again shortly
-}
-function osbScheduleCollapse() {
-  clearTimeout(osbCollapseTimer);
-  osbCollapseTimer = setTimeout(osbCollapse, OSB_COLLAPSE_MS);
-}
-function osbReset() {
-  clearTimeout(osbCollapseTimer);
-  osbAutoplayStop();
-  osbLastStatus = null;
-  const banner = $('#orderStatusBanner');
-  if (banner) banner.classList.remove('collapsed');
-}
-
-/* Banner click: when tucked into the cube, restore it; otherwise open
-   the My-orders sheet (most customers have 2+ orders, so the popup is
-   the more useful default). */
-$('#orderStatusBtn').addEventListener('click', () => {
-  const banner = $('#orderStatusBanner');
-  if (banner && banner.classList.contains('collapsed')) osbExpand();
-  else openMyOrders();
-});
-
 /* Carousel card → open that product. Pause autoplay while the user is
    hovering/touching so it doesn't slide out from under their tap. */
 const osbTrackEl = $('#osbTrack');
 if (osbTrackEl) {
   let dragging = false, dragMoved = false, startX = 0, startScroll = 0, dragPointer = null;
+  let lastX = 0, dragTravel = 0;
+
+  /* Wrap a scroll position around the ends so the strip behaves as a
+     loop: dragging past the last pick continues into the first, and
+     vice versa. (A true clone-based infinite track would keep the
+     motion seamless, but that fights the click-to-open handler and the
+     autoplay's scrollTo — for a 10-card strip a wrap is the honest
+     trade: same "never hits a wall" feel, no duplicate cards.) */
+  const osbWrap = (pos) => {
+    const max = osbTrackEl.scrollWidth - osbTrackEl.clientWidth;
+    if (max <= 0) return 0;
+    if (pos > max) return pos - max;    // past the end → back to the start
+    if (pos < 0)   return max + pos;    // before the start → round to the end
+    return pos;
+  };
 
   osbTrackEl.addEventListener('click', (e) => {
     // Swallow the click that ends a drag so it doesn't open a product.
     if (dragMoved) { e.preventDefault(); e.stopPropagation(); return; }
-    const card = e.target.closest('.osb-card');
+    // setPointerCapture (below) retargets events to the TRACK, so
+    // e.target is the track itself rather than the card under the
+    // cursor — closest() alone would find nothing and the tap would
+    // silently do nothing. Fall back to hit-testing the point.
+    let card = e.target.closest && e.target.closest('.osb-card');
+    if (!card) {
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      card = hit && hit.closest && hit.closest('.osb-card');
+    }
     if (!card) return;
-    openCustomizer(card.dataset.id);
+    // Always show the product first — a tap here is "tell me more",
+    // not "add this" (see forceDetails in openCustomizer).
+    openCustomizer(card.dataset.id, { forceDetails: true });
   });
 
   // Desktop mice only have a vertical wheel — translate it to horizontal
@@ -1461,7 +1481,7 @@ if (osbTrackEl) {
   osbTrackEl.addEventListener('wheel', (e) => {
     if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;   // already horizontal intent
     e.preventDefault();
-    osbTrackEl.scrollLeft += e.deltaY;
+    osbTrackEl.scrollLeft = osbWrap(osbTrackEl.scrollLeft + e.deltaY);
     osbAutoplayStop();
   }, { passive: false });
 
@@ -1470,6 +1490,7 @@ if (osbTrackEl) {
     if (e.pointerType === 'touch') return;
     dragging = true; dragMoved = false;
     startX = e.clientX; startScroll = osbTrackEl.scrollLeft;
+    lastX = e.clientX; dragTravel = 0;
     dragPointer = e.pointerId;
     try { osbTrackEl.setPointerCapture(dragPointer); } catch (_) {}
     osbTrackEl.classList.add('dragging');
@@ -1478,8 +1499,20 @@ if (osbTrackEl) {
   osbTrackEl.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     const dx = e.clientX - startX;
-    if (Math.abs(dx) > 4) dragMoved = true;
-    osbTrackEl.scrollLeft = startScroll - dx;
+    // Accumulate travel separately from dx: the wrap below re-anchors
+    // startX, which would otherwise reset dx to ~0 mid-drag and let a
+    // long wrapping drag end in a stray click-to-open.
+    dragTravel += Math.abs(e.clientX - lastX);
+    lastX = e.clientX;
+    if (dragTravel > 4) dragMoved = true;
+    const next = osbWrap(startScroll - dx);
+    // Re-anchor the drag origin on wrap, so the pointer stays "stuck"
+    // to the strip instead of the cards racing back under the cursor.
+    if (Math.abs(next - (startScroll - dx)) > 1) {
+      startX = e.clientX;
+      startScroll = next;
+    }
+    osbTrackEl.scrollLeft = next;
   });
   const endOsbDrag = () => {
     if (!dragging) return;
@@ -1543,7 +1576,11 @@ function refreshMyOrdersFab() {
   const badge = $('#fabMyOrdersBadge');
   if (active > 0) {
     if (txt) txt.textContent = `Order #${activeOrders[0].number}`;
-    if (badge) { badge.textContent = active; badge.hidden = (active < 2); }
+    // Badge shows from the FIRST pending order — it's the customer's
+    // "you have something in flight" signal now that the status
+    // banner's arrow is gone, so hiding it at a count of 1 would hide
+    // it exactly when it matters most.
+    if (badge) { badge.textContent = active; badge.hidden = false; }
   } else {
     if (txt) txt.textContent = 'My orders';
     if (badge) badge.hidden = true;
@@ -2034,9 +2071,15 @@ $('#myOrdersList').addEventListener('click', async (e) => {
 
 /* Thank-you flow — runs whenever the customer has at least one
    order in their history but zero are active. Triggers once per
-   "round" (uses a flag in state so we don't re-show it after the
-   customer hits Dismiss). */
-let thanksShown = false;
+   "round". The "already shown" flag is keyed by the newest order id
+   in the customer's history and persisted to localStorage (not just
+   an in-memory var) — otherwise a page reload/refresh wipes the flag
+   and the overlay pops right back up on the very next poll tick,
+   forever, since the underlying "0 active, 1+ served" condition
+   never changes on its own. Keying by order id (rather than a plain
+   boolean) still re-arms it correctly the moment a genuinely new
+   order is placed. */
+const THANKS_SHOWN_KEY = 'bossb_thanks_shown_for';
 function maybeShowThanks() {
   // Staff are exempt from the customer end-of-visit flow. The
   // thanks overlay + auto table-reset exists to free a table for
@@ -2051,8 +2094,10 @@ function maybeShowThanks() {
   if (mine.length === 0) return;
   const active = mine.filter(o => o.status === 'pending' || o.status === 'preparing').length;
   const anyServed = mine.some(o => o.status === 'served');
-  if (active === 0 && anyServed && !thanksShown) {
-    thanksShown = true;
+  const newestId = mine[0] && mine[0].id;
+  const alreadyShown = newestId && localStorage.getItem(THANKS_SHOWN_KEY) === newestId;
+  if (active === 0 && anyServed && !alreadyShown) {
+    if (newestId) localStorage.setItem(THANKS_SHOWN_KEY, newestId);
     showThanksOverlay();
   }
 }
@@ -2108,12 +2153,13 @@ function dismissThanks() {
    browse the menu again. Their served orders stay in My Orders
    as history; new orders will append.
 
-   Crucially we keep `thanksShown` TRUE here: the all-served
-   condition is still true the instant the overlay is dismissed,
-   so re-arming it now would make the next banner tick (fired on
-   scroll/poll) immediately re-show the overlay in a loop. The
-   lockout is re-armed only when the customer places a NEW order
-   (see placeOrder), which is the real start of a fresh round. */
+   Crucially we leave the persisted THANKS_SHOWN_KEY in place here:
+   the all-served condition is still true the instant the overlay is
+   dismissed, so clearing it now would make the next banner tick
+   (fired on scroll/poll, or a page reload) immediately re-show the
+   overlay in a loop. maybeShowThanks() only re-arms once the newest
+   order id actually changes — i.e. the customer places a NEW order
+   (see placeOrder) — which is the real start of a fresh round. */
 function continueAsSameUser() {
   dismissThanks();
   closeMyOrders();
@@ -2137,7 +2183,7 @@ function resetForNextCustomer() {
   clearCart();
   closeMyOrders();
   dismissThanks();
-  thanksShown = false;
+  localStorage.removeItem(THANKS_SHOWN_KEY);
   refreshMyOrdersFab();
   refreshOrderStatusBanner();
 }
@@ -2323,6 +2369,60 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ==========================================================
+   ROLE-SWITCH GUARD
+   Admin and customer share ONE Supabase Auth session (a single `sb`
+   client holds a single session), so signing into a second role
+   silently overwrites the first role's real credential — while the
+   two local caches (bb_session / bb_customer) carry on as if both
+   were still valid. That mismatch is what made switching accounts
+   behave erratically.
+
+   Rather than let a second sign-in start and clean up afterward,
+   every sign-in entry point calls this FIRST. It returns true when
+   the caller may proceed (nobody else is signed in, or the user
+   agreed to sign the other role out), false to abort.
+   ========================================================== */
+async function ensureSignedOutForRole(targetRole) {
+  const adminSession = Store.getSession();
+  const customer     = Store.getCustomer && Store.getCustomer();
+
+  // Signing into the role that's ALREADY active isn't a conflict —
+  // the caller's own flow handles a re-login fine.
+  if (targetRole === 'admin'    && !customer)     return true;
+  if (targetRole === 'customer' && !adminSession) return true;
+
+  const current = targetRole === 'admin'
+    ? { label: customer.name || 'a customer account', signOut: () => {
+          Store.rememberOrdersForAccount();
+          Store.logoutCustomer();
+          refreshProfileBtn();
+        } }
+    : { label: `the staff account ${adminSession.name || adminSession.email}`, signOut: () => {
+          Store.logout();
+          if (typeof exitAdminPanel === 'function') exitAdminPanel();
+          refreshAdminHeaderBtn();
+        } };
+
+  const ok = await confirmAsk(
+    `You're currently signed in as ${current.label}. You can only be signed ` +
+    `into one account at a time on this device — sign out to continue?`,
+    {
+      title: 'Already signed in',
+      confirmLabel: 'Sign out & switch',
+      cancelLabel: 'Stay signed in',
+    }
+  );
+  if (!ok) return false;
+
+  current.signOut();
+  // logout()/logoutCustomer() clear the shared Supabase session
+  // asynchronously (fire-and-forget). Give that a beat to land so the
+  // next sign-in isn't racing the sign-out it depends on.
+  await new Promise(r => setTimeout(r, 150));
+  return true;
+}
+
+/* ==========================================================
    STAFF LOGIN
    ========================================================== */
 const staffLoginModal = $('#staffLoginModal');
@@ -2331,16 +2431,20 @@ function closeStaffLogin() {
   closeModal('#staffLoginModal');
   $('#staffLoginError').hidden = true;
 }
+wirePasswordToggle('#staffLoginPasswordToggle', '#staffLoginPassword');
 /* Footer button is dual-purpose: when no admin session is
    active it opens Staff Login; when one IS active it signs
    out instead — so a logged-in admin can never accidentally
    "log in again" from the customer view. */
-$('#openStaffLoginBtn').addEventListener('click', () => {
+$('#openStaffLoginBtn').addEventListener('click', async () => {
   if ($('#openStaffLoginBtn').dataset.mode === 'signout') {
     adminSignOut();
-  } else {
-    openStaffLogin();
+    return;
   }
+  // Stop a signed-in customer from starting a staff sign-in that
+  // would silently clobber their session (see ensureSignedOutForRole).
+  if (!(await ensureSignedOutForRole('admin'))) return;
+  openStaffLogin();
 });
 
 /* Header Admin shortcut — visible only when a staff session
@@ -2374,33 +2478,96 @@ $('#adminTopbarBtn').addEventListener('click', () => {
 });
 $('#closeStaffLoginBtn').addEventListener('click', closeStaffLogin);
 
+/* Shared tail of every successful staff sign-in (password or Google):
+   greet, close whatever's open, hand off/clear any signed-in customer
+   persona on this device, sever the guest visit, and enter the panel. */
+function completeStaffSignIn(session) {
+  showToast(`Welcome, ${session.name}`, 'success');
+  closeStaffLogin();
+  closeTableModal();
+  // One role at a time. ensureSignedOutForRole() normally clears the
+  // customer before the staff sign-in even starts; this is the
+  // backstop for paths that reach here without passing the guard
+  // (mirrors resumeOrClearOnLogin's, in the other direction).
+  if (Store.getCustomer()) {
+    Store.rememberOrdersForAccount();
+    Store.logoutCustomer();
+    if (typeof refreshProfileBtn === 'function') refreshProfileBtn();
+  }
+  // Sever the guest persona entirely: clear the table name + active
+  // orders and mint a fresh clientId so the previous guest's visit
+  // doesn't linger under the admin (those orders stay in the panel).
+  resetCustomerVisitState({ hard: true });
+  enterAdminPanel(session);
+}
+
 $('#staffLoginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = $('#staffLoginError');
   errEl.hidden = true;
   const fd = new FormData(e.target);
   try {
-    await Store.seedIfEmpty();      // ensure default admin exists before hashing
+    await Store.seedIfEmpty();      // LOCAL mode: ensure default admin exists before hashing
     const session = await Store.login({
       email:    fd.get('email'),
       password: fd.get('password'),
     });
-    showToast(`Welcome, ${session.name}`, 'success');
     e.target.reset();
-    closeStaffLogin();
-    closeTableModal();
-    // One role at a time: if a customer is signed in on this device,
-    // save their orders to their account and sign them out first.
-    if (Store.getCustomer()) {
-      Store.rememberOrdersForAccount();
-      Store.logoutCustomer();
-      if (typeof refreshProfileBtn === 'function') refreshProfileBtn();
-    }
-    // Sever the guest persona entirely: clear the table name + active
-    // orders and mint a fresh clientId so the previous guest's visit
-    // doesn't linger under the admin (those orders stay in the panel).
-    resetCustomerVisitState();
-    enterAdminPanel(session);
+    completeStaffSignIn(session);
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.hidden = false;
+  }
+});
+
+$('#staffGoogleSignInBtn')?.addEventListener('click', async () => {
+  const errEl = $('#staffLoginError');
+  errEl.hidden = true;
+  try {
+    // Redirects the whole page to Google; nothing after this line runs
+    // in the current page load. The return trip is handled by
+    // resumeAuthSession()'s staff branch + the authResume.staff block
+    // in boot() below.
+    await Store.loginStaffWithGoogle();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.hidden = false;
+  }
+});
+
+/* ==========================================================
+   STAFF INVITE CODE  (Google sign-in, first time only — the
+   Supabase Auth session from resumeAuthSession()'s staff branch is
+   held here until the code is confirmed or the admin cancels)
+   ========================================================== */
+let pendingStaffGoogleAuth = null;   // { authSession, pendingEmail }
+
+function openStaffInvite({ authSession, pendingEmail }) {
+  pendingStaffGoogleAuth = { authSession, pendingEmail };
+  $('#staffInviteEmailNote').textContent = `Signed in with Google as ${pendingEmail}. Enter the staff invite code to finish creating this admin account.`;
+  $('#staffInviteError').hidden = true;
+  $('#staffInviteForm').reset();
+  openModal('#staffInviteModal');
+}
+function closeStaffInvite(abandon) {
+  closeModal('#staffInviteModal');
+  if (abandon && pendingStaffGoogleAuth) Store.abandonStaffGoogleSignIn();
+  pendingStaffGoogleAuth = null;
+}
+$('#closeStaffInviteBtn').addEventListener('click', () => closeStaffInvite(true));
+bindBackdropClose('#staffInviteModal', () => closeStaffInvite(true));
+
+$('#staffInviteForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = $('#staffInviteError');
+  errEl.hidden = true;
+  if (!pendingStaffGoogleAuth) return closeStaffInvite(false);
+  const fd = new FormData(e.target);
+  try {
+    const session = await Store.completeStaffGoogleSignIn(pendingStaffGoogleAuth.authSession, fd.get('inviteCode'));
+    pendingStaffGoogleAuth = null;
+    closeStaffInvite(false);
+    completeStaffSignIn(session);
   } catch (err) {
     errEl.textContent = err.message;
     errEl.hidden = false;
@@ -2422,14 +2589,33 @@ function refreshProfileBtn() {
   btn.setAttribute('aria-label', Store.isCustomer() ? 'My account' : 'Sign in');
 }
 
-$('#profileBtn').addEventListener('click', () => {
-  if (Store.isCustomer()) openProfile();
-  else                    openCustomerLogin();
+$('#profileBtn').addEventListener('click', async () => {
+  if (Store.isCustomer()) return openProfile();
+  // Stop an admin from starting a customer sign-in that would
+  // silently clobber their staff session (both share one Supabase
+  // session — see ensureSignedOutForRole).
+  if (!(await ensureSignedOutForRole('customer'))) return;
+  openCustomerLogin();
 });
 $('#closeCustomerLoginBtn').addEventListener('click', closeCustomerLogin);
 $('#closeProfileBtn').addEventListener('click', closeProfile);
 bindBackdropClose('#customerLoginModal', closeCustomerLogin);
 bindBackdropClose('#profileModal', closeProfile);
+
+/* Password show/hide toggle — shared pattern for any .field-icon
+   password field with a .field-toggle button as its sibling. */
+function wirePasswordToggle(toggleSel, inputSel) {
+  const toggle = $(toggleSel), input = $(inputSel);
+  if (!toggle || !input) return;
+  toggle.addEventListener('click', () => {
+    const showing = toggle.getAttribute('aria-pressed') === 'true';
+    toggle.setAttribute('aria-pressed', String(!showing));
+    toggle.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+    toggle.textContent = showing ? 'Show' : 'Hide';
+    input.type = showing ? 'password' : 'text';
+  });
+}
+wirePasswordToggle('#customerLoginPasswordToggle', '#customerLoginPassword');
 
 $('#googleSignInBtn')?.addEventListener('click', async () => {
   const errEl = $('#customerLoginError');
@@ -2461,6 +2647,65 @@ $('#customerLoginForm').addEventListener('submit', async (e) => {
     showToast(linked > 0
       ? `Welcome, ${cust.name} — ${linked} order${linked === 1 ? '' : 's'} added to your account`
       : `Welcome, ${cust.name}`, 'success');
+    if (cust.pendingDeletion != null) promptCancelDeletion(cust.pendingDeletion);
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.hidden = false;
+  }
+});
+
+/* ==========================================================
+   FORGOT / RESET PASSWORD
+   "Forgot password?" sends a Supabase reset-link email using
+   whatever's currently typed in the login form's email field.
+   Clicking that email link lands back here with a recovery
+   session already active (see Store.resumeAuthSession +
+   boot()'s passwordRecovery branch), which opens this modal.
+   ========================================================== */
+$('#forgotPasswordBtn')?.addEventListener('click', async () => {
+  const errEl = $('#customerLoginError');
+  errEl.hidden = true;
+  const email = $('#customerLoginForm input[name="email"]').value;
+  if (!email) {
+    errEl.textContent = 'Enter your email above first, then tap "Forgot password?"';
+    errEl.hidden = false;
+    return;
+  }
+  const btn = $('#forgotPasswordBtn');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await Store.requestPasswordReset(email);
+    showToast(`If an account exists for ${email}, a reset link is on its way.`, 'success');
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.hidden = false;
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+});
+
+function openResetPasswordModal() {
+  $('#resetPasswordError').hidden = true;
+  $('#resetPasswordSuccess').hidden = true;
+  $('#resetPasswordForm').reset();
+  openModal('#resetPasswordModal');
+}
+function closeResetPasswordModal() { closeModal('#resetPasswordModal'); }
+$('#closeResetPasswordBtn').addEventListener('click', closeResetPasswordModal);
+bindBackdropClose('#resetPasswordModal', closeResetPasswordModal);
+
+$('#resetPasswordForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = $('#resetPasswordError');
+  const okEl  = $('#resetPasswordSuccess');
+  errEl.hidden = true; okEl.hidden = true;
+  const fd = new FormData(e.target);
+  try {
+    await Store.completePasswordReset(fd.get('password'));
+    okEl.textContent = 'Password updated — you can now sign in with it.';
+    okEl.hidden = false;
+    setTimeout(() => { closeResetPasswordModal(); }, 1400);
   } catch (err) {
     errEl.textContent = err.message;
     errEl.hidden = false;
@@ -2474,7 +2719,11 @@ $('#customerLogoutBtn').addEventListener('click', () => {
   Store.logoutCustomer();
   closeProfile();
   refreshProfileBtn();
-  resetCustomerVisitState();
+  // hard: rememberOrdersForAccount() just persisted this visit's ids to
+  // the account's perks, so resumeAccountOrders() can still find them on
+  // the next sign-in. The device itself must forget them, or the next
+  // account to sign in here sees them as "this session's" orders.
+  resetCustomerVisitState({ hard: true });
   showToast('Signed out — your orders are saved to your account');
 });
 
@@ -2552,7 +2801,73 @@ function renderProfile() {
       list.appendChild(div);
     });
   }
+
+  renderDeletionState();
 }
+
+/* Shows either the "Delete my account" link or, when a deletion is
+   already pending, a countdown + "Cancel deletion" button in its
+   place. Called whenever the profile modal is (re)rendered. */
+function renderDeletionState() {
+  const daysLeft = Store.deletionDaysLeft();
+  const pendingBox   = $('#deletionPending');
+  const deleteBtn    = $('#deleteAccountBtn');
+  if (daysLeft == null) {
+    pendingBox.hidden = true;
+    deleteBtn.hidden  = false;
+    return;
+  }
+  deleteBtn.hidden  = true;
+  pendingBox.hidden = false;
+  $('#deletionDaysLeftText').textContent = daysLeft > 0
+    ? `It will be permanently removed in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`
+    : `It will be permanently removed the next time you sign in.`;
+}
+
+/* Post-sign-in nudge for an account with a pending deletion — opens
+   the profile modal straight to the cancel-deletion state so it
+   can't be missed. */
+function promptCancelDeletion(daysLeft) {
+  openProfile();
+  showToast(
+    daysLeft > 0
+      ? `This account is scheduled for deletion in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`
+      : `This account is scheduled for deletion very soon.`,
+    'error'
+  );
+}
+
+$('#deleteAccountBtn').addEventListener('click', async () => {
+  const typed = await uiPrompt({
+    title: 'Delete your account?',
+    message: `Your account, points, and vouchers will be scheduled for deletion. `
+      + `You'll have ${Store.DELETION_GRACE_DAYS} days to change your mind — just sign back in and cancel it. `
+      + `After that, it's gone for good.\n\nType DELETE to confirm.`,
+    placeholder: 'DELETE',
+    confirmLabel: 'Delete my account',
+    validate: (v) => (v.toUpperCase() === 'DELETE' ? null : 'Type DELETE (all caps) to confirm'),
+  });
+  if (typed === null) return;
+  try {
+    await Store.requestAccountDeletion();
+    closeProfile();
+    refreshProfileBtn();
+    resetCustomerVisitState();
+    showToast(`Account scheduled for deletion — sign back in within ${Store.DELETION_GRACE_DAYS} days to cancel it.`, 'success');
+  } catch (err) {
+    showToast(err.message || 'Could not delete account', 'error');
+  }
+});
+
+$('#cancelDeletionBtn').addEventListener('click', async () => {
+  try {
+    await Store.cancelAccountDeletion();
+    renderDeletionState();
+    showToast('Deletion cancelled — your account is staying put.', 'success');
+  } catch (err) {
+    showToast(err.message || 'Could not cancel deletion', 'error');
+  }
+});
 
 /* ==========================================================
    ADMIN PANEL
@@ -2619,21 +2934,35 @@ function enterAdminPanel(session) {
   return true;
 }
 
-/* L1 — Session expiry watcher. While the admin panel is open
-   we re-check Store.isAdmin() every 30 seconds. When the 8-hour
-   bb_session TTL elapses (or another tab signs out), this fires
-   and force-closes the panel with a notice. Without this, an
-   admin who walked away could leave the panel "open" for hours
-   past their session and any clicks would still go through the
-   open RLS policies. */
+/* L1 — Session expiry watcher. While the admin panel is open we
+   re-check every 30 seconds. In REMOTE mode the cached session's
+   expiresAt now tracks the real Supabase JWT (~1h default lifetime,
+   silently auto-refreshed by the SDK while the tab stays open) rather
+   than a fabricated 8h TTL — so a cheap sync check alone would kick a
+   still-validly-signed-in admin roughly every hour just because the
+   local CACHE's snapshot went stale, even though the real underlying
+   Supabase session is fine. So: only pay for an async check when the
+   cache is actually missing or within a minute of its recorded
+   expiry; if Supabase's own session is still live at that point,
+   re-mint the local cache from it instead of force-closing. Only a
+   real, confirmed absence of both closes the panel. LOCAL mode (no
+   Supabase) has no session to re-check against, so it always takes
+   the force-close path once the flat 8h TTL elapses — unchanged. */
 let adminSessionWatchTimer = null;
 function startAdminSessionWatcher() {
   if (adminSessionWatchTimer) return;
-  adminSessionWatchTimer = setInterval(() => {
+  adminSessionWatchTimer = setInterval(async () => {
     if (adminPanel.hidden) {
       clearInterval(adminSessionWatchTimer);
       adminSessionWatchTimer = null;
       return;
+    }
+    const cached = Store.getSession();
+    const nearExpiry = !cached || (cached.expiresAt - Date.now()) < 60 * 1000;
+    if (!nearExpiry) return;   // cheap path: still comfortably valid, nothing to do
+
+    if (Store.tryRefreshAdminSession && await Store.tryRefreshAdminSession()) {
+      return;   // Supabase's own session was still live — re-minted, stay open
     }
     if (!Store.isAdmin()) {
       clearInterval(adminSessionWatchTimer);
@@ -2658,7 +2987,7 @@ function adminSignOut() {
   // Clear the device's guest visit and drop back to the customer view.
   // Orders placed stay in the store; the session model needs no table
   // prompt — a fresh session is created on the next interaction.
-  resetCustomerVisitState();
+  resetCustomerVisitState({ hard: true });
   showToast('Signed out');
 }
 $('#exitAdminBtn').addEventListener('click', exitAdminPanel);
@@ -3775,35 +4104,20 @@ $('#rotateInviteBtn')?.addEventListener('click', async () => {
   showAdminToast({ title: 'New invite code generated', variant: 'success' });
 });
 
-/* Admin-only path to create another staff account from inside
-   the panel. Skips the invite code check because the caller is
-   already authenticated as admin. */
-$('#openAddStaffBtn')?.addEventListener('click', () => {
-  $('#addStaffError').hidden = true;
-  $('#addStaffForm').reset();
-  openModal('#addStaffModal');
-});
-$('#closeAddStaffBtn')?.addEventListener('click', () => closeModal('#addStaffModal'));
-bindBackdropClose('#addStaffModal', () => closeModal('#addStaffModal'));
-
-$('#addStaffForm')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const err = $('#addStaffError');
-  err.hidden = true;
-  const fd = new FormData(e.target);
+/* New staff self-register at register.html using the invite code
+   above — an already-authenticated admin creating the account
+   directly isn't possible anymore now that account creation goes
+   through real Supabase Auth (sb.auth.signUp signs the CALLER out
+   and the new person in, which would boot the admin doing the
+   inviting out of their own panel). "+ Add staff account" now just
+   copies the sign-up link to share instead of opening a form. */
+$('#openAddStaffBtn')?.addEventListener('click', async () => {
+  const link = new URL('register.html', location.href).href;
   try {
-    const account = await Store.registerAccount({
-      name:            fd.get('name'),
-      email:           fd.get('email'),
-      password:        fd.get('password'),
-      role:            'admin',
-      skipInviteCheck: true,
-    });
-    closeModal('#addStaffModal');
-    showAdminToast({ title: `Added ${account.name}`, variant: 'success' });
-  } catch (ex) {
-    err.textContent = ex.message || String(ex);
-    err.hidden = false;
+    await navigator.clipboard.writeText(link);
+    showAdminToast({ title: 'Sign-up link copied — share it with the new invite code', variant: 'success' });
+  } catch {
+    showAdminToast({ title: link, variant: 'info' });
   }
 });
 $('#saveSettingsBtn').addEventListener('click', () => {
@@ -4345,15 +4659,24 @@ $('#downloadReceiptPngBtn').addEventListener('click', () => {
 });
 
 /* ==========================================================
-   DAILY REPORT  (CSV exporter)
-   - One row per order placed today.
-   - Metadata block at the top uses real cells (not # comments)
-     so Excel/Sheets reads them as a header table.
-   - Totals row uses live SUM formulas referencing the data
-     range so editing/removing rows in the spreadsheet keeps
-     the totals correct.
+   DAILY REPORT  (branded .xlsx exporter — ExcelJS + Chart.js)
+   - One row per order placed today, in a real styled Excel table.
+   - A header band carries the shop logo + name/address, mirroring
+     the printed receipt's identity.
+   - Two chart images (orders/revenue by hour, cumulative revenue)
+     are rendered off-screen with Chart.js and embedded as pictures
+     — ExcelJS can't create native live Excel charts, so a rendered
+     PNG is the standard approach (this is also exactly what the
+     reference design does: the charts are static images, not
+     interactive spreadsheet charts).
+   - The data table still carries live SUM/SUMIF formulas in the
+     totals rows, same as the previous CSV, so editing a row's
+     status/total inside Excel keeps the totals honest.
    ========================================================== */
-function buildDailyCsv() {
+const REPORT_BRAND_COLOR = '#B5652F';   // matches --primary in style.css
+const REPORT_BRAND_DEEP  = '#8A4A1F';   // matches --primary-deep
+
+function todaysOrdersForReport() {
   const orders = Store.getOrders();
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
@@ -4362,145 +4685,359 @@ function buildDailyCsv() {
     const t = new Date(iso);
     return t.getFullYear() === y && t.getMonth() === m && t.getDate() === d;
   };
-  const todays = orders.filter(o => sameDay(o.placedAt));
+  return { now, todays: orders.filter(o => sameDay(o.placedAt)) };
+}
 
-  // Helper: spreadsheet-style ISO date format (Excel and Sheets
-  // both auto-parse this as a date for sorting / filtering).
-  const fmtDate = (iso) => {
-    if (!iso) return '';
-    const t = new Date(iso);
-    const p = (n) => String(n).padStart(2, '0');
-    return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
-  };
+/* Renders a Chart.js chart to an off-screen canvas (never attached
+   to the DOM — just used as a drawing surface) and resolves a PNG
+   data URL. Chart.js needs a real layout pass, so the canvas is
+   given fixed pixel dimensions rather than relying on CSS sizing. */
+function renderChartToDataUrl(config, width = 640, height = 360) {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const chart = new Chart(canvas, {
+      ...config,
+      options: {
+        ...config.options,
+        responsive: false,
+        animation: false,
+      },
+    });
+    // Chart.js draws synchronously when animation is disabled, but
+    // yielding a frame first guarantees the canvas is fully painted
+    // before we read it back as an image.
+    requestAnimationFrame(() => {
+      const url = canvas.toDataURL('image/png', 1.0);
+      chart.destroy();
+      resolve(url);
+    });
+  });
+}
 
+/* Builds the two report charts from today's orders:
+   - Bar: orders placed + revenue, grouped by hour of day.
+   - Line: cumulative revenue running total through the day.
+   Returns { ordersByHourUrl, cumulativeUrl } (data URLs), or null
+   values if there's no data to chart. */
+async function buildDailyReportCharts(todays) {
+  if (!todays.length) return { ordersByHourUrl: null, cumulativeUrl: null };
+
+  const byHour = Array.from({ length: 24 }, () => ({ count: 0, revenue: 0 }));
+  todays.forEach(o => {
+    const hr = new Date(o.placedAt).getHours();
+    byHour[hr].count++;
+    byHour[hr].revenue += taxBreakdown(o.total).grand;
+  });
+  const usedHours = byHour
+    .map((v, hr) => ({ hr, ...v }))
+    .filter(v => v.count > 0);
+  const hourLabel = (hr) => `${((hr % 12) || 12)}${hr < 12 ? 'am' : 'pm'}`;
+
+  const sorted = [...todays].sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
+  let running = 0;
+  const cumulative = sorted.map(o => {
+    running += taxBreakdown(o.total).grand;
+    return running;
+  });
+
+  const [ordersByHourUrl, cumulativeUrl] = await Promise.all([
+    renderChartToDataUrl({
+      type: 'bar',
+      data: {
+        labels: usedHours.map(v => hourLabel(v.hr)),
+        datasets: [
+          { label: 'Orders',  data: usedHours.map(v => v.count),   backgroundColor: REPORT_BRAND_COLOR, borderRadius: 4, yAxisID: 'y' },
+          { label: `Revenue (${CONFIG.currency})`, data: usedHours.map(v => Number(v.revenue.toFixed(2))), backgroundColor: '#E8B84B', borderRadius: 4, yAxisID: 'y1' },
+        ],
+      },
+      options: {
+        plugins: {
+          title: { display: true, text: 'Orders & Revenue by Hour', font: { size: 16, weight: 'bold' } },
+          legend: { position: 'bottom' },
+        },
+        scales: {
+          y:  { type: 'linear', position: 'left',  beginAtZero: true, title: { display: true, text: 'Orders' } },
+          y1: { type: 'linear', position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: `Revenue (${CONFIG.currency})` } },
+        },
+      },
+    }),
+    renderChartToDataUrl({
+      type: 'line',
+      data: {
+        labels: sorted.map(o => new Date(o.placedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+        datasets: [{
+          label: `Cumulative revenue (${CONFIG.currency})`,
+          data: cumulative.map(v => Number(v.toFixed(2))),
+          borderColor: REPORT_BRAND_COLOR,
+          backgroundColor: 'rgba(181,101,47,0.15)',
+          fill: true, tension: 0.3, pointRadius: 2,
+        }],
+      },
+      options: {
+        plugins: {
+          title: { display: true, text: 'Cumulative Revenue Through the Day', font: { size: 16, weight: 'bold' } },
+          legend: { display: false },
+        },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8 } },
+          y: { beginAtZero: true },
+        },
+      },
+    }),
+  ]);
+  return { ordersByHourUrl, cumulativeUrl };
+}
+
+/* Fetches the topbar logo as a Buffer ExcelJS can embed. Returns
+   null on any failure (offline, file missing) so the report still
+   generates — just without the logo image — instead of throwing. */
+async function fetchLogoBuffer() {
+  try {
+    const res = await fetch('icon/brand-logo.png');
+    if (!res.ok) return null;
+    return await res.arrayBuffer();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function buildDailyWorkbook() {
+  const { now, todays } = todaysOrdersForReport();
+  const servedToday = todays.filter(o => o.status === 'served');
+  const grossAll    = todays.reduce((s, o) => s + taxBreakdown(o.total).grand, 0);
+  const grossServed = servedToday.reduce((s, o) => s + taxBreakdown(o.total).grand, 0);
   const cur = CONFIG.currency || '';
+  const shopName = CONFIG.businessName || CONFIG.shopName || 'OrderInn Coffee';
+
+  const [{ ordersByHourUrl, cumulativeUrl }, logoBuffer] = await Promise.all([
+    buildDailyReportCharts(todays),
+    fetchLogoBuffer(),
+  ]);
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = shopName;
+  wb.created = now;
+  const sheet = wb.addWorksheet('Daily Report', {
+    views: [{ showGridLines: false }],
+  });
+
+  const TABLE_COLS = 10;   // A..J — matches the headers array below
+  const lastColLetter = String.fromCharCode(64 + TABLE_COLS);
+
+  // ---- Header band: logo + business identity, brand-colored ----
+  // Filled per-cell (not one big merge) since the title/subtitle
+  // merges below overlap the same A1:J3 range — Excel doesn't allow
+  // nested/overlapping merges.
+  for (let r = 1; r <= 3; r++) {
+    for (let c = 1; c <= TABLE_COLS; c++) {
+      sheet.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB5652F' } };
+    }
+  }
+  sheet.getRow(1).height = 22;
+  sheet.getRow(2).height = 22;
+  sheet.getRow(3).height = 14;
+
+  if (logoBuffer) {
+    const imgId = wb.addImage({ buffer: logoBuffer, extension: 'png' });
+    sheet.addImage(imgId, {
+      tl: { col: 0.15, row: 0.15 },
+      ext: { width: 52, height: 52 },
+    });
+  }
+
+  sheet.mergeCells('B1:F2');
+  const titleCell = sheet.getCell('B1');
+  titleCell.value = shopName;
+  titleCell.font = { size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+  titleCell.alignment = { vertical: 'middle', horizontal: 'left' };
+
+  sheet.mergeCells('B3:F3');
+  const subtitleCell = sheet.getCell('B3');
+  subtitleCell.value = `${CONFIG.businessAddr || ''}${CONFIG.businessTin ? '  •  TIN ' + CONFIG.businessTin : ''}`.trim();
+  subtitleCell.font = { size: 9, color: { argb: 'FFF4E4D6' } };
+  subtitleCell.alignment = { vertical: 'middle', horizontal: 'left' };
+
+  sheet.mergeCells(`G1:${lastColLetter}2`);
+  const reportTitleCell = sheet.getCell('G1');
+  reportTitleCell.value = 'DAILY SALES REPORT';
+  reportTitleCell.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+  reportTitleCell.alignment = { vertical: 'middle', horizontal: 'right' };
+
+  sheet.mergeCells(`G3:${lastColLetter}3`);
+  const genCell = sheet.getCell('G3');
+  genCell.value = `Generated ${now.toLocaleString()}`;
+  genCell.font = { size: 9, color: { argb: 'FFF4E4D6' } };
+  genCell.alignment = { vertical: 'middle', horizontal: 'right' };
+
+  // ---- Summary stat tiles ----
+  const stats = [
+    ['Orders today',   todays.length],
+    ['Served today',   servedToday.length],
+    [`Gross all (${cur})`,    Number(grossAll.toFixed(2))],
+    [`Gross served (${cur})`, Number(grossServed.toFixed(2))],
+    ['Lifetime orders', CONFIG.lifetimeOrders || 0],
+  ];
+  const statsRow = 5;
+  sheet.getRow(statsRow).height = 18;
+  sheet.getRow(statsRow + 1).height = 24;
+  stats.forEach((s, i) => {
+    const col = i + 1; // A, B, C...
+    const labelCell = sheet.getCell(statsRow, col);
+    labelCell.value = s[0];
+    labelCell.font = { size: 9, color: { argb: 'FF8A4A1F' }, bold: true };
+    labelCell.alignment = { horizontal: 'center' };
+    const valCell = sheet.getCell(statsRow + 1, col);
+    valCell.value = s[1];
+    valCell.font = { size: 14, bold: true, color: { argb: 'FF3A2A1E' } };
+    valCell.alignment = { horizontal: 'center' };
+    valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFBF3EA' } };
+    labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4E4D6' } };
+    ['top', 'bottom', 'left', 'right'].forEach(side => {
+      labelCell.border = { ...labelCell.border, [side]: { style: 'thin', color: { argb: 'FFE8CBB0' } } };
+      valCell.border   = { ...valCell.border,   [side]: { style: 'thin', color: { argb: 'FFE8CBB0' } } };
+    });
+  });
+  sheet.mergeCells(statsRow, 6, statsRow, TABLE_COLS);
+  sheet.mergeCells(statsRow + 1, 6, statsRow + 1, TABLE_COLS);
+  const taxCell = sheet.getCell(statsRow, 6);
+  taxCell.value = `Tax: ${CONFIG.taxLabel} ${CONFIG.taxRate}% (${CONFIG.taxInclusive ? 'inclusive' : 'exclusive'})`;
+  taxCell.font = { size: 9, italic: true, color: { argb: 'FF8A4A1F' } };
+  taxCell.alignment = { horizontal: 'left', vertical: 'middle' };
+
+  // ---- Data table ----
   const headers = [
     'Order #', 'Location', 'Placed', 'Served', 'Status',
     'Items', 'Qty',
     `Subtotal (${cur})`, `${CONFIG.taxLabel || 'Tax'} ${CONFIG.taxRate}% (${cur})`, `Total (${cur})`,
   ];
+  const headerRowIdx = statsRow + 3;
+  const headerRow = sheet.getRow(headerRowIdx);
+  headers.forEach((h, i) => {
+    const c = headerRow.getCell(i + 1);
+    c.value = h;
+    c.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF8A4A1F' } };
+    c.alignment = { vertical: 'middle', horizontal: i >= 6 ? 'right' : 'left' };
+    c.border = { bottom: { style: 'medium', color: { argb: 'FF5A3010' } } };
+  });
+  headerRow.height = 20;
 
-  const dataRows = todays.map(o => {
+  const dataStartRow = headerRowIdx + 1;
+  todays.forEach((o, i) => {
     const { subtotal, tax, grand } = taxBreakdown(o.total);
     const itemsSummary = o.items
-      .map(i => `${i.qty}× ${i.name}${i.summary ? ' (' + i.summary + ')' : ''}`)
+      .map(it => `${it.qty}× ${it.name}${it.summary ? ' (' + it.summary + ')' : ''}`)
       .join('; ');
-    const qtyTotal = o.items.reduce((s, i) => s + i.qty, 0);
-    return [
-      o.number,
-      o.locationIdentifier || '',
-      fmtDate(o.placedAt),
-      fmtDate(o.servedAt),
-      o.status,
-      itemsSummary,
-      qtyTotal,
-      Number(subtotal.toFixed(2)),
-      Number(tax.toFixed(2)),
-      Number(grand.toFixed(2)),
+    const qtyTotal = o.items.reduce((s, it) => s + it.qty, 0);
+    const r = sheet.getRow(dataStartRow + i);
+    const rowVals = [
+      o.number, o.locationIdentifier || '', o.placedAt ? new Date(o.placedAt) : '',
+      o.servedAt ? new Date(o.servedAt) : '', o.status, itemsSummary, qtyTotal,
+      Number(subtotal.toFixed(2)), Number(tax.toFixed(2)), Number(grand.toFixed(2)),
     ];
+    rowVals.forEach((v, ci) => {
+      const c = r.getCell(ci + 1);
+      c.value = v;
+      c.font = { size: 10 };
+      c.alignment = { vertical: 'middle', horizontal: ci >= 6 ? 'right' : 'left', wrapText: ci === 5 };
+      if (ci === 2 || ci === 3) c.numFmt = 'yyyy-mm-dd hh:mm';
+      if (ci >= 7) c.numFmt = `#,##0.00`;
+      if (i % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFBF3EA' } };
+      const STATUS_ARGB = { pending: 'FFB88A00', preparing: 'FF2E6DB4', served: 'FF3A6E3B', cancelled: 'FFC0392B' };
+      if (ci === 4 && STATUS_ARGB[v]) c.font = { ...c.font, bold: true, color: { argb: STATUS_ARGB[v] } };
+    });
   });
 
-  // CSV escape — also wraps values that *look* like a formula
-  // unless we explicitly want the formula behavior, so we'll
-  // pass formulas through a sentinel object.
-  const csvEscape = (v) => {
-    if (v && typeof v === 'object' && v.__formula) return v.__formula;
-    const s = String(v ?? '');
-    return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const formula = (f) => ({ __formula: f });
-
-  const lines = [];
-
-  // Metadata block — real cells so Excel parses them as a small
-  // two-column header table (label | value) rather than dumping
-  // everything into column A.
-  const servedToday = todays.filter(o => o.status === 'served');
-  const grossAll    = todays.reduce((s, o) => s + taxBreakdown(o.total).grand, 0);
-  const grossServed = servedToday.reduce((s, o) => s + taxBreakdown(o.total).grand, 0);
-
-  lines.push([`${CONFIG.businessName || CONFIG.shopName} — Daily Sales Report`].map(csvEscape).join(','));
-  lines.push(['Generated',       fmtDate(now.toISOString())].map(csvEscape).join(','));
-  lines.push(['Currency',        cur].map(csvEscape).join(','));
-  lines.push(['Tax',             `${CONFIG.taxLabel} ${CONFIG.taxRate}% (${CONFIG.taxInclusive ? 'inclusive' : 'exclusive'})`].map(csvEscape).join(','));
-  lines.push(['Orders today',    todays.length].map(csvEscape).join(','));
-  lines.push(['Served today',    servedToday.length].map(csvEscape).join(','));
-  lines.push([`Gross all (${cur})`,    Number(grossAll.toFixed(2))].map(csvEscape).join(','));
-  lines.push([`Gross served (${cur})`, Number(grossServed.toFixed(2))].map(csvEscape).join(','));
-  lines.push(['Lifetime orders', (CONFIG.lifetimeOrders || 0)].map(csvEscape).join(','));
-  lines.push('');                              // blank spacer
-
-  // Header row sits at this 1-based spreadsheet row number;
-  // remember it so the formulas below can reference the data
-  // range precisely (first data row = headerRow + 1).
-  const headerRow = lines.length + 1;
-  lines.push(headers.map(csvEscape).join(','));
-  dataRows.forEach(r => lines.push(r.map(csvEscape).join(',')));
-
-  // Total / formula footer. Two rows:
-  //   - "ALL ORDERS" sums every row in the data range.
-  //   - "SERVED ONLY" filters by status using SUMIF — so if the
-  //     admin edits statuses inside the spreadsheet, totals
-  //     update live.
-  if (dataRows.length > 0) {
-    const firstDataRow = headerRow + 1;
-    const lastDataRow  = headerRow + dataRows.length;
-    const colQty   = 'G';
-    const colSub   = 'H';
-    const colTax   = 'I';
-    const colTotal = 'J';
-    const colStatus = 'E';
-    const rng = (col) => `${col}${firstDataRow}:${col}${lastDataRow}`;
-
-    lines.push('');
-    lines.push(['TOTALS'].map(csvEscape).join(','));
-    lines.push([
-      '', '', '', '', 'ALL ORDERS', '',
-      formula(`=SUM(${rng(colQty)})`),
-      formula(`=SUM(${rng(colSub)})`),
-      formula(`=SUM(${rng(colTax)})`),
-      formula(`=SUM(${rng(colTotal)})`),
-    ].map(csvEscape).join(','));
-    lines.push([
-      '', '', '', '', 'SERVED ONLY', '',
-      formula(`=SUMIF(${rng(colStatus)},"served",${rng(colQty)})`),
-      formula(`=SUMIF(${rng(colStatus)},"served",${rng(colSub)})`),
-      formula(`=SUMIF(${rng(colStatus)},"served",${rng(colTax)})`),
-      formula(`=SUMIF(${rng(colStatus)},"served",${rng(colTotal)})`),
-    ].map(csvEscape).join(','));
-    lines.push([
-      '', '', '', '', 'AVG / ORDER', '', '', '', '',
-      formula(`=IFERROR(SUM(${rng(colTotal)})/COUNT(${rng(colTotal)}),0)`),
-    ].map(csvEscape).join(','));
+  // ---- Totals footer (live formulas — SUM / SUMIF) ----
+  let footerEndRow = dataStartRow - 1;
+  if (todays.length > 0) {
+    const lastDataRow = dataStartRow + todays.length - 1;
+    const rng = (col) => `${col}${dataStartRow}:${col}${lastDataRow}`;
+    const totalsSpecs = [
+      ['ALL ORDERS',  `=SUM(${rng('G')})`, `=SUM(${rng('H')})`, `=SUM(${rng('I')})`, `=SUM(${rng('J')})`],
+      ['SERVED ONLY', `=SUMIF(${rng('E')},"served",${rng('G')})`, `=SUMIF(${rng('E')},"served",${rng('H')})`, `=SUMIF(${rng('E')},"served",${rng('I')})`, `=SUMIF(${rng('E')},"served",${rng('J')})`],
+      ['AVG / ORDER', null, null, null, `=IFERROR(SUM(${rng('J')})/COUNT(${rng('J')}),0)`],
+    ];
+    totalsSpecs.forEach((spec, i) => {
+      const rowIdx = lastDataRow + 2 + i;
+      const r = sheet.getRow(rowIdx);
+      const labelCell = r.getCell(5);
+      labelCell.value = spec[0];
+      labelCell.font = { bold: true, size: 10, color: { argb: 'FF8A4A1F' } };
+      [6, 7, 8, 9].forEach((col, gi) => {
+        const formula = spec[gi + 1];
+        if (!formula) return;
+        const c = r.getCell(col);
+        c.value = { formula: formula.slice(1) };
+        c.numFmt = '#,##0.00';
+        c.font = { bold: true, size: 10 };
+        c.alignment = { horizontal: 'right' };
+        c.border = { top: { style: 'thin', color: { argb: 'FFE8CBB0' } } };
+      });
+      footerEndRow = rowIdx;
+    });
   }
 
-  const servedCount = todays.filter(o => o.status === 'served').length;
-  // Prefix BOM so Excel detects UTF-8 (the ₱ / × glyphs render
-  // correctly when double-clicked on Windows).
-  return { csv: '﻿' + lines.join('\r\n'), todayCount: todays.length, servedCount };
+  headers.forEach((_, i) => {
+    const col = sheet.getColumn(i + 1);
+    col.width = [10, 16, 18, 18, 12, 42, 7, 13, 16, 13][i];
+  });
+
+  // ---- Charts, embedded as images below the table ----
+  let chartRow = footerEndRow + 3;
+  if (ordersByHourUrl || cumulativeUrl) {
+    const chartHeadCell = sheet.getCell(chartRow, 1);
+    chartHeadCell.value = 'Charts';
+    chartHeadCell.font = { bold: true, size: 12, color: { argb: 'FF8A4A1F' } };
+    chartRow += 1;
+    const imgTopRow = chartRow;
+    if (ordersByHourUrl) {
+      const id = wb.addImage({ base64: ordersByHourUrl, extension: 'png' });
+      sheet.addImage(id, { tl: { col: 0, row: imgTopRow }, ext: { width: 420, height: 236 } });
+    }
+    if (cumulativeUrl) {
+      const id = wb.addImage({ base64: cumulativeUrl, extension: 'png' });
+      sheet.addImage(id, { tl: { col: 5.2, row: imgTopRow }, ext: { width: 420, height: 236 } });
+    }
+    chartRow += 14; // reserve vertical space for the images
+  }
+
+  return { workbook: wb, todayCount: todays.length, servedCount: servedToday.length };
 }
 
-function triggerDownload(filename, content, mime = 'text/plain') {
-  const blob = new Blob([content], { type: mime + ';charset=utf-8' });
-  const url  = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-$('#exportCsvBtn').addEventListener('click', () => {
-  const { csv, todayCount, servedCount } = buildDailyCsv();
-  if (todayCount === 0) {
+$('#exportCsvBtn').addEventListener('click', async () => {
+  const { todays } = todaysOrdersForReport();
+  if (todays.length === 0) {
     showAdminToast({ title: 'No orders placed today yet', variant: 'info' });
     return;
   }
-  const stamp = new Date().toISOString().slice(0, 10);
-  triggerDownload(`orderinn-daily-${stamp}.csv`, csv, 'text/csv');
-  showAdminToast({
-    title: `Exported ${todayCount} order${todayCount === 1 ? '' : 's'} (${servedCount} served)`,
-    variant: 'success',
-  });
+  const btn = $('#exportCsvBtn');
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Building report…';
+  try {
+    const { workbook, todayCount, servedCount } = await buildDailyWorkbook();
+    const buffer = await workbook.xlsx.writeBuffer();
+    const stamp = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `orderinn-daily-${stamp}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showAdminToast({
+      title: `Exported ${todayCount} order${todayCount === 1 ? '' : 's'} (${servedCount} served)`,
+      variant: 'success',
+    });
+  } catch (err) {
+    console.error('[export] failed to build report', err);
+    showAdminToast({ title: 'Export failed — see console for details', variant: 'error' });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
 });
 
 /* ==========================================================
@@ -5733,7 +6270,7 @@ async function boot() {
   if (new URLSearchParams(location.search).get('reset') === '1') {
     try {
       Store.factoryReset();
-      ['bb_chat_local', 'bossb_active_order', 'bb_chat_seen', 'bb_pin_hint_seen', 'bb_dismissed_orders']
+      ['bb_chat_local', 'bossb_active_order', 'bb_chat_seen', 'bb_pin_hint_seen', 'bb_dismissed_orders', 'bossb_thanks_shown_for']
         .forEach(k => localStorage.removeItem(k));
     } catch (e) { /* best-effort */ }
     location.replace(location.pathname);   // drop the param + reload clean
@@ -5753,9 +6290,30 @@ async function boot() {
   // delivered by the Google OAuth redirect-back landing on this page.
   // Must happen before the UI below reads Store.getCustomer()/
   // isCustomer() so a signed-in customer never flashes as signed-out.
-  let authResume = { customer: null, freshOAuth: false };
+  let authResume = { customer: null, freshOAuth: false, pendingDeletion: null };
   try { authResume = await Store.resumeAuthSession(); }
-  catch (e) { console.warn('[boot] resumeAuthSession failed', e); }
+  catch (e) {
+    console.warn('[boot] resumeAuthSession failed', e);
+    if (/permanently deleted/i.test(e.message || '')) {
+      showToast('Your account was permanently deleted after the 15-day grace period.', 'error');
+    }
+  }
+  // Strip every OAuth-redirect marker (?code=..., ?staffAuth=1,
+  // ?inviteCode=...) up front, unconditionally — regardless of which
+  // branch above ran or whether it threw, so a refresh never
+  // re-consumes a stale code, re-opens the staff invite prompt, or
+  // leaves a plaintext invite code sitting in the address bar/history
+  // after the tab reloads.
+  {
+    const qs = new URLSearchParams(location.search);
+    if (qs.has('code') || qs.has('staffAuth') || qs.has('inviteCode')) {
+      const url = new URL(location.href);
+      url.searchParams.delete('code');
+      url.searchParams.delete('staffAuth');
+      url.searchParams.delete('inviteCode');
+      history.replaceState({}, '', url.pathname + url.search + url.hash);
+    }
+  }
 
   // If a remembered session (admin OR customer) no longer matches
   // a live account — the account was renamed/removed on the server,
@@ -5778,8 +6336,11 @@ async function boot() {
 
   // If we arrived from register.html (or a deep link), open the
   // staff login form immediately. Don't auto-prompt for table.
+  // Still goes through the role-switch guard: landing here while a
+  // customer is signed in is the same conflict as clicking Staff
+  // Login would be.
   if (new URLSearchParams(location.search).get('staff') === '1') {
-    openStaffLogin();
+    ensureSignedOutForRole('admin').then(ok => { if (ok) openStaffLogin(); });
   } else {
     ensureTable();
   }
@@ -5793,6 +6354,7 @@ async function boot() {
   wireFilters();
   renderHero();
   renderMenu();
+  showBestSellerCarousel();   // after renderMenu — it ranks off MENU
   updateCart();
   refreshOrdersBadge();
   refreshAdminHeaderBtn();
@@ -5816,14 +6378,41 @@ async function boot() {
   reconcileCustomerPoints();
 
   // Just landed back from the Google OAuth redirect: greet the
-  // customer (the generic linking above already ran) and strip the
-  // ?code=... param so a refresh doesn't try to re-consume it.
+  // customer (the generic linking above already ran; the ?code=...
+  // param was already stripped up top).
   if (authResume.freshOAuth && authResume.customer) {
     refreshProfileBtn();
     showToast(`Welcome, ${authResume.customer.name}`, 'success');
-    const url = new URL(location.href);
-    url.searchParams.delete('code');
-    history.replaceState({}, '', url.pathname + url.search + url.hash);
+  }
+
+  // Signed back in during the 15-day deletion grace period — offer to
+  // cancel it. Runs on both a fresh Google redirect and a plain
+  // restored session, so it can't be missed either way.
+  if (authResume.customer && authResume.pendingDeletion != null) {
+    promptCancelDeletion(authResume.pendingDeletion);
+  }
+
+  // Landed back from a "Forgot password?" reset-link email: the
+  // recovery session is already active (Store.resumeAuthSession
+  // detected it), so open the set-new-password modal directly rather
+  // than routing through the normal login form.
+  if (authResume.passwordRecovery) {
+    history.replaceState({}, '', location.pathname + location.search);
+    openResetPasswordModal();
+  }
+
+  // Just landed back from a STAFF Google OAuth redirect (Staff Login's
+  // "Continue with Google", tagged via the ?staffAuth=1 redirect param
+  // so this branch doesn't get confused with a customer sign-in
+  // above). Either the Google identity matched an existing admin —
+  // enter the panel straight away — or it's brand new and still needs
+  // the invite code.
+  if (authResume.staff) {
+    if (authResume.staff.staffNeedsInviteCode) {
+      openStaffInvite({ authSession: authResume.staff.authSession, pendingEmail: authResume.staff.pendingEmail });
+    } else if (authResume.staff.staffSession) {
+      completeStaffSignIn(authResume.staff.staffSession);
+    }
   }
 
   // Restore the customer's order state on reload — banner, FAB,
