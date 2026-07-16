@@ -413,6 +413,33 @@ select option,
 .icon-btn:hover { background: var(--brown-50); }
 .close-btn { border: none; background: transparent; font-size: 1.05rem; }
 
+/* Favorites quick-access header button — same badge treatment as the
+   cart, plus an "active" state that fills the heart in the brand accent
+   when the menu is filtered to favorites (state.favoritesOnly). */
+.fav-btn { position: relative; overflow: visible; }
+.fav-btn-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--white);
+  font-size: .68rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--white);
+  transition: transform .2s cubic-bezier(.5, 1.5, .5, 1), opacity .15s;
+}
+.fav-btn.is-empty .fav-btn-badge { opacity: 0; transform: scale(.4); }
+[data-theme="dark"] .fav-btn-badge { color: #0E1419; }
+/* Active: menu is showing favorites only → fill the heart + accent it. */
+.fav-btn[aria-pressed="true"] { color: var(--primary); }
+.fav-btn[aria-pressed="true"] .fav-nav-ico path { fill: currentColor; stroke: currentColor; }
+
 /* Keeps content readable to assistive tech / future use without
    taking up visual space. */
 .visually-hidden {

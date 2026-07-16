@@ -308,6 +308,7 @@ function onFilterHostClick(e) {
     state.favoritesOnly = !state.favoritesOnly;
     renderFilters();
     renderMenu();
+    refreshFavNavBtn();
     return;
   }
 }
@@ -358,7 +359,7 @@ function wireFilters() {
     state.category = 'all'; state.sort = 'relevance'; state.favoritesOnly = false;
     $$('.chip', $('#categoryChips')).forEach(c =>
       c.classList.toggle('active', c.dataset.category === 'all'));
-    renderFilters(); renderMenu();
+    renderFilters(); renderMenu(); refreshFavNavBtn();
   });
 
   // Drag-to-dismiss the sheet.
@@ -567,7 +568,40 @@ function refreshFavFilterUI() {
   document.querySelectorAll('[data-fav-toggle]').forEach(el => {
     el.classList.toggle('has-favs', n > 0);
   });
+  refreshFavNavBtn();
 }
+
+/* Header favorites button: live count badge + active state mirroring
+   state.favoritesOnly. Kept in sync with the in-menu filter toggle so
+   both controls always agree. */
+function refreshFavNavBtn() {
+  const btn = $('#favNavBtn');
+  if (!btn) return;
+  const n = Store.favoriteCount();
+  const countEl = $('#favNavCount');
+  if (countEl) countEl.textContent = n > 99 ? '99+' : String(n);
+  btn.classList.toggle('is-empty', n === 0);
+  btn.setAttribute('aria-pressed', String(state.favoritesOnly));
+  btn.setAttribute('aria-label', state.favoritesOnly ? 'Showing favorites — show all' : 'Show favorites');
+}
+
+$('#favNavBtn')?.addEventListener('click', () => {
+  // No favorites yet: don't strand the user on an empty list — nudge
+  // them to save some first.
+  if (Store.favoriteCount() === 0 && !state.favoritesOnly) {
+    showToast('No favorites yet. Tap the ♥ on any item to save it.', 'info');
+    return;
+  }
+  state.favoritesOnly = !state.favoritesOnly;
+  renderFilters();
+  renderMenu();
+  refreshFavNavBtn();
+  // Bring the menu into view so the filtered result is visible from
+  // wherever they tapped.
+  if (state.favoritesOnly) {
+    document.querySelector('#menuGrid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+});
 
 /* Keyboard activation for the product cards. They're role="button"
    tabindex="0" (see renderMenu), so Enter/Space must open the
@@ -6408,6 +6442,7 @@ async function boot() {
   showBestSellerCarousel();   // after renderMenu — it ranks off MENU
   updateCart();
   refreshOrdersBadge();
+  refreshFavNavBtn();          // header favorites button: initial count + state
   refreshAdminHeaderBtn();
 
   // Prepare the notification chime (unlocks on first gesture).

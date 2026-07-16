@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=85" />
+  <link rel="stylesheet" href="style.css?v=86" />
 
   <script>
     (function () {
@@ -131,6 +131,16 @@
               <circle cx="12" cy="8" r="3.5" fill="currentColor"/>
               <path d="M5 20c0-3.6 3.1-5.5 7-5.5s7 1.9 7 5.5z" fill="currentColor"/>
             </svg>
+          </button>
+          <!-- Favorites quick-access: one tap filters the menu to saved
+               items (toggles state.favoritesOnly) from anywhere, so
+               customers don't have to open the filters. Live count badge;
+               hidden when there are no favorites yet. -->
+          <button class="icon-btn fav-btn is-empty" id="favNavBtn" aria-label="Show favorites" aria-pressed="false">
+            <svg class="fav-nav-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M12 20.5s-7.5-4.6-7.5-9.7A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 7.5 3.8c0 5.1-7.5 9.7-7.5 9.7Z"/>
+            </svg>
+            <span class="fav-btn-badge" id="favNavCount">0</span>
           </button>
           <!-- Cart: compact icon button in the header so it's reachable
                without scrolling back down, with a live count badge.
@@ -1225,6 +1235,6 @@
   <script src="config.js?v=1"></script>
   <script src="store.js?v=53"></script>
   <script src="common.js?v=2"></script>
-  <script src="script.js?v=101"></script>
+  <script src="script.js?v=102"></script>
 </body>
 </html>
