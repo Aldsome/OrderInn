@@ -290,6 +290,22 @@ const sb = REMOTE_MODE ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY
 if (REMOTE_MODE) console.info('[Store] Supabase REMOTE mode enabled →', SUPABASE_URL);
 else             console.info('[Store] LOCAL mode (no Supabase URL in config.js — cross-device sync disabled)');
 
+/* Query param carried through the Google redirect round-trip so
+   resumeAuthSession() can tell "this OAuth callback was a staff
+   sign-in" apart from a customer one — both land on index.html with
+   the same kind of Supabase session. Encoded directly in the
+   redirectTo URL (not sessionStorage/localStorage): Supabase's OAuth
+   flow bounces the browser through accounts.google.com and Supabase's
+   own callback domain before landing back here, and some browsers
+   (Safari ITP, Firefox strict tracking protection, Brave) partition
+   or clear tab/site storage across that kind of cross-site redirect
+   chain — which is exactly what caused staff Google sign-ins to be
+   silently treated as customer sign-ins (the flag never survived the
+   round-trip). A URL query param has no such failure mode: Supabase
+   preserves redirectTo's own query string verbatim and just appends
+   its own `?code=` alongside it. */
+const STAFF_OAUTH_PARAM = 'staffAuth';
+
 /* Row ↔ JS object mapping. Postgres tables use snake_case;
    the in-memory app uses camelCase, mirroring the JSON file
    shape. Centralised here so the rest of the store doesn't
@@ -359,6 +375,7 @@ const ROW_TO_USER = (r) => r && ({
   createdAt:    r.created_at,
   perks:        r.perks || null,        // jsonb: customer points/vouchers/loyalty
   authUserId:   r.auth_user_id || null, // links to auth.users once on Supabase Auth
+  deletionRequestedAt: r.deletion_requested_at || null, // set = 15-day grace period running
 });
 const USER_TO_ROW = (u) => ({
   id:            u.id,
@@ -369,6 +386,7 @@ const USER_TO_ROW = (u) => ({
   created_at:    u.createdAt,
   perks:         u.perks || null,       // self-heals if the column isn't migrated yet
   auth_user_id:  u.authUserId || null,  // self-heals if the column isn't migrated yet
+  deletion_requested_at: u.deletionRequestedAt || null, // self-heals if the column isn't migrated yet
 });
 /* Normalize a Postgres timestamptz into a value `new Date()` parses
    correctly. PostgREST returns proper ISO ("...T...+00:00"), but the
@@ -932,11 +950,17 @@ const Store = {
     const cid = Store.getClientId();
     const cust = Store.getCustomer && Store.getCustomer();
     const uid  = cust && cust.id;
-    // This device's current-session orders PLUS — when signed in — every
-    // order owned by this account (orders linked from past guest sessions
-    // or placed on another device), de-duped by orderId.
+    // Ownership is exclusive once an order is claimed: a claimed
+    // order (o.userId set) matches ONLY the account it belongs to —
+    // never by clientId, even on the device that originally placed
+    // it. Otherwise, after a guest order gets linked to an account
+    // and that customer signs out, the same physical device would
+    // still show it (clientId still matches) until the next reset —
+    // a stale ownership leak on shared/kiosk devices. Only a truly
+    // UNCLAIMED order (o.userId is null) falls back to the device's
+    // own clientId, which is the actual "still just a guest" case.
     return Store.getOrders().filter(o =>
-      o.clientId === cid || (uid && o.userId === uid)
+      o.userId ? o.userId === uid : o.clientId === cid
     );
   },
 
@@ -1024,6 +1048,19 @@ const Store = {
       if (hist.length > 10) hist.length = 10;
       writeJSON(STORE_KEYS.clientHistory, hist);
     }
+    const id = 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem(STORE_KEYS.client, id);
+    return id;
+  },
+  /* Sever this device from every id it has held: fresh id, empty
+     history. resetClientId() deliberately keeps the history so
+     device-scoped checks (chat ownership, table headcount) survive a
+     visit reset; that's wrong when we're ending a PERSONA, because the
+     history is what makes a previous account's orders keep looking
+     like "this session's orders" (see sessionOrdersForeignTo) and
+     re-triggers the account-switch prompt on the next sign-in. */
+  hardResetClientId() {
+    writeJSON(STORE_KEYS.clientHistory, []);
     const id = 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
     localStorage.setItem(STORE_KEYS.client, id);
     return id;
@@ -1545,26 +1582,203 @@ const Store = {
      ========================================================== */
   async getUsers() { return readJSON(STORE_KEYS.users, []); },
 
+  /* ----- Real staff auth (Supabase Auth) -----
+     Mirrors loginCustomer(): REMOTE mode goes through
+     sb.auth.signInWithPassword + _syncStaffFromAuthSession instead of
+     a client-side hash compare, so the credential never leaves
+     Supabase and a session can't be forged by editing localStorage.
+     LOCAL mode (no Supabase configured) keeps the original hash
+     compare so the app still works standalone. */
   async login({ email, password }) {
-    const users = await Store.getUsers();
-    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!user) throw new Error('No account found for that email');
-    const hash = await hashPassword(password);
-    if (hash !== user.passwordHash) throw new Error('Incorrect password');
-    if (user.role !== 'admin')      throw new Error('Staff access only');
+    if (!REMOTE_MODE) {
+      const users = await Store.getUsers();
+      const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+      if (!user) throw new Error('No account found for that email');
+      const hash = await hashPassword(password);
+      if (hash !== user.passwordHash) throw new Error('Incorrect password');
+      if (user.role !== 'admin')      throw new Error('Staff access only');
+      return Store._mintAdminSession(user);
+    }
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      if (error.message === 'Invalid login credentials') throw new Error('Incorrect email or password');
+      if (error.message === 'Email not confirmed') {
+        throw new Error('Please confirm your email first — check your inbox for the link we sent.');
+      }
+      throw new Error(error.message || 'Sign-in failed');
+    }
+    return Store._syncStaffFromAuthSession(data.session);
+  },
 
+  /* Shared by the password path (login) and the Google path
+     (_syncStaffFromAuthSession) — one place that defines what a
+     staff session looks like. `authSession` (the real Supabase Auth
+     session, REMOTE mode only) supplies the real JWT expiry so the
+     local session cache expires when the real credential does,
+     instead of on a fabricated timer; LOCAL mode has no such session
+     to draw from and keeps the original flat 8-hour TTL. */
+  _mintAdminSession(user, authSession) {
     const session = {
-      email:     user.email,
-      name:      user.name,
-      role:      user.role,
-      issuedAt:  Date.now(),
-      expiresAt: Date.now() + (1000 * 60 * 60 * 8),
+      email:      user.email,
+      name:       user.name,
+      role:       user.role,
+      authUserId: user.authUserId || (authSession && authSession.user && authSession.user.id) || null,
+      issuedAt:   Date.now(),
+      expiresAt:  (authSession && authSession.expires_at)
+        ? authSession.expires_at * 1000
+        : Date.now() + (1000 * 60 * 60 * 8),
     };
     writeJSON(STORE_KEYS.session, session);
     return session;
   },
 
-  logout()        { localStorage.removeItem(STORE_KEYS.session); },
+  /* Google sign-in for staff — bolted onto the existing local
+     bb_accounts/PEPPER admin system rather than migrating admins to
+     Supabase Auth (customers already made that move; admins haven't
+     yet). Supabase OAuth is used ONLY to prove "this browser controls
+     this Google email" — the actual admin session that comes out of
+     it is still the local session shape login() produces. The
+     STAFF_OAUTH_PARAM query param on redirectTo tells
+     resumeAuthSession() apart from a customer's Google sign-in when
+     the redirect lands back on index.html, since both use the same
+     Supabase Auth session under the hood.
+
+     `inviteCode` is optional and only ever passed by register.html's
+     Google button — it collects + validates the code up front (same
+     as its manual form), then carries it through the redirect so a
+     brand-new staff member isn't asked for the code a second time on
+     the way back. The Staff Login modal calls this with no code;
+     existing admins don't need one, and a truly new sign-up is
+     redirected to register.html's Google button instead (see
+     completeStaffSignIn's needsInviteCode handling on the resume
+     side, which still enforces the code even if this param is
+     tampered with or omitted). */
+  async loginStaffWithGoogle(inviteCode) {
+    if (!REMOTE_MODE) throw new Error('Google sign-in requires Supabase to be configured');
+    let redirectTo = `${window.location.origin}/index.html?${STAFF_OAUTH_PARAM}=1`;
+    if (inviteCode) redirectTo += `&inviteCode=${encodeURIComponent(inviteCode)}`;
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo },
+    });
+    if (error) throw new Error(error.message || 'Could not start Google sign-in');
+  },
+
+  /* Completes staff sign-in (password OR Google) given a real
+     Supabase Auth session. Mirrors _syncCustomerFromAuthSession's
+     structure: look up by the linked authUserId first (the fast path
+     for every returning admin, including the dashboard-linked master
+     admin — its auth_user_id was stamped directly in Postgres by
+     data/admin-auth-migration.sql's manual step), falling back to an
+     email match only to upgrade a legacy pre-migration row on its
+     first real sign-in. The Supabase session now PERSISTS — earlier
+     versions of this function signed it out right after, treating it
+     as a one-shot identity check with a separate local session as
+     the real credential; that's what let a freshly-created account
+     get silently wiped by the next boot's authoritative bb_accounts
+     pull, since nothing but an unverified local blob backed it. */
+  async _syncStaffFromAuthSession(session, inviteCodeIfNew) {
+    const authUser = session.user;
+    const email = (authUser?.email || '').toLowerCase();
+    if (!email) throw new Error('Google did not return an email address');
+    const users = await Store.getUsers();
+    let user = users.find(u => u.authUserId === authUser.id && u.role === 'admin');
+
+    if (!user) {
+      // Not linked yet — try to upgrade an existing row by email
+      // (a legacy pre-migration admin signing in for the first time
+      // since, or the dashboard-created master admin before its
+      // auth_user_id UPDATE has synced into the local cache).
+      const existingByEmail = users.find(u => (u.email || '').toLowerCase() === email);
+      if (existingByEmail && existingByEmail.role !== 'admin') {
+        // This Google/Supabase identity already belongs to a
+        // customer account — never silently upgrade it or create a
+        // second row against the same auth_user_id (the DB's unique
+        // partial index would reject that with a confusing raw
+        // error); fail with a clear message instead.
+        throw new Error('This email is already registered as a customer account. Staff accounts must use a different email address.');
+      }
+      if (existingByEmail) {
+        user = { ...existingByEmail, authUserId: authUser.id };
+        const idx = users.findIndex(u => u.id === user.id);
+        users[idx] = user;
+        writeJSON(STORE_KEYS.users, users);
+        remoteUpsert('bb_accounts', USER_TO_ROW(user));
+      } else {
+        // Brand-new admin — the invite code is the only gate.
+        const expected = Store.getInviteCode();
+        if (!inviteCodeIfNew || String(inviteCodeIfNew).trim() !== expected) {
+          const err = new Error('Invalid invite code. Ask an existing admin for the current code.');
+          err.needsInviteCode = true;
+          err.pendingEmail = email;
+          throw err;
+        }
+        const name = (authUser.user_metadata?.full_name || authUser.user_metadata?.name
+          || email.split('@')[0] || 'Staff')
+          .trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 30) || 'Staff';
+        user = {
+          id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+          email, name, role: 'admin',
+          passwordHash: null,           // real credential lives in Supabase Auth
+          authUserId: authUser.id,
+          createdAt: new Date().toISOString(),
+        };
+        users.push(user);
+        writeJSON(STORE_KEYS.users, users);
+        remoteUpsert('bb_accounts', USER_TO_ROW(user));
+      }
+    }
+
+    return Store._mintAdminSession(user, session);
+  },
+
+  /* Public entry point for completing a staff Google sign-in that
+     stopped to ask for an invite code (resumeAuthSession() returned
+     staff.staffNeedsInviteCode). Call with the code the admin typed
+     and the authSession it handed back. Throws the same
+     "Invalid invite code" error again if it's still wrong — the
+     Supabase Auth session is retained (not signed out) until this
+     either succeeds or the caller gives up, so the admin isn't sent
+     through the whole Google redirect again just to retry the code. */
+  async completeStaffGoogleSignIn(authSession, inviteCode) {
+    return Store._syncStaffFromAuthSession(authSession, inviteCode);
+  },
+
+  /* Called when the admin cancels the invite-code prompt instead of
+     completing it — drops the Google identity check they just did
+     rather than leaving a signed-in-but-unlinked Supabase session
+     sitting in the browser. */
+  abandonStaffGoogleSignIn() {
+    if (REMOTE_MODE) sb.auth.signOut().catch(() => {});
+  },
+
+  logout() {
+    const s = readJSON(STORE_KEYS.session, null);
+    localStorage.removeItem(STORE_KEYS.session);
+    // Clear the real Supabase Auth session too (mirrors
+    // logoutCustomer()) — REMOTE-mode admin sessions now persist
+    // (see _syncStaffFromAuthSession), so without this a "signed
+    // out" admin would still have a live, silently-refreshing
+    // Supabase session in the browser that resumeAuthSession() could
+    // resurrect on the next page load.
+    //
+    // NOT unconditional, though: resumeOrClearOnLogin() calls this
+    // to drop a STALE admin session AFTER a customer has already
+    // signed in on the same device (loginCustomer's own Supabase
+    // sign-in runs first and completes before this fires) — the live
+    // Supabase session at that point already belongs to the
+    // customer, not the admin being cleared. Only sign out of
+    // Supabase if the live session's user still matches the admin
+    // session we're actually dropping, so a customer who just signed
+    // in isn't immediately signed back out by this cleanup.
+    if (REMOTE_MODE && s && s.authUserId) {
+      sb.auth.getSession().then(({ data }) => {
+        if (data.session && data.session.user && data.session.user.id === s.authUserId) {
+          sb.auth.signOut().catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  },
   getSession()    {
     const s = readJSON(STORE_KEYS.session, null);
     if (!s)                          return null;
@@ -1580,6 +1794,24 @@ const Store = {
     if (!s || !s.email) return null;
     const users = readJSON(STORE_KEYS.users, []);
     return users.find(u => (u.email || '').toLowerCase() === String(s.email).toLowerCase()) || null;
+  },
+  /* Called by the admin-panel session watcher (script.js) only when
+     the LOCAL session cache is missing or near its recorded expiry —
+     checks whether the real underlying Supabase session is still
+     live (the SDK auto-refreshes it silently while the tab is open)
+     and, if so, re-mints the local cache from it instead of forcing
+     a real sign-out. Returns true if it refreshed something, false
+     if there's genuinely no live admin session to recover. No-op
+     (returns false) in LOCAL mode — nothing to refresh against. */
+  async tryRefreshAdminSession() {
+    if (!REMOTE_MODE) return false;
+    const { data } = await sb.auth.getSession();
+    if (!data.session) return false;
+    const users = readJSON(STORE_KEYS.users, []);
+    const user = users.find(u => u.authUserId === data.session.user.id && u.role === 'admin');
+    if (!user) return false;
+    Store._mintAdminSession(user, data.session);
+    return true;
   },
   isAdmin() {
     const s = Store.getSession();
@@ -1624,23 +1856,40 @@ const Store = {
   },
 
   /* ==========================================================
-     SEED — runs every boot; guarantees the default admin
-     exists with the default password.
+     SEED — runs every boot.
+     REMOTE mode: the default admin's real credential now lives in
+     Supabase Auth (admin@orderinn.com was created once, manually, in
+     the dashboard, and linked via auth_user_id — see
+     data/admin-auth-migration.sql). There's no local hash left to
+     force-sync; this just self-heals `role` if that row's local
+     cache copy ever drifted, and is a no-op once the dashboard step
+     is done and its bb_accounts row is correctly `role: 'admin'`.
+     LOCAL mode (no Supabase configured): unchanged — force-syncs the
+     admin1234 hash every boot so the app is always immediately
+     usable standalone, exactly as before this migration.
      ========================================================== */
   async seedIfEmpty() {
-    const SEED_ID       = 'u_seed_admin';
-    const SEED_EMAIL    = 'admin@orderinn.com';
-    const SEED_PASSWORD = 'admin1234';
+    const SEED_ID    = 'u_seed_admin';
+    const SEED_EMAIL = 'admin@orderinn.com';
     const users = await Store.getUsers();
-    const expectedHash = await hashPassword(SEED_PASSWORD);
-    // Match the seed admin by its STABLE id first, falling back to
-    // email only for legacy rows. Matching by email alone meant a
-    // rebrand (email change) made the app think the admin was gone
-    // and try to recreate it — a write RLS rejects, which jammed
-    // the sync queue. Id-matching makes future renames code-only.
+    // Match by STABLE id first, falling back to email only for
+    // legacy rows — id-matching survives a rebrand (email change)
+    // without the app thinking the admin is gone and trying to
+    // recreate it (which RLS would reject, jamming the sync queue).
     const existing = users.find(u => u.id === SEED_ID)
                   || users.find(u => (u.email || '').toLowerCase() === SEED_EMAIL.toLowerCase());
 
+    if (REMOTE_MODE) {
+      if (existing && existing.role !== 'admin') {
+        existing.role = 'admin';
+        writeJSON(STORE_KEYS.users, users);
+        remoteUpsert('bb_accounts', USER_TO_ROW(existing));
+      }
+      return;
+    }
+
+    const SEED_PASSWORD = 'admin1234';
+    const expectedHash = await hashPassword(SEED_PASSWORD);
     if (existing) {
       let changed = false;
       if (existing.role !== 'admin')      { existing.role = 'admin';       changed = true; }
@@ -1659,7 +1908,6 @@ const Store = {
     };
     users.push(seed);
     writeJSON(STORE_KEYS.users, users);
-    remoteUpsert('bb_accounts', USER_TO_ROW(seed));
     console.info(`[Store] seeded default admin: ${SEED_EMAIL} / ${SEED_PASSWORD}`);
   },
 
@@ -1880,10 +2128,11 @@ const Store = {
     }
   },
 
-  /* Register a new account. Used by register.html (which must
-     include a valid inviteCode) and by the admin Settings
-     "Add staff" button (which calls with skipInviteCheck=true
-     because the caller is already an authenticated admin). */
+  /* Register a new account — the LOCAL_MODE-only path (REMOTE mode
+     uses sb.auth.signUp instead, see signupAdmin/signupCustomer).
+     Used by LOCAL customer signup and by signupAdmin's LOCAL_MODE
+     fallback (which passes skipInviteCheck:true since it already
+     validated the code itself, before ever calling this). */
   async registerAccount({ email, name, password, role = 'admin', inviteCode, skipInviteCheck = false }) {
     email = String(email || '').trim().toLowerCase();
     name  = String(name  || '').trim();
@@ -1928,16 +2177,50 @@ const Store = {
     return account;
   },
 
-  /* Intention-revealing wrappers around registerAccount so call
-     sites read clearly about WHO they are creating.
-     - signupAdmin requires a valid invite code (enforced inside
-       registerAccount unless an existing admin sets skipInviteCheck).
-     - signupCustomer never needs an invite code. */
+  /* ----- Real staff signup (Supabase Auth) -----
+     Mirrors signupCustomer's two-outcome branch: REMOTE mode goes
+     through sb.auth.signUp instead of registerAccount's client-side
+     hash, so the credential never touches this device's localStorage
+     as anything but a session cache. The invite code is checked
+     client-side, against Store.getInviteCode(), BEFORE ever calling
+     Supabase — same trust level as before, just moved earlier so a
+     wrong code never starts a signUp call. LOCAL mode falls through
+     to registerAccount exactly as it always has (skipInviteCheck:true
+     since the code was already validated above). */
   async signupAdmin({ email, name, password, inviteCode }) {
-    return Store.registerAccount({ email, name, password, role: 'admin', inviteCode });
-  },
-  async signupCustomer({ email, name, password }) {
-    return Store.registerAccount({ email, name, password, role: 'customer' });
+    email = String(email || '').trim().toLowerCase();
+    name  = String(name  || '').trim();
+    if (!email || !name || !password) throw new Error('Missing field');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter a valid email address');
+    if (!/^[A-Za-z0-9_-]{2,30}$/.test(name)) {
+      throw new Error('Name can use only letters, numbers, _ or - (2–30 chars, no spaces or @)');
+    }
+    if (password.length < 8) throw new Error('Password must be at least 8 characters');
+
+    const expected = Store.getInviteCode();
+    if (!inviteCode || String(inviteCode).trim() !== expected) {
+      throw new Error('Invalid invite code. Ask an existing admin for the current code.');
+    }
+
+    if (!REMOTE_MODE) {
+      const account = await Store.registerAccount({ email, name, password, role: 'admin', inviteCode, skipInviteCheck: true });
+      return { ...account, needsEmailConfirmation: false };
+    }
+
+    const { data, error } = await sb.auth.signUp({
+      email, password, options: { data: { display_name: name } },
+    });
+    if (error) {
+      throw new Error(/already registered|already exists/i.test(error.message)
+        ? 'An account with that email already exists' : (error.message || 'Could not create account'));
+    }
+    // Same two outcomes as signupCustomer, depending on the project's
+    // "Confirm email" Auth setting — see that function for detail.
+    if (data.session) {
+      const session = await Store._syncStaffFromAuthSession(data.session, inviteCode);
+      return { ...session, needsEmailConfirmation: false };
+    }
+    return { id: null, email, name, needsEmailConfirmation: true };
   },
 
   /* ==========================================================
@@ -2014,7 +2297,9 @@ const Store = {
       const hash = await hashPassword(password);
       if (hash !== user.passwordHash) throw new Error('Incorrect password');
       writeJSON(STORE_KEYS.customer, { id: user.id, email: user.email, name: user.name });
-      return Store.getCustomer();
+      const purged = await Store._purgeIfDeletionDue(user);
+      if (purged) throw new Error('This account was permanently deleted after the 15-day grace period.');
+      return { ...Store.getCustomer(), pendingDeletion: Store.deletionDaysLeft(user) };
     }
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
     if (error) {
@@ -2024,8 +2309,8 @@ const Store = {
       }
       throw new Error(error.message || 'Sign-in failed');
     }
-    await Store._syncCustomerFromAuthSession(data.session);
-    return Store.getCustomer();
+    const { pendingDeletion } = await Store._syncCustomerFromAuthSession(data.session);
+    return { ...Store.getCustomer(), pendingDeletion };
   },
 
   /* Google sign-in — redirects the browser to Google, then back to
@@ -2044,6 +2329,32 @@ const Store = {
     if (error) throw new Error(error.message || 'Could not start Google sign-in');
   },
 
+  /* "Forgot password" — sends a reset-link email via Supabase Auth.
+     The link redirects back to index.html with a recovery session in
+     the URL hash; resumeAuthSession() detects it (type=recovery) and
+     boot() opens #resetPasswordModal so the customer can set a new
+     password via completePasswordReset(). Always resolves the same
+     generic message regardless of whether the email exists, so this
+     can't be used to enumerate registered accounts. */
+  async requestPasswordReset(email) {
+    if (!REMOTE_MODE) throw new Error('Password reset requires Supabase to be configured');
+    email = String(email || '').trim().toLowerCase();
+    if (!email) throw new Error('Enter your email first');
+    await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + '/index.html',
+    });
+  },
+
+  /* Sets a new password on the recovery session created by clicking
+     the reset-link email. Only valid while that recovery session is
+     active (see resumeAuthSession's recovery branch). */
+  async completePasswordReset(newPassword) {
+    if (!REMOTE_MODE) throw new Error('Password reset requires Supabase to be configured');
+    if (!newPassword || newPassword.length < 8) throw new Error('Password must be at least 8 characters');
+    const { error } = await sb.auth.updateUser({ password: newPassword });
+    if (error) throw new Error(error.message || 'Could not update password');
+  },
+
   /* Call once on boot (after bootSeed). Picks up either: (a) a
      returning session Supabase Auth already restored from its own
      storage, or (b) a fresh session just delivered by the Google
@@ -2052,13 +2363,52 @@ const Store = {
      tell "just signed in via Google" apart from "was already signed
      in" and only show a welcome toast / link guest orders for the
      former. No-op in LOCAL mode or when signed out. Returns
-     { customer, freshOAuth: boolean }. */
+     { customer, freshOAuth: boolean }.
+
+     If the STAFF_OAUTH_PARAM query param is present, this was a
+     staff (not customer) Google round-trip — routes to
+     _syncStaffFromAuthSession instead and reports it via `staff` on
+     the result so boot() can prompt for an invite code
+     (staffNeedsInviteCode) or drop straight into the admin panel
+     (staffSession), instead of treating it as a customer sign-in. */
   async resumeAuthSession() {
-    if (!REMOTE_MODE) return { customer: null, freshOAuth: false };
-    const freshOAuth = new URLSearchParams(location.search).has('code');
+    if (!REMOTE_MODE) return { customer: null, freshOAuth: false, pendingDeletion: null };
+    const params = new URLSearchParams(location.search);
+    const freshOAuth = params.has('code');
+    const staffFlow = params.has(STAFF_OAUTH_PARAM);
+    // Password-reset email links land back here with type=recovery in
+    // the URL hash (Supabase's own convention) — the SDK auto-parses
+    // that hash into a real session before this line runs. Report it
+    // separately so boot() can open the "set new password" modal
+    // instead of treating this like a normal returning sign-in.
+    const passwordRecovery = /type=recovery/.test(location.hash);
     const { data } = await sb.auth.getSession();
-    if (data.session) await Store._syncCustomerFromAuthSession(data.session);
-    return { customer: Store.getCustomer(), freshOAuth: freshOAuth && !!data.session };
+    if (passwordRecovery && data.session) {
+      return { customer: null, freshOAuth: false, pendingDeletion: null, passwordRecovery: true };
+    }
+
+    if (staffFlow) {
+      if (!data.session) return { customer: null, freshOAuth: false, pendingDeletion: null, staff: null };
+      try {
+        // A code already collected + validated on register.html rides
+        // along in the redirect URL so a brand-new sign-up isn't
+        // prompted for it a second time; existing admins don't need
+        // one, so this is undefined for the Staff Login modal's path.
+        const staffSession = await Store._syncStaffFromAuthSession(data.session, params.get('inviteCode'));
+        return { customer: null, freshOAuth: true, pendingDeletion: null, staff: { staffSession } };
+      } catch (err) {
+        if (err.needsInviteCode) {
+          return { customer: null, freshOAuth: true, pendingDeletion: null,
+                    staff: { staffNeedsInviteCode: true, pendingEmail: err.pendingEmail, authSession: data.session } };
+        }
+        sb.auth.signOut().catch(() => {});
+        throw err;
+      }
+    }
+
+    let pendingDeletion = null;
+    if (data.session) ({ pendingDeletion } = await Store._syncCustomerFromAuthSession(data.session));
+    return { customer: Store.getCustomer(), freshOAuth: freshOAuth && !!data.session, pendingDeletion };
   },
 
   /* Given an active Supabase Auth session, ensure a linked
@@ -2069,7 +2419,7 @@ const Store = {
      back to the name Google provides, then the email's local part. */
   async _syncCustomerFromAuthSession(session, nameHint) {
     const authUser = session.user;
-    if (!authUser) return;
+    if (!authUser) return { pendingDeletion: null };
     const users = await Store.getUsers();
     let account = users.find(u => u.authUserId === authUser.id);
 
@@ -2081,7 +2431,7 @@ const Store = {
       account = users.find(u => (u.email || '').toLowerCase() === email && u.role === 'customer');
       const name = (nameHint || authUser.user_metadata?.full_name
         || authUser.user_metadata?.name || email.split('@')[0] || 'Guest')
-        .replace(/[^A-Za-z0-9_-]/g, '').slice(0, 30) || 'Guest';
+        .trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 30) || 'Guest';
       if (account) {
         account = { ...account, authUserId: authUser.id };
       } else {
@@ -2099,6 +2449,14 @@ const Store = {
     }
 
     writeJSON(STORE_KEYS.customer, { id: account.id, email: account.email, name: account.name });
+
+    // Enforce the 15-day grace period: if it has fully elapsed, purge
+    // for good instead of completing sign-in.
+    const purged = await Store._purgeIfDeletionDue(account);
+    if (purged) {
+      throw new Error('This account was permanently deleted after the 15-day grace period.');
+    }
+    return { pendingDeletion: Store.deletionDaysLeft(account) };
   },
 
   getCustomer()    { return readJSON(STORE_KEYS.customer, null); },
@@ -2117,6 +2475,75 @@ const Store = {
     if (!c) return null;
     return readJSON(STORE_KEYS.users, []).find(u => u.id === c.id) || null;
   },
+
+  /* ==========================================================
+     ACCOUNT DELETION  (15-day grace period)
+     Deleting is a two-step, reversible process: requestAccountDeletion
+     stamps deletionRequestedAt and signs the customer out (so a
+     scheduled-for-deletion account can't keep placing orders /
+     earning points); cancelAccountDeletion clears the stamp. The
+     actual row purge only happens once the grace period has fully
+     elapsed, and only opportunistically — see purgeIfDeletionDue().
+     ========================================================== */
+  DELETION_GRACE_DAYS: 15,
+
+  /* Days remaining before a pending deletion becomes permanent (0 if
+     due/overdue, null if no deletion is pending). */
+  deletionDaysLeft(account) {
+    const u = account || Store._customerRecord();
+    if (!u || !u.deletionRequestedAt) return null;
+    const elapsedMs = Date.now() - new Date(u.deletionRequestedAt).getTime();
+    const leftMs = (Store.DELETION_GRACE_DAYS * 86400000) - elapsedMs;
+    return Math.max(0, Math.ceil(leftMs / 86400000));
+  },
+
+  /* Stamp the signed-in customer's account for deletion and sign them
+     out immediately. The row itself is untouched until the grace
+     period elapses — signing back in within 15 days and cancelling
+     is the recovery path. */
+  async requestAccountDeletion() {
+    const c = Store.getCustomer();
+    if (!c) throw new Error('Not signed in');
+    const users = readJSON(STORE_KEYS.users, []);
+    const u = users.find(x => x.id === c.id);
+    if (!u) throw new Error('Account not found');
+    u.deletionRequestedAt = new Date().toISOString();
+    writeJSON(STORE_KEYS.users, users);
+    remoteUpsert('bb_accounts', USER_TO_ROW(u));
+    Store.logoutCustomer();
+    return u.deletionRequestedAt;
+  },
+
+  /* Cancel a pending deletion for the signed-in customer (used when
+     they sign back in during the grace period and choose to stay). */
+  async cancelAccountDeletion() {
+    const c = Store.getCustomer();
+    if (!c) throw new Error('Not signed in');
+    const users = readJSON(STORE_KEYS.users, []);
+    const u = users.find(x => x.id === c.id);
+    if (!u || !u.deletionRequestedAt) return;
+    u.deletionRequestedAt = null;
+    writeJSON(STORE_KEYS.users, users);
+    remoteUpsert('bb_accounts', USER_TO_ROW(u));
+  },
+
+  /* Opportunistic purge: if the signed-in account's grace period has
+     fully elapsed, hard-delete it (remote row + local cache + auth
+     identity) and sign out. There's no server cron in this project,
+     so this is the enforcement point — it runs once per sign-in via
+     _syncCustomerFromAuthSession. Returns true if a purge happened. */
+  async _purgeIfDeletionDue(account) {
+    if (!account || !account.deletionRequestedAt) return false;
+    if (Store.deletionDaysLeft(account) > 0) return false;
+
+    const users = readJSON(STORE_KEYS.users, []).filter(u => u.id !== account.id);
+    writeJSON(STORE_KEYS.users, users);
+    remoteDelete('bb_accounts', 'id', account.id);
+    localStorage.removeItem(STORE_KEYS.customer);
+    if (REMOTE_MODE) sb.auth.signOut().catch(() => {});
+    return true;
+  },
+
   /* Normalized perks for the signed-in customer (safe defaults). */
   getPerks() {
     const u = Store._customerRecord();
