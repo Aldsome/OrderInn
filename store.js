@@ -2401,14 +2401,29 @@ const Store = {
   async resumeAuthSession() {
     if (!REMOTE_MODE) return { customer: null, freshOAuth: false, pendingDeletion: null };
     const params = new URLSearchParams(location.search);
-    const freshOAuth = params.has('code');
     const staffFlow = params.has(STAFF_OAUTH_PARAM);
-    // Password-reset email links land back here with type=recovery in
-    // the URL hash (Supabase's own convention) — the SDK auto-parses
-    // that hash into a real session before this line runs. Report it
-    // separately so boot() can open the "set new password" modal
-    // instead of treating this like a normal returning sign-in.
-    const passwordRecovery = /type=recovery/.test(location.hash);
+    // Password-reset links can come back two ways depending on the flow:
+    //   - implicit: #access_token=...&type=recovery  (in the hash)
+    //   - PKCE / verify link: ?code=...&type=recovery (in the query)
+    // Detect BOTH, and — critically — check recovery BEFORE treating a
+    // ?code= as a normal returning sign-in, or the SDK exchanges the
+    // code into a full session and logs the user straight in, silently
+    // skipping the "set a new password" step.
+    const hashRecovery  = /type=recovery/.test(location.hash);
+    const queryRecovery = params.get('type') === 'recovery';
+    const passwordRecovery = hashRecovery || queryRecovery;
+    // A ?code= that's part of the recovery flow is NOT a fresh OAuth
+    // sign-in — don't report it as one.
+    const freshOAuth = params.has('code') && !passwordRecovery;
+
+    // PKCE / verify-link recovery arrives as ?code=...&type=recovery.
+    // The SDK's auto-detection may not have exchanged it yet by the time
+    // we read the session, so do it explicitly — otherwise getSession()
+    // returns null and the reset modal never opens.
+    if (passwordRecovery && params.has('code')) {
+      try { await sb.auth.exchangeCodeForSession(params.get('code')); } catch (_) {}
+    }
+
     const { data } = await sb.auth.getSession();
     if (passwordRecovery && data.session) {
       return { customer: null, freshOAuth: false, pendingDeletion: null, passwordRecovery: true };

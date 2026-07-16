@@ -6448,7 +6448,9 @@ async function boot() {
   // detected it), so open the set-new-password modal directly rather
   // than routing through the normal login form.
   if (authResume.passwordRecovery) {
-    history.replaceState({}, '', location.pathname + location.search);
+    // Strip the recovery params (both ?code=/?type= and any #hash) so a
+    // reload doesn't re-trigger the recovery branch.
+    history.replaceState({}, '', location.pathname);
     openResetPasswordModal();
   }
 
