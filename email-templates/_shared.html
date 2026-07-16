@@ -1,0 +1,24 @@
+<!--
+  ORDERINN COFFEE — EMAIL TEMPLATE REFERENCE (not used directly)
+  ==============================================================
+  This file documents the shared structure every template below uses.
+  Supabase does NOT support partials/includes, so each template is a
+  full standalone HTML file you paste into the dashboard.
+
+  BEFORE PASTING ANY TEMPLATE:
+  1. Replace every LOGO_URL with a real, public https:// image URL of
+     your logo (see email-templates/README.md for how to host it).
+     A local path like icon/brand-logo.png will NOT render in an inbox.
+  2. Keep the {{ .ConfirmationURL }} (and other {{ . }}) variables
+     exactly as-is — Supabase substitutes them at send time.
+
+  DESIGN NOTES (why this looks different from style.css):
+  - Email clients strip <style> blocks and modern CSS. Everything is
+    inline styles on nested <table>s — the only layout that renders
+    consistently across Gmail, Outlook, Apple Mail, etc.
+  - Brand accent  #B5652F  (matches --brown-500 / theme-color)
+  - Accent deep   #8A4A1F  (--brown-700, for the button's bottom edge)
+  - Ink text      #3D2E1F  (--ink)
+  - Card surface  #FFFDF8  (--cream)
+  - Page bg       #F5E1CE  (--brown-100, warm wash behind the card)
+-->

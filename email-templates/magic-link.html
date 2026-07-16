@@ -1,0 +1,68 @@
+<!-- OrderInn Coffee &mdash; Magic Link email. Paste into:
+     Supabase → Authentication → Emails → Templates → Magic Link.
+     Replace LOGO_URL with a public https:// image URL (see README.md). -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0;padding:0;background-color:#F5E1CE;">
+  <tr>
+    <td align="center" style="padding:32px 16px;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#FFFDF8;border-radius:20px;overflow:hidden;">
+
+        <tr>
+          <td align="center" style="padding:36px 32px 8px 32px;">
+            <img src="LOGO_URL" width="56" height="56" alt="OrderInn Coffee"
+                 style="display:block;width:56px;height:56px;border-radius:50%;object-fit:cover;" />
+            <div style="margin-top:14px;font-size:20px;font-weight:800;color:#3D2E1F;letter-spacing:-0.01em;">OrderInn Coffee</div>
+            <div style="margin-top:4px;font-size:13px;color:#8A7862;">Freshly brewed, locally loved.</div>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:20px 32px 8px 32px;">
+            <h1 style="margin:0 0 12px 0;font-size:22px;font-weight:800;color:#3D2E1F;letter-spacing:-0.01em;">Your sign-in link</h1>
+            <p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#5C4A38;">
+              Tap the button below to sign in to OrderInn Coffee. This link works
+              once and expires shortly.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" style="padding:4px 32px 8px 32px;">
+            <table role="presentation" cellpadding="0" cellspacing="0">
+              <tr>
+                <td align="center" style="border-radius:999px;background-color:#B5652F;box-shadow:0 2px 0 #8A4A1F;">
+                  <a href="{{ .ConfirmationURL }}" target="_blank"
+                     style="display:inline-block;padding:14px 40px;font-size:15px;font-weight:700;color:#FFFDF8;text-decoration:none;border-radius:999px;">
+                    Sign in to OrderInn
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:20px 32px 4px 32px;">
+            <p style="margin:0 0 6px 0;font-size:12px;line-height:1.5;color:#8A7862;">
+              If the button doesn't work, copy and paste this link into your browser:
+            </p>
+            <p style="margin:0;font-size:12px;line-height:1.5;word-break:break-all;">
+              <a href="{{ .ConfirmationURL }}" target="_blank" style="color:#B5652F;">{{ .ConfirmationURL }}</a>
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:24px 32px 32px 32px;border-top:1px solid #F5E1CE;">
+            <p style="margin:16px 0 0 0;font-size:12px;line-height:1.6;color:#A5947F;">
+              Didn't try to sign in? You can safely ignore this email.
+            </p>
+            <p style="margin:12px 0 0 0;font-size:12px;color:#A5947F;">
+              &copy; OrderInn Coffee &middot; In-store ordering
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
