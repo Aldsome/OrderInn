@@ -2662,6 +2662,31 @@ $('#customerLoginForm').addEventListener('submit', async (e) => {
    session already active (see Store.resumeAuthSession +
    boot()'s passwordRecovery branch), which opens this modal.
    ========================================================== */
+// Matches the Supabase "Minimum interval per user" SMTP setting (59s).
+// Kept a hair under a full minute so the client countdown clears just
+// as the server's window opens, not after it.
+const RESET_COOLDOWN_SECONDS = 59;
+
+/* Disable a button and tick down a "Try again in Ns" label until the
+   cooldown elapses, then restore it. Returns nothing; self-clears. */
+function startButtonCooldown(btn, seconds, restoreLabel) {
+  if (btn._cooldownTimer) clearInterval(btn._cooldownTimer);
+  let left = Math.max(1, Math.ceil(seconds));
+  btn.disabled = true;
+  btn.textContent = `Try again in ${left}s`;
+  btn._cooldownTimer = setInterval(() => {
+    left -= 1;
+    if (left <= 0) {
+      clearInterval(btn._cooldownTimer);
+      btn._cooldownTimer = null;
+      btn.disabled = false;
+      btn.textContent = restoreLabel;
+    } else {
+      btn.textContent = `Try again in ${left}s`;
+    }
+  }, 1000);
+}
+
 $('#forgotPasswordBtn')?.addEventListener('click', async () => {
   const errEl = $('#customerLoginError');
   errEl.hidden = true;
@@ -2672,16 +2697,25 @@ $('#forgotPasswordBtn')?.addEventListener('click', async () => {
     return;
   }
   const btn = $('#forgotPasswordBtn');
-  const original = btn.textContent;
+  const original = btn.dataset.label || (btn.dataset.label = btn.textContent);
   btn.disabled = true; btn.textContent = 'Sending…';
   try {
     await Store.requestPasswordReset(email);
     showToast(`If an account exists for ${email}, a reset link is on its way.`, 'success');
+    // Cool the button down so the user doesn't hammer it into the
+    // server's per-user interval (which would 429 the next tap).
+    startButtonCooldown(btn, RESET_COOLDOWN_SECONDS, original);
   } catch (err) {
-    errEl.textContent = err.message;
-    errEl.hidden = false;
-  } finally {
-    btn.disabled = false; btn.textContent = original;
+    if (err.rateLimited) {
+      const wait = err.retryAfter || RESET_COOLDOWN_SECONDS;
+      errEl.textContent = `You just requested a reset — please wait ${wait}s before trying again.`;
+      errEl.hidden = false;
+      startButtonCooldown(btn, wait, original);
+    } else {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+      btn.disabled = false; btn.textContent = original;
+    }
   }
 });
 

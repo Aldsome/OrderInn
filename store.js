@@ -2340,9 +2340,23 @@ const Store = {
     if (!REMOTE_MODE) throw new Error('Password reset requires Supabase to be configured');
     email = String(email || '').trim().toLowerCase();
     if (!email) throw new Error('Enter your email first');
-    await sb.auth.resetPasswordForEmail(email, {
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
       redirectTo: window.location.origin + '/index.html',
     });
+    if (error) {
+      // Supabase throttles repeat requests for the same user (the
+      // "Minimum interval per user" SMTP setting) and returns 429. Its
+      // message embeds the seconds left, e.g. "For security purposes,
+      // you can only request this after 54 seconds." Surface a typed
+      // error so the UI can show a friendly countdown instead of the
+      // raw text. retryAfter is null when we can't parse a number.
+      const isRate = error.status === 429 || /rate limit|after \d+ second|only request this/i.test(error.message || '');
+      const secMatch = /after (\d+) second/i.exec(error.message || '');
+      const e = new Error(error.message || 'Could not send the reset email');
+      e.rateLimited = isRate;
+      e.retryAfter = secMatch ? Number(secMatch[1]) : null;
+      throw e;
+    }
   },
 
   /* Sets a new password on the recovery session created by clicking
