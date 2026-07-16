@@ -2729,7 +2729,7 @@ $('#forgotPasswordBtn')?.addEventListener('click', async () => {
       errEl.hidden = false;
       startButtonCooldown(btn, wait, original, emailField);
     } else {
-      errEl.textContent = err.message;
+      errEl.textContent = (err && err.message) || 'Could not send the reset email. Please try again.';
       errEl.hidden = false;
       btn.disabled = false; btn.textContent = original;
     }

@@ -2363,11 +2363,20 @@ const Store = {
       // you can only request this after 54 seconds." Surface a typed
       // error so the UI can show a friendly countdown instead of the
       // raw text. retryAfter is null when we can't parse a number.
-      const isRate = error.status === 429 || /rate limit|after \d+ second|only request this/i.test(error.message || '');
-      const secMatch = /after (\d+) second/i.exec(error.message || '');
-      const e = new Error(error.message || 'Could not send the reset email');
+      const rawMsg = (error && (error.message || error.error_description || error.msg)) || '';
+      const isRate = error.status === 429 || /rate limit|after \d+ second|only request this/i.test(rawMsg);
+      const secMatch = /after (\d+) second/i.exec(rawMsg);
+      // A 500 here almost always means the SMTP provider rejected the
+      // send (bad sender, unverified domain, provider outage). Give a
+      // message the user can act on instead of an empty error object.
+      let friendly = rawMsg;
+      if (!friendly || error.status >= 500) {
+        friendly = 'We couldn’t send the reset email right now. Please try again in a moment — if it keeps failing, the email service may be misconfigured.';
+      }
+      const e = new Error(friendly);
       e.rateLimited = isRate;
       e.retryAfter = secMatch ? Number(secMatch[1]) : null;
+      e.status = error.status;
       throw e;
     }
   },
