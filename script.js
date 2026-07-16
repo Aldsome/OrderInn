@@ -6443,16 +6443,22 @@ async function boot() {
     promptCancelDeletion(authResume.pendingDeletion);
   }
 
-  // Landed back from a "Forgot password?" reset-link email: the
-  // recovery session is already active (Store.resumeAuthSession
-  // detected it), so open the set-new-password modal directly rather
-  // than routing through the normal login form.
-  if (authResume.passwordRecovery) {
+  // Landed back from a "Forgot password?" reset-link email. Two paths
+  // detect this; either opens the set-new-password modal:
+  //   1. The reliable PASSWORD_RECOVERY event (Store.onPasswordRecovery)
+  //      — fires whenever the SDK establishes a recovery session, no
+  //      matter how the URL is shaped. Primary trigger.
+  //   2. The URL-parse fallback in resumeAuthSession (authResume.
+  //      passwordRecovery) — for the case the event already fired and
+  //      was latched before this ran.
+  const enterRecovery = () => {
     // Strip the recovery params (both ?code=/?type= and any #hash) so a
-    // reload doesn't re-trigger the recovery branch.
+    // reload doesn't re-trigger recovery.
     history.replaceState({}, '', location.pathname);
     openResetPasswordModal();
-  }
+  };
+  if (Store.onPasswordRecovery) Store.onPasswordRecovery(enterRecovery);
+  else if (authResume.passwordRecovery) enterRecovery();
 
   // Just landed back from a STAFF Google OAuth redirect (Staff Login's
   // "Continue with Google", tagged via the ?staffAuth=1 redirect param

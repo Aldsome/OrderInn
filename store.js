@@ -303,6 +303,26 @@ const sb = REMOTE_MODE ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY
 if (REMOTE_MODE) console.info('[Store] Supabase REMOTE mode enabled →', SUPABASE_URL);
 else             console.info('[Store] LOCAL mode (no Supabase URL in config.js — cross-device sync disabled)');
 
+/* Reliable password-recovery detection.
+
+   Parsing the URL for type=recovery is brittle — Supabase's verify-link
+   flow can deliver the recovery session as ?code=, in the #hash, or with
+   different params depending on project/flow config. The SDK instead
+   fires a dedicated PASSWORD_RECOVERY event the moment it establishes a
+   recovery session, regardless of URL shape. We latch that here (it can
+   fire during SDK init, before boot() runs) so the app can open the
+   "set new password" modal whenever it's ready. */
+let _passwordRecoveryFired = false;
+let _onPasswordRecovery = null;
+if (REMOTE_MODE) {
+  sb.auth.onAuthStateChange((event) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      _passwordRecoveryFired = true;
+      if (typeof _onPasswordRecovery === 'function') _onPasswordRecovery();
+    }
+  });
+}
+
 /* Query param carried through the Google redirect round-trip so
    resumeAuthSession() can tell "this OAuth callback was a staff
    sign-in" apart from a customer one — both land on index.html with
@@ -2379,6 +2399,15 @@ const Store = {
       e.status = error.status;
       throw e;
     }
+  },
+
+  /* Register a callback for when a password-recovery session is
+     established (the reliable PASSWORD_RECOVERY event). If the event
+     already fired before boot() got here, invoke it immediately so the
+     modal still opens. */
+  onPasswordRecovery(cb) {
+    _onPasswordRecovery = cb;
+    if (_passwordRecoveryFired) cb();
   },
 
   /* Sets a new password on the recovery session created by clicking
