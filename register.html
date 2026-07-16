@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=84" />
+  <link rel="stylesheet" href="style.css?v=85" />
 
   <script>
     (function () {
@@ -73,7 +73,8 @@
         </label>
         <label class="field-icon">
           <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 11V8a6 6 0 1 1 12 0v3"/><rect x="4.5" y="11" width="15" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-          <input type="password" name="confirm" required minlength="8" autocomplete="new-password" placeholder="Confirm password" />
+          <input type="password" name="confirm" required minlength="8" autocomplete="new-password" placeholder="Confirm password" id="registerConfirm" />
+          <button type="button" class="field-toggle-text" id="registerConfirmToggle" aria-label="Show password" aria-pressed="false">Show</button>
         </label>
 
         <p class="form-error" id="registerError" hidden></p>
@@ -120,8 +121,8 @@
 
     // Password show/hide toggle — same pattern as the customer login
     // modal in index.html.
-    (function wirePasswordToggle() {
-      const toggle = $('#registerPasswordToggle'), input = $('#registerPassword');
+    function wirePwToggle(toggleId, inputId) {
+      const toggle = $(toggleId), input = $(inputId);
       if (!toggle || !input) return;
       toggle.addEventListener('click', () => {
         const showing = toggle.getAttribute('aria-pressed') === 'true';
@@ -130,7 +131,9 @@
         toggle.textContent = showing ? 'Show' : 'Hide';
         input.type = showing ? 'password' : 'text';
       });
-    })();
+    }
+    wirePwToggle('#registerPasswordToggle', '#registerPassword');
+    wirePwToggle('#registerConfirmToggle', '#registerConfirm');
 
     // Google sign-up: the invite code is still required up front —
     // exactly the same field the password form uses — just checked

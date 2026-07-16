@@ -2655,11 +2655,19 @@ html[data-theme="dark"] textarea::placeholder {
 .field-toggle-text:hover { background: var(--brown-100); color: var(--ink-soft); }
 .field-toggle-text[aria-pressed="true"] { color: var(--primary); }
 
+/* Suppress the browser's OWN password-reveal control everywhere, since
+   we provide our own Show/Hide button. Chrome injects a native reveal
+   button (sometimes wrapping the input in a <span>) whose exact markup
+   varies by version/focus state — matching it by structure is fragile
+   and let it "float" outside the pill on tab/focus. Target it by its
+   aria-label instead, which is stable, plus the legacy pseudo-elements. */
 input[type="password"]::-ms-reveal,
-input[type="password"]::-ms-clear { display: none; }
+input[type="password"]::-ms-clear { display: none !important; }
 .field-icon input[data-pw-enhanced]::-webkit-textfield-decoration-container {
   display: none !important;
 }
+.field-icon button[aria-label="Show password"]:not(.field-toggle-text),
+.field-icon button[aria-label="Hide password"]:not(.field-toggle-text),
 .field-icon span:has(> input[data-pw-enhanced]) > button {
   display: none !important;
 }
