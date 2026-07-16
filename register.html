@@ -11,8 +11,8 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=23" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=83" />
 
   <script>
     (function () {
@@ -29,32 +29,51 @@
 <body class="register-body">
 
   <main class="register-shell">
-    <div class="register-card">
-      <header class="register-head">
-        <span class="brand-mark lg">OI</span>
+    <div class="register-card auth-card-composed">
+      <header class="auth-card-header">
+        <span class="auth-badge" aria-hidden="true">
+          <img src="icon/brand-logo.png" alt="" />
+        </span>
         <h1>Create staff account</h1>
-        <p class="muted small">For OrderInn Coffee admins. Each account gets full Admin Panel access.</p>
+        <p class="auth-card-subtitle">For OrderInn Coffee admins. Each account gets full Admin Panel access.</p>
       </header>
 
       <form id="registerForm" class="auth-form" novalidate>
-        <label>Staff invite code
-          <input type="text" name="inviteCode" required autocomplete="off"
-                 placeholder="BB-XXXX-XXXX-XXXX"
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+          <input type="text" name="inviteCode" id="registerInviteCode" required autocomplete="off"
+                 placeholder="Staff invite code"
                  spellcheck="false" />
-          <small class="hint muted">Ask an existing admin for the current code.</small>
         </label>
-        <label>Display name
-          <input type="text" name="name" required autocomplete="name" placeholder="e.g. juan_cruz" />
+        <p class="hint muted small">Ask an existing admin for the current code.</p>
+
+        <button type="button" class="btn btn-google btn-block" id="staffGoogleSignUpBtn">
+          <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
+            <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.71v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.61z"/>
+            <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+            <path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.05l3.01-2.33z"/>
+            <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+          </svg>
+          <span>Continue with Google</span>
+        </button>
+        <div class="auth-divider"><span>or create with a password</span></div>
+
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>
+          <input type="text" name="name" required autocomplete="name" placeholder="Display name" />
         </label>
-        <label>Email
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 6.5A1.5 1.5 0 0 1 4.5 5h15A1.5 1.5 0 0 1 21 6.5v11A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-11Z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m4 7 8 6 8-6"/></svg>
           <input type="email" name="email" required autocomplete="email" placeholder="staff@orderinn.com" />
         </label>
-        <label>Password
-          <input type="password" name="password" required minlength="8" autocomplete="new-password" />
-          <small class="hint muted">At least 8 characters.</small>
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 11V8a6 6 0 1 1 12 0v3"/><rect x="4.5" y="11" width="15" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          <input type="password" name="password" required minlength="8" autocomplete="new-password" placeholder="Password (min. 8 characters)" id="registerPassword" />
+          <button type="button" class="field-toggle-text" id="registerPasswordToggle" aria-label="Show password" aria-pressed="false">Show</button>
         </label>
-        <label>Confirm password
-          <input type="password" name="confirm" required minlength="8" autocomplete="new-password" />
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 11V8a6 6 0 1 1 12 0v3"/><rect x="4.5" y="11" width="15" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          <input type="password" name="confirm" required minlength="8" autocomplete="new-password" placeholder="Confirm password" />
         </label>
 
         <p class="form-error" id="registerError" hidden></p>
@@ -76,7 +95,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=37"></script>
+  <script src="store.js?v=47"></script>
   <script>
     // Standalone registration flow — shares Store with the main
     // app via localStorage. On success, the new account is written
@@ -87,15 +106,70 @@
     const okEl    = $('#registerSuccess');
     const submit  = $('#registerSubmitBtn');
 
-    // Make sure the default admin is present too — same boot
-    // sequence as the main app, so opening register.html cold
-    // still gives someone to sign in as.
+    // Pulls shop config (branding, invite code) from Supabase so
+    // this page works standalone. No longer seeds a usable local
+    // admin credential in REMOTE mode — that credential now lives in
+    // Supabase Auth (see data/admin-auth-migration.sql); this just
+    // gets brand initials / the invite code to display correctly.
     function paintBrand() {
       const ini = Store.brandInitials();
       document.querySelectorAll('.brand-mark').forEach(el => { el.textContent = ini; });
     }
     paintBrand();
     Store.bootSeed().then(paintBrand).catch(() => {});
+
+    // Password show/hide toggle — same pattern as the customer login
+    // modal in index.html.
+    (function wirePasswordToggle() {
+      const toggle = $('#registerPasswordToggle'), input = $('#registerPassword');
+      if (!toggle || !input) return;
+      toggle.addEventListener('click', () => {
+        const showing = toggle.getAttribute('aria-pressed') === 'true';
+        toggle.setAttribute('aria-pressed', String(!showing));
+        toggle.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+        toggle.textContent = showing ? 'Show' : 'Hide';
+        input.type = showing ? 'password' : 'text';
+      });
+    })();
+
+    // Google sign-up: the invite code is still required up front —
+    // exactly the same field the password form uses — just checked
+    // client-side before starting the redirect instead of server-side
+    // after. It rides along in the redirect URL so index.html (where
+    // Google sends the browser back to) can finish creating the
+    // account without asking for the code a second time. The
+    // authoritative check still happens over there (Store.
+    // _syncStaffFromAuthSession), so a tampered/skipped URL param
+    // can't bypass it — this is purely to avoid a redundant prompt.
+    $('#staffGoogleSignUpBtn').addEventListener('click', async () => {
+      errEl.hidden = true; okEl.hidden = true;
+      const codeField = $('#registerInviteCode');
+      const code = codeField.value.trim();
+      if (!code) {
+        errEl.textContent = 'Enter the staff invite code first.';
+        errEl.hidden = false;
+        codeField.focus();
+        return;
+      }
+      // Same check _syncStaffFromAuthSession runs after the redirect —
+      // doing it here too just saves a pointless round-trip to Google
+      // for an obviously wrong code. Not a security boundary (that's
+      // the server-trip check); purely a faster failure.
+      if (code !== Store.getInviteCode()) {
+        errEl.textContent = 'Invalid invite code. Ask an existing admin for the current code.';
+        errEl.hidden = false;
+        codeField.focus();
+        return;
+      }
+      try {
+        // Redirects the whole page to Google, then to index.html —
+        // nothing after this line runs in this page load.
+        await Store.loginStaffWithGoogle(code);
+      } catch (err) {
+        errEl.textContent = err.message || String(err);
+        errEl.hidden = false;
+      }
+    });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -109,16 +183,29 @@
       }
       submit.disabled = true; submit.textContent = 'Creating…';
       try {
+        // Two possible outcomes depending on the project's Auth
+        // settings (Supabase dashboard -> Authentication -> Providers
+        // -> Email -> "Confirm email") — same two-outcome shape
+        // signup.html's customer signup already handles:
+        //   - OFF: signUp returns an active session immediately —
+        //     redirect straight into the admin panel.
+        //   - ON: no session yet — the account exists in auth.users
+        //     but is unconfirmed; show a "check your email" message.
         const account = await Store.signupAdmin({
           name:       fd.get('name'),
           email:      fd.get('email'),
           password,
           inviteCode: fd.get('inviteCode'),
         });
-        okEl.textContent = `Welcome, ${account.name}! Redirecting…`;
-        okEl.hidden = false;
         form.reset();
-        setTimeout(() => { location.href = 'index.html?staff=1'; }, 900);
+        if (account.needsEmailConfirmation) {
+          okEl.textContent = `Almost there! We sent a confirmation link to ${account.email} — click it, then come back and sign in.`;
+          okEl.hidden = false;
+        } else {
+          okEl.textContent = `Welcome, ${account.name}! Redirecting…`;
+          okEl.hidden = false;
+          setTimeout(() => { location.href = 'index.html?staff=1'; }, 900);
+        }
       } catch (err) {
         errEl.textContent = err.message || String(err);
         errEl.hidden = false;

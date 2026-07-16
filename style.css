@@ -37,8 +37,8 @@
   --danger:       #DC3545;
   --danger-deep:  #A02633;
 
-  --font-display: 'Playfair Display', Georgia, serif;
-  --font-body:    'Poppins', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --font-display: 'Plus Jakarta Sans', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --font-body:    'Plus Jakarta Sans', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 
   --radius-sm: 8px;
   --radius:    14px;
@@ -66,6 +66,16 @@
   --container: 720px;
   --gutter: clamp(16px, 4vw, 28px);
 }
+
+/* Desktop container widths. The customer shell is capped at 720px
+   as a mobile/tablet default; from 860px (where the sidebar joins
+   the layout) up through large desktop, every full-width band
+   (topbar, hero, search, filter bar, menu layout, footer) shares
+   one of these wider values so the logo and grid always line up
+   to the same left/right edge instead of the logo staying pinned
+   to a narrower mobile-width column. */
+@media (min-width: 860px)  { :root { --container: 1040px; } }
+@media (min-width: 1280px) { :root { --container: 1200px; } }
 
 [data-theme="dark"] {
   /* Neutral dark-gray surfaces (slightly cool) instead of warm brown,
@@ -239,6 +249,13 @@ textarea::placeholder { color: var(--ink-soft); opacity: .7; }
 input::selection,
 textarea::selection { background: rgba(181,101,47,.30); color: var(--ink); }
 
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear { display: none; }
+input[type="password"] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 /* Chrome / Edge autofill overrides our background with its own
    yellow box — which destroys dark-mode contrast (yellow bg +
    light text becomes unreadable). Force-paint our colors in by
@@ -304,10 +321,10 @@ select option,
   gap: 8px;
   padding: 11px 18px;
   border-radius: 999px;
-  border: 1.5px solid transparent;
+  border: none;
   font-weight: 600;
   font-size: .95rem;
-  transition: background .15s, color .15s, border-color .15s, transform .1s, box-shadow .15s;
+  transition: background .15s, color .15s, transform .1s, box-shadow .15s;
   text-align: center;
 }
 .btn:active { transform: translateY(1px); }
@@ -318,12 +335,13 @@ select option,
 }
 .btn-primary:hover { background: var(--primary-deep); }
 [data-theme="dark"] .btn-primary { color: #0E1419; }
+/* Borderless by design (The No-Stroke Rule — DESIGN.md): separation
+   from the page comes from the hover fill, not an outline. */
 .btn-ghost {
   background: transparent;
   color: var(--ink);
-  border-color: var(--line);
 }
-.btn-ghost:hover { border-color: var(--line-strong); background: var(--white); }
+.btn-ghost:hover { background: var(--brown-50); }
 .btn-danger {
   background: var(--danger);
   color: var(--white);
@@ -371,13 +389,11 @@ select option,
 .btn-prep {
   background: var(--yellow-700);
   color: #2A1E07;
-  border-color: var(--yellow-700);
 }
 .btn-prep:hover { filter: brightness(1.06); }
 .btn-serve {
   background: #3A6E3B;
   color: #FFFFFF;
-  border-color: #3A6E3B;
 }
 .btn-serve:hover { background: #2E5A2F; }
 .btn-block { width: 100%; }
@@ -388,10 +404,11 @@ select option,
   place-items: center;
   width: 38px; height: 38px;
   border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--white);
+  border: none;
+  background: transparent;
   color: var(--ink);
   cursor: pointer;
+  transition: background .15s;
 }
 .icon-btn:hover { background: var(--brown-50); }
 .close-btn { border: none; background: transparent; font-size: 1.05rem; }
@@ -461,6 +478,10 @@ select option,
 [data-theme="dark"] .brand-logo {
   filter: drop-shadow(0 1px 6px rgba(232, 184, 75, .14));
 }
+@media (min-width: 860px) {
+  .topbar-row { padding-block: 16px; }
+  .brand-logo { height: 46px; }
+}
 .brand-mark {
   display: inline-grid;
   place-items: center;
@@ -475,6 +496,11 @@ select option,
   flex-shrink: 0;
 }
 .brand-mark.sm { width: 32px; height: 32px; font-size: .72rem; border-radius: 9px; }
+/* Logo sizes used outside the customer topbar: .sm for the compact
+   admin-panel header, .lg centered above the register/signup forms
+   (replaces the old text-initials mark on those pages). */
+.brand-logo.sm { height: 30px; }
+.brand-logo.lg { height: 56px; margin: 0 auto; }
 .brand-name {
   display: block;
   font-family: var(--font-display);
@@ -499,13 +525,13 @@ select option,
   padding: 7px 14px;
   border-radius: 999px;
   background: var(--brown-100);
-  border: 1px solid var(--brown-200);
+  border: none;
   color: var(--primary-deep);
   font-family: inherit;
   font-size: .85rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background .15s, border-color .15s, transform .12s;
+  transition: background .15s, transform .12s;
 }
 .admin-pill:hover {
   background: var(--brown-200);
@@ -594,7 +620,7 @@ select option,
   padding: 3px 10px;
   border-radius: 999px;
   background: var(--yellow-100);
-  border: 1px solid var(--yellow-200);
+  border: none;
   color: var(--yellow-700);
   font-size: .74rem;
   font-weight: 700;
@@ -603,80 +629,25 @@ select option,
 }
 
 /* ==========================================================
-   CUSTOMER ORDER-STATUS BANNER  (under the topbar)
-   - Appears after the customer places an order. Updates by
-     polling Store.getOrders() every few seconds, so admin
-     status changes show up live for the customer.
+   BEST-SELLER CAROUSEL  (under the topbar)
+   - Always visible: it's the shop's "here's what's good" pitch, so
+     it shows before the customer has ordered anything, not only
+     while they wait. Live order status is NOT shown here — that's
+     the My Orders pill's badge.
    ========================================================== */
 .order-status-banner {
   padding-block: 0 12px;
   display: flex;
   align-items: stretch;
-  gap: 0;
-  /* Fixed row height so the collapse to a cube + carousel never shifts
-     the banner (and therefore the topbar height / chip offset). */
+  /* Fixed row height so the strip never shifts the topbar height
+     (and therefore the sticky search/chip offsets below it). */
   min-height: 76px;
 }
-.order-status-banner.collapsed { gap: 8px; }
-.status-banner-btn {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 14px;
-  background: var(--yellow-100);
-  border: 1px solid var(--yellow-200);
-  color: var(--ink);
-  font-family: inherit;
-  font-size: .9rem;
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-  /* Collapse animation: width + padding shrink the button into a cube. */
-  transition: flex-basis .4s cubic-bezier(.4, .2, .2, 1),
-              flex-grow .4s cubic-bezier(.4, .2, .2, 1),
-              padding .4s cubic-bezier(.4, .2, .2, 1),
-              background .15s, border-color .15s, transform .12s;
-}
-.status-banner-btn:hover { transform: translateY(-1px); }
-
-/* ----- Collapsed-to-cube state + best-seller carousel ----- */
-/* The carousel occupies the freed space to the LEFT of the cube. It
-   sits at width 0 until the banner collapses, then expands. */
 .osb-carousel {
-  flex: 0 1 0;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
   border-radius: 14px;
-  transition: flex-grow .4s cubic-bezier(.4, .2, .2, 1), opacity .3s ease;
-}
-.order-status-banner.collapsed .osb-carousel {
-  flex: 1 1 auto;
-  opacity: 1;
-  pointer-events: auto;
-}
-.order-status-banner.collapsed .status-banner-btn {
-  flex: 0 0 auto;
-  width: 50px;
-  padding: 8px;
-  justify-content: center;
-}
-.order-status-banner.collapsed .status-text { display: none; }
-.order-status-banner.collapsed .status-icon { display: none; }
-.order-status-banner.collapsed .status-arrow { font-size: 1.8rem; color: var(--primary-deep); }
-/* Arrow flips: › (open the My-orders sheet) → ‹ (restore the banner). */
-.status-arrow::before { content: '\203A'; }            /* › */
-.order-status-banner.collapsed .status-arrow::before { content: '\2039'; }  /* ‹ */
-.status-arrow {
-  font-size: 1.4rem;
-  color: var(--ink-soft);
-  font-weight: 300;
-  flex-shrink: 0;
-  line-height: 1;
 }
 
 .osb-track {
@@ -706,15 +677,16 @@ select option,
   align-items: center;
   gap: 9px;
   padding: 8px 12px 8px 8px;
-  border: 1px solid var(--line);
+  border: none;
   border-radius: 12px;
   background: var(--white);
+  box-shadow: var(--shadow-sm);
   color: var(--ink);
   font-family: inherit;
   cursor: pointer;
-  transition: border-color .15s, transform .12s;
+  transition: box-shadow .15s, transform .12s;
 }
-.osb-card:hover { border-color: var(--brown-300); transform: translateY(-1px); }
+.osb-card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
 .osb-thumb {
   position: relative;
   width: 38px;
@@ -746,72 +718,20 @@ select option,
   text-overflow: ellipsis;
 }
 .osb-price { font-size: .76rem; color: var(--primary-deep); font-weight: 600; }
-.status-banner-btn .status-icon {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  font-size: 1.4rem;
-  line-height: 1;
-  flex-shrink: 0;
-}
 
-/* Live status animations on the always-visible customer banner,
-   mirroring the order-confirmation popup so the customer sees
-   movement while they wait (not only on the placed modal).
-   pending: gentle pulse · preparing: rotating yin-yang ring. */
-.status-banner-btn[data-status="pending"] .status-icon {
-  animation: tickPulse 1.6s ease-in-out infinite;
-}
-.status-banner-btn[data-status="preparing"] .status-icon {
-  box-shadow: 0 0 14px rgba(181,101,47, .35);
-}
-.status-banner-btn[data-status="preparing"] .status-icon::before {
-  content: "";
-  position: absolute;
-  inset: -5px;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    var(--primary) 0deg, var(--accent) 90deg,
-    var(--primary-deep) 180deg, var(--accent) 270deg, var(--primary) 360deg);
-  -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%);
-          mask: radial-gradient(circle, transparent 58%, #000 60%);
-  animation: yinyangSpin 2.4s linear infinite;
-  z-index: 0;
-}
-.status-banner-btn[data-status="served"] .status-icon {
-  animation: tickPop .5s cubic-bezier(.2, 1.3, .4, 1) both;
-}
-.status-banner-btn .status-text {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-.status-banner-btn .status-text strong { color: var(--primary-deep); font-size: .95rem; }
-.status-banner-btn .status-text small  { color: var(--ink-soft); font-size: .78rem; }
-.status-banner-btn .status-arrow {
-  font-size: 1.4rem;
-  color: var(--ink-soft);
-  font-weight: 300;
-  flex-shrink: 0;
-}
-
-/* Color by status */
-.status-banner-btn[data-status="pending"]    { background: var(--yellow-100); border-color: var(--yellow-200); }
-.status-banner-btn[data-status="preparing"]  { background: var(--brown-100); border-color: var(--brown-200); }
-.status-banner-btn[data-status="preparing"] .status-text strong { color: var(--brown-700); }
-.status-banner-btn[data-status="served"]     { background: #DDF0D5; border-color: #B5DAB0; }
-.status-banner-btn[data-status="served"] .status-text strong { color: #3A6E3B; }
-.status-banner-btn[data-status="cancelled"]  { background: rgba(220, 53, 69, 0.10); border-color: rgba(220, 53, 69, 0.25); }
-.status-banner-btn[data-status="cancelled"] .status-text strong { color: var(--danger); }
-[data-theme="dark"] .status-banner-btn[data-status="served"]    { background: rgba(126, 183, 138, 0.18); border-color: rgba(126, 183, 138, 0.3); }
-[data-theme="dark"] .status-banner-btn[data-status="served"] .status-text strong { color: #B5DAB0; }
-[data-theme="dark"] .status-banner-btn[data-status="cancelled"] .status-text strong { color: #F26A78; }
+/* Podium ranks — only the top 3 get a medal tint, and only on the
+   small "#N Best seller" label (never the card background), so the
+   metal reads as a quiet ranking cue rather than competing with the
+   brand accent the price + chips already use. #4 and below keep the
+   default accent label. */
+.osb-card[data-rank="1"] .osb-rank { color: #B8860B; }   /* gold   */
+.osb-card[data-rank="2"] .osb-rank { color: #8A8D91; }   /* silver */
+.osb-card[data-rank="3"] .osb-rank { color: #A9713B; }   /* bronze */
+/* Lifted for contrast against the dark surface — the light-theme
+   metals are too dim to read there. */
+[data-theme="dark"] .osb-card[data-rank="1"] .osb-rank { color: #E3B341; }
+[data-theme="dark"] .osb-card[data-rank="2"] .osb-rank { color: #B9BDC4; }
+[data-theme="dark"] .osb-card[data-rank="3"] .osb-rank { color: #CF8F55; }
 
 /* Status pill inside the order-placed modal */
 .placed-status { margin: 10px 0 4px; }
@@ -856,23 +776,21 @@ select option,
   flex-shrink: 0;
   padding: 8px 16px;
   border-radius: 999px;
-  background: var(--white);
-  border: 1.5px solid var(--line);
+  background: var(--brown-50);
+  border: none;
   color: var(--ink);
   font-size: .88rem;
   font-weight: 500;
-  transition: background .15s, color .15s, border-color .15s;
+  transition: background .15s, color .15s;
 }
-.chip:hover { border-color: var(--brown-300); }
+.chip:hover { background: var(--brown-100); }
 .chip.active {
   background: var(--primary);
   color: var(--white);
-  border-color: var(--primary);
 }
 [data-theme="dark"] .chip.active {
   background: var(--brown-200);
   color: var(--ink);
-  border-color: var(--brown-200);
 }
 
 /* ==========================================================
@@ -893,21 +811,21 @@ select option,
   width: 46px;
   height: 46px;
   border-radius: 50%;
-  border: 1px solid var(--line);
+  border: none;
   background: var(--white);
   color: var(--primary-deep);
   box-shadow: var(--shadow);
   opacity: 0;
   transform: translateY(12px) scale(.9);
   pointer-events: none;
-  transition: opacity .22s ease, transform .22s cubic-bezier(.4, .2, .2, 1);
+  transition: opacity .22s ease, transform .22s cubic-bezier(.4, .2, .2, 1), box-shadow .15s;
 }
 .back-to-top.show {
   opacity: 1;
   transform: translateY(0) scale(1);
   pointer-events: auto;
 }
-.back-to-top:hover { border-color: var(--brown-300); }
+.back-to-top:hover { box-shadow: var(--shadow-lg); }
 /* Lift above the My-orders pill when it's showing so they never overlap. */
 body.has-myorders-fab .back-to-top { bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); }
 
@@ -968,15 +886,14 @@ body.vp-resizing .chips { transition: none !important; }
   padding: 8px 14px 8px 8px;
   border-radius: 999px;
   background: var(--white);
-  border: 1px solid var(--line);
+  border: none;
   box-shadow: var(--shadow-sm);
   max-width: 100%;
-  transition: transform .15s, box-shadow .15s, border-color .15s;
+  transition: transform .15s, box-shadow .15s;
 }
 .hero-fav:hover {
   transform: translateY(-1px);
   box-shadow: var(--shadow);
-  border-color: var(--brown-200);
 }
 .hero-fav-thumb {
   flex-shrink: 0;
@@ -1042,6 +959,11 @@ body.vp-resizing .chips { transition: none !important; }
 /* On wider screens give the hero a little more room to breathe. */
 @media (min-width: 540px) {
   .hero { padding-block: 30px 10px; }
+}
+@media (min-width: 860px) {
+  .hero { padding-block: 40px 14px; }
+  .hero-title { font-size: clamp(2rem, 2.6vw, 2.6rem); }
+  .hero-tagline { font-size: .98rem; }
 }
 
 /* ==========================================================
@@ -1115,13 +1037,14 @@ body.vp-resizing .chips { transition: none !important; }
   gap: 6px;
   padding: 8px 14px;
   border-radius: 999px;
-  border: 1.5px solid var(--line);
-  background: var(--white);
+  border: none;
+  background: var(--brown-50);
   color: var(--ink);
   font-weight: 600;
   font-size: .85rem;
+  transition: background .15s;
 }
-.filter-open-btn:hover { border-color: var(--brown-300); }
+.filter-open-btn:hover { background: var(--brown-100); }
 .filter-open-dot {
   position: absolute;
   top: 4px; right: 6px;
@@ -1146,21 +1069,25 @@ body.vp-resizing .chips { transition: none !important; }
 .menu-sidebar { display: none; }  /* hidden on mobile — sheet takes over */
 
 @media (min-width: 860px) {
-  /* Roomier container so the sidebar doesn't squeeze the grid. */
+  /* .menu-layout inherits its max-width from .container (now 1040px+
+     at this breakpoint via the shared --container token), so the
+     sidebar + grid line up with the topbar logo and hero above. */
   .menu-layout {
     display: grid;
     grid-template-columns: 232px 1fr;
-    gap: 26px;
+    gap: 32px;
     align-items: start;
-    max-width: 1040px;
   }
-  /* The search + mobile filter bar align to the wider layout too. */
-  .search-bar { max-width: 1040px; }
   .menu-sidebar {
     display: block;
     position: sticky;
-    top: calc(var(--topbar-h, 87px) + 12px);
+    top: calc(var(--topbar-h, 87px) + 16px);
     align-self: start;
+    /* Independent scroll if the filter list is ever taller than the
+       viewport, so it never gets clipped by the sticky offset —
+       the sidebar scrolls itself instead of overflowing off-screen. */
+    max-height: calc(100vh - var(--topbar-h, 87px) - 32px);
+    overflow-y: auto;
   }
   /* On desktop the mobile filter bar collapses to nothing — the
      sidebar owns categories + sort. */
@@ -1179,8 +1106,11 @@ body.vp-resizing .chips { transition: none !important; }
 @media (min-width: 540px) {
   .menu { grid-template-columns: repeat(2, 1fr); gap: 14px; }
 }
-@media (min-width: 1180px) {
+@media (min-width: 1280px) {
   .menu { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 1600px) {
+  .menu { grid-template-columns: repeat(4, 1fr); }
 }
 
 /* Menu loading state — skeleton cards + a small spinner note, shown
@@ -1278,9 +1208,23 @@ body.vp-resizing .chips { transition: none !important; }
   border-radius: 10px;
   cursor: pointer;
   font-size: .9rem;
-  transition: background .12s;
+  color: var(--ink);
+  font-weight: 500;
+  transition: background .12s, color .12s;
 }
 .filter-radio:hover { background: var(--brown-50); }
+/* The row itself carries the selected state (tint + weight + color),
+   same language as .filter-cat.active — a bare native radio input
+   with only accent-color set is too subtle to register as "this is
+   the active sort" on its own, especially with no border around the
+   row to frame it. accent-color is kept as a secondary confirmation,
+   not the only signal. */
+.filter-radio:has(input:checked) {
+  background: var(--brown-100);
+  color: var(--primary-deep);
+  font-weight: 600;
+}
+[data-theme="dark"] .filter-radio:has(input:checked) { background: rgba(181,101,47,.18); }
 .filter-radio input { accent-color: var(--primary); width: 16px; height: 16px; }
 
 .filter-fav-toggle {
@@ -1290,12 +1234,12 @@ body.vp-resizing .chips { transition: none !important; }
   width: 100%;
   padding: 11px 14px;
   border-radius: 12px;
-  border: 1.5px solid var(--line);
-  background: var(--white);
+  border: none;
+  background: var(--brown-50);
   color: var(--ink);
   font-size: .92rem;
   font-weight: 600;
-  transition: border-color .15s, background .15s;
+  transition: background .15s;
 }
 .filter-fav-toggle .ff-heart { color: var(--ink-faint); transition: color .15s; font-size: 1.05rem; }
 .filter-fav-toggle .ff-count {
@@ -1308,10 +1252,10 @@ body.vp-resizing .chips { transition: none !important; }
   font-size: .78rem;
   text-align: center;
 }
-.filter-fav-toggle:hover { border-color: var(--brown-300); }
+.filter-fav-toggle:hover { background: var(--brown-100); }
 .filter-fav-toggle.on {
-  border-color: var(--danger);
-  background: rgba(220,53,69,.06);
+  background: rgba(220,53,69,.10);
+  color: var(--danger-deep);
 }
 .filter-fav-toggle.on .ff-heart { color: var(--danger); }
 
@@ -1616,17 +1560,18 @@ body.vp-resizing .chips { transition: none !important; }
 .staff-login-link {
   margin-top: 8px;
   background: transparent;
-  border: 1px solid var(--line);
+  border: none;
   color: var(--ink-soft);
   padding: 6px 14px;
   border-radius: 999px;
   font-size: .8rem;
   font-weight: 500;
   cursor: pointer;
+  transition: color .15s, background .15s;
 }
 .staff-login-link:hover {
   color: var(--primary-deep);
-  border-color: var(--brown-300);
+  background: var(--brown-50);
 }
 
 /* ==========================================================
@@ -1982,10 +1927,11 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
 .qty-row button {
   width: 26px; height: 26px;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--cream);
+  border: none;
+  background: var(--brown-50);
   font-weight: 700;
   color: var(--ink);
+  transition: background .15s;
 }
 .qty-row button:hover { background: var(--brown-100); }
 .qty-row .edit,
@@ -2285,6 +2231,17 @@ body.chat-open .fab-chat { opacity: 0; pointer-events: none; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .check-row { display: flex; flex-wrap: wrap; gap: 12px; }
 .check-row label { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); }
+/* .check-row is sometimes the <label> itself (a checkbox + its text)
+   rather than a container of labels. Then the rule above never lands,
+   and `.modal-card form label { display: grid }` stacks the box over
+   the text — so pin the inline layout here too. */
+label.check-row {
+  display: flex !important;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
 
 /* ==========================================================
    MODERN CHECKBOX + RADIO  (unified, app-wide)
@@ -2587,8 +2544,159 @@ html[data-theme="dark"] textarea::placeholder {
    ========================================================== */
 .small-card { max-width: 420px; }
 .auth-card  { max-width: 420px; }
+.auth-form { display: grid; gap: 14px; }
 .auth-card .auth-form  { padding: 22px var(--modal-pad-x) 24px; }
 .auth-form .hint { margin-top: 0; text-align: center; }
+
+/* ==========================================================
+   COMPOSED AUTH CARD  (sign in / sign up / reset password)
+   Centered badge + title + subtitle instead of the standard
+   .modal-head bar — reads as one composed moment rather than a
+   utility dialog. See DESIGN.md "Auth Card" for the full spec.
+   ========================================================== */
+.auth-card-composed { position: relative; }
+.auth-card-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1;
+}
+.auth-card-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 30px var(--modal-pad-x) 4px;
+}
+.auth-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--white);
+  overflow: hidden;
+  margin-bottom: 6px;
+  box-shadow: var(--shadow-sm);
+}
+.auth-badge img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.auth-card-header h3,
+.auth-card-header h1 {
+  margin: 0;
+  font-size: 1.3rem;
+  font-family: var(--font-display);
+}
+.auth-card-subtitle {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: .88rem;
+}
+.auth-card-footer { margin-top: 4px; }
+
+/* Pill input with a leading icon (and, for passwords, a trailing
+   show/hide toggle) — replaces the label-above-input pattern for
+   the composed auth card specifically; the label text is dropped in
+   favour of the placeholder + icon, matching the reference design.
+   Still a real <label> wrapping the <input> so the hit target and
+   a11y association both hold. */
+.field-icon {
+  position: relative;
+  display: block !important;   /* override .modal-card form label's grid layout */
+}
+.field-icon .field-ico {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 19px;
+  height: 19px;
+  color: var(--ink-faint);
+  pointer-events: none;
+  /* Chrome wraps password inputs in its own <span> for the native
+     credential-manager UI, inserted right after this icon in DOM
+     order — without a z-index that opaque span paints over the
+     icon. */
+  z-index: 1;
+}
+.field-icon input {
+  width: 100%;
+  padding: 13px 16px 13px 46px;
+  border-radius: 999px;
+  border: none;
+  background: var(--brown-50);
+  font-size: .92rem;
+}
+.field-icon input:focus {
+  background: var(--white);
+  box-shadow: none;
+}
+.field-icon:has(.field-toggle-text) input { padding-right: 68px; }
+
+.field-toggle-text {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  font-size: .8rem;
+  font-weight: 700;
+  color: var(--ink-faint);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.field-toggle-text:hover { background: var(--brown-100); color: var(--ink-soft); }
+.field-toggle-text[aria-pressed="true"] { color: var(--primary); }
+
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear { display: none; }
+.field-icon input[data-pw-enhanced]::-webkit-textfield-decoration-container {
+  display: none !important;
+}
+.field-icon span:has(> input[data-pw-enhanced]) > button {
+  display: none !important;
+}
+
+.auth-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -4px;
+}
+.auth-row .check-row label,
+.auth-row .check-row { font-size: .85rem; color: var(--ink-soft); }
+.auth-row .check-row input {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border-width: 1.6px;
+}
+.auth-row .check-row input::after { width: 4px; height: 7px; }
+.auth-row .link-mini { padding: 0; }
+
+/* Inverted primary — near-black fill (light) / near-white fill
+   (dark) instead of the usual brown-500. Reserved for the ONE
+   highest-emphasis action on the composed auth card, matching the
+   reference's high-contrast "Sign In" button; every other primary
+   button in the app stays brown-500 (see DESIGN.md "The One Accent
+   Rule" — this is a deliberate, scoped exception, not a new
+   competing accent). */
+.btn-invert {
+  background: var(--ink);
+  color: var(--cream);
+}
+.btn-invert:hover { background: var(--ink-soft); }
+[data-theme="dark"] .btn-invert { background: var(--ink); color: var(--cream); }
+[data-theme="dark"] .btn-invert:hover { background: #cfd3d9; color: #14181d; }
 code {
   background: var(--brown-50);
   padding: 1px 6px;
@@ -2656,8 +2764,8 @@ body.admin-open { overflow: hidden; }
   border-radius: 999px;
   font-size: .76rem;
   font-weight: 600;
-  border: 1px solid var(--line);
-  background: var(--white);
+  border: none;
+  background: var(--brown-50);
   color: var(--ink-soft);
   white-space: nowrap;
 }
@@ -2673,7 +2781,7 @@ body.admin-open { overflow: hidden; }
 .sync-badge[data-state="offline"] .sync-dot { background: #9aa0a6; }
 .sync-badge[data-state="error"]   .sync-dot { background: var(--danger); animation: syncPulse 1s ease-in-out infinite; }
 .sync-badge[data-state="offline"],
-.sync-badge[data-state="error"]   { color: var(--danger); border-color: var(--danger); }
+.sync-badge[data-state="error"]   { color: var(--danger); background: rgba(220,53,69,.10); }
 @keyframes syncPulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: .35; }
@@ -2842,8 +2950,8 @@ body.admin-open { overflow: hidden; }
 
 .kds-ticket {
   background: var(--white);
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--line-strong);
+  border: none;
+  box-shadow: var(--shadow-sm);
   border-radius: 10px;
   padding: 10px 12px;
   display: grid;
@@ -2853,10 +2961,12 @@ body.admin-open { overflow: hidden; }
   user-select: none;
   transition: box-shadow .15s, transform .12s, opacity .15s;
 }
-.kds-ticket:hover { box-shadow: var(--shadow-sm, 0 2px 8px rgba(0,0,0,.08)); }
+.kds-ticket:hover { box-shadow: var(--shadow); }
 .kds-ticket.dragging { opacity: .4; }
-.kds-ticket.aging-warn { border-left-color: #C9A227; }
-.kds-ticket.aging-late { border-left-color: #D14B4B; }
+.kds-ticket.aging-warn { background: rgba(201,162,39,.10); }
+.kds-ticket.aging-late { background: rgba(209,75,75,.10); }
+[data-theme="dark"] .kds-ticket.aging-warn { background: rgba(201,162,39,.16); }
+[data-theme="dark"] .kds-ticket.aging-late { background: rgba(209,75,75,.16); }
 .kds-ticket.kds-new { animation: kdsNew 1.4s ease-out 2; }
 @keyframes kdsNew {
   0%   { box-shadow: 0 0 0 0 rgba(201,162,39,.55); }
@@ -2884,8 +2994,8 @@ body.admin-open { overflow: hidden; }
 .kds-total { font-weight: 700; color: var(--ink); }
 .kds-actions { display: inline-flex; gap: 4px; }
 .kds-mini {
-  border: 1px solid var(--line);
-  background: var(--white);
+  border: none;
+  background: var(--brown-50);
   color: var(--ink-soft);
   border-radius: 8px;
   width: 30px;
@@ -2894,10 +3004,10 @@ body.admin-open { overflow: hidden; }
   cursor: pointer;
   display: inline-grid;
   place-items: center;
-  transition: border-color .15s, color .15s, background .15s;
+  transition: color .15s, background .15s;
 }
-.kds-mini:hover { border-color: var(--line-strong); color: var(--ink); }
-.kds-mini-danger:hover { border-color: #D14B4B; color: #D14B4B; }
+.kds-mini:hover { background: var(--brown-100); color: var(--ink); }
+.kds-mini-danger:hover { background: rgba(220,53,69,.12); color: #D14B4B; }
 .kds-advance {
   width: 100%;
   padding: 11px;
@@ -2923,18 +3033,18 @@ body.admin-open { overflow: hidden; }
 .orders-list { display: grid; gap: 12px; }
 .order-card {
   background: var(--white);
-  border: 1px solid var(--line);
+  border: none;
   border-radius: var(--radius);
   padding: 14px 16px;
   box-shadow: var(--shadow-sm);
   display: grid;
   gap: 8px;
+  transition: box-shadow .15s;
 }
 /* Multi-select (cancel/delete) mode — click a card to toggle it. */
 .order-card.selectable { cursor: pointer; }
-.order-card.selectable:hover { border-color: var(--brown-300); }
+.order-card.selectable:hover { box-shadow: var(--shadow); }
 .order-card.selected {
-  border-color: var(--primary);
   background: rgba(181,101,47, 0.22);
   box-shadow: inset 0 0 0 2px var(--primary);
 }
@@ -3020,16 +3130,17 @@ body.admin-open { overflow: hidden; }
 .status-cancelled { background: rgba(220, 53, 69, 0.15); color: var(--danger); }
 
 /* Whole-card visual cues so admins can scan a long list and tell at a glance
-   which orders need attention vs. which are done. */
+   which orders need attention vs. which are done. Status is already spelled
+   out on the .status-pill badge every card carries, so the cue here is a
+   full-card background tint (not a side-stripe accent) — the same tint
+   language selection/active states use everywhere else in the system. */
 .order-card[data-status="pending"] {
-  border-left: 5px solid var(--yellow-700);
+  background: var(--yellow-50);
 }
 .order-card[data-status="preparing"] {
-  border-left: 5px solid var(--primary);
-  background: linear-gradient(90deg, var(--brown-50) 0%, var(--white) 30%);
+  background: var(--brown-50);
 }
 .order-card[data-status="served"] {
-  border-left: 5px solid #3A6E3B;
   background: #F4FAF1;
   opacity: .78;
 }
@@ -3038,7 +3149,6 @@ body.admin-open { overflow: hidden; }
   text-decoration: none;
 }
 .order-card[data-status="cancelled"] {
-  border-left: 5px solid var(--danger);
   background: #FBF1F2;
   opacity: .72;
 }
@@ -3046,6 +3156,10 @@ body.admin-open { overflow: hidden; }
   text-decoration: line-through;
   text-decoration-thickness: 2px;
 }
+[data-theme="dark"] .order-card[data-status="pending"]    { background: var(--yellow-50); }
+[data-theme="dark"] .order-card[data-status="preparing"]  { background: var(--brown-50); }
+[data-theme="dark"] .order-card[data-status="served"]     { background: rgba(58,110,59,.18); }
+[data-theme="dark"] .order-card[data-status="cancelled"]  { background: rgba(220,53,69,.14); }
 [data-theme="dark"] .order-card[data-status="preparing"] {
   background: linear-gradient(90deg, var(--brown-100) 0%, var(--white) 30%);
 }
@@ -3230,9 +3344,8 @@ body.admin-open { overflow: hidden; }
   padding: 12px 14px;
 }
 .danger-card {
-  background: var(--white);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--danger);
+  background: rgba(220,53,69,.06);
+  border: none;
   border-radius: var(--radius);
   padding: 14px 18px;
   margin-bottom: 12px;
@@ -3247,8 +3360,11 @@ body.admin-open { overflow: hidden; }
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 90px;
-  transform: translate(-50%, 80px);
+  /* Below the fixed topbar (--topbar-h) rather than the very edge of
+     the viewport, so it doesn't sit flush under the notch/status bar
+     on mobile or get clipped by the topbar itself on desktop. */
+  top: calc(var(--topbar-h, 87px) + 12px);
+  transform: translate(-50%, -80px);
   background: var(--ink);
   color: var(--cream);
   padding: 11px 18px;
@@ -3262,8 +3378,8 @@ body.admin-open { overflow: hidden; }
   max-width: 92vw;
   text-align: center;
   /* Never intercept taps — it's a passive notification. Without this
-     the (invisible, opacity:0) toast box sits over the chat composer
-     and swallows taps on the input + recording buttons on mobile. */
+     the (invisible, opacity:0) toast box sits over page content
+     and swallows taps underneath it. */
   pointer-events: none;
 }
 .toast.show { transform: translate(-50%, 0); opacity: 1; }
@@ -3562,7 +3678,7 @@ body.admin-open { overflow: hidden; }
   margin-left: auto;
   margin-right: 8px;
   padding: 4px 10px;
-  border: 1px solid var(--primary);
+  border: none;
   border-radius: 999px;
   background: rgba(181,101,47, 0.18);
   color: var(--ink);
@@ -3691,7 +3807,7 @@ body.admin-open { overflow: hidden; }
   width: 100%;
   text-align: left;
   padding: 10px 12px;
-  border: 1px solid var(--line);
+  border: none;
   border-radius: var(--radius);
   background: var(--white);
   /* <button> doesn't inherit text colour by default, so set it
@@ -3699,16 +3815,16 @@ body.admin-open { overflow: hidden; }
      dark default and disappear in dark mode. */
   color: var(--ink);
   cursor: pointer;
-  transition: background .12s, border-color .12s;
+  transition: background .12s;
 }
-.chat-thread:hover { background: var(--brown-50); border-color: var(--brown-300); }
-.chat-thread.unread { border-color: var(--primary); background: var(--brown-50); }
-/* Currently-open conversation (two-pane desktop). */
+.chat-thread:hover { background: var(--brown-50); }
+.chat-thread.unread { background: var(--brown-50); }
+/* Currently-open conversation (two-pane desktop): same solid-fill
+   selection language as chips/filters, not a side-stripe accent. */
 .chat-thread.active {
-  border-color: var(--primary);
   background: var(--brown-100);
-  box-shadow: inset 3px 0 0 var(--primary);
 }
+[data-theme="dark"] .chat-thread.active { background: rgba(181,101,47,.18); }
 .chat-thread .ct-avatar {
   flex: 0 0 auto;
   width: 40px; height: 40px;
@@ -3810,7 +3926,7 @@ body.admin-open { overflow: hidden; }
 .admin-edit-row .qty-stepper { flex: none; }
 
 /* Stronger emphasis for the "reset everything" danger card */
-.danger-card-strong { border-color: var(--danger, #c0392b); }
+.danger-card-strong { background: rgba(220,53,69,.12); }
 
 /* Admin order-card chat button: unread-message dot */
 .chat-act-btn { position: relative; }
@@ -3933,6 +4049,36 @@ body.admin-open { overflow: hidden; }
   gap: 8px;
 }
 .btn-cancel-grace:hover { background: var(--danger-deep); }
+
+/* ==========================================================
+   CUSTOMER — DELETE ACCOUNT  (15-day grace period)
+   ========================================================== */
+.btn-link-danger {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  background: none;
+  border: none;
+  color: var(--ink-soft);
+  font-size: .8rem;
+  text-align: center;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.btn-link-danger:hover { color: var(--danger); }
+.danger-zone {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: rgba(220, 53, 69, .07);
+  display: grid;
+  gap: 10px;
+}
+.danger-zone p { margin: 0; color: var(--danger-deep); }
+[data-theme="dark"] .danger-zone p { color: #ff8a94; }
+
 /* ==========================================================
    CUSTOMER — THANK-YOU OVERLAY
    ========================================================== */
@@ -4098,31 +4244,35 @@ body.admin-open { overflow: hidden; }
   padding: 10px 12px;
   border-radius: var(--radius);
   background: var(--white);
-  border-left: 4px solid var(--primary);
+  border: none;
   box-shadow: var(--shadow-lg);
   transform: translateX(120%);
   opacity: 0;
   transition: transform .22s cubic-bezier(.2, .8, .2, 1), opacity .15s;
 }
 .admin-toast.show { transform: translateX(0); opacity: 1; }
-.admin-toast.variant-success { border-left-color: #3A6E3B; }
-.admin-toast.variant-danger  { border-left-color: var(--danger); }
-.admin-toast.variant-info    { border-left-color: var(--primary); }
+.admin-toast.variant-success { background: #EAF6E7; }
+.admin-toast.variant-danger  { background: rgba(220,53,69,.10); }
+.admin-toast.variant-info    { background: var(--brown-50); }
+[data-theme="dark"] .admin-toast.variant-success { background: rgba(58,110,59,.22); }
+[data-theme="dark"] .admin-toast.variant-danger  { background: rgba(220,53,69,.18); }
 .admin-toast-body  { flex: 1; font-size: .88rem; }
 .admin-toast-actions { display: inline-flex; gap: 4px; align-items: center; }
 .admin-toast-undo,
 .admin-toast-close {
   background: transparent;
-  border: 1px solid var(--line);
+  border: none;
   color: var(--ink);
   padding: 4px 10px;
   border-radius: 8px;
   font-size: .8rem;
   font-family: inherit;
   cursor: pointer;
+  transition: background .15s;
 }
 .admin-toast-undo { font-weight: 600; }
 .admin-toast-undo:hover  { background: var(--brown-100); }
+.admin-toast-close:hover { background: rgba(0,0,0,.08); }
 .admin-toast-close { padding: 4px 8px; }
 
 /* ==========================================================
@@ -4235,11 +4385,12 @@ body.admin-open { overflow: hidden; }
 .register-shell { width: 100%; max-width: 440px; }
 .register-card {
   background: var(--white);
-  border: 1px solid var(--line);
+  border: none;
   border-radius: var(--radius-lg);
   padding: 28px 26px;
   box-shadow: var(--shadow-lg);
 }
+.register-card .auth-card-header { padding-top: 0; }
 .register-head {
   text-align: center;
   margin-bottom: 20px;

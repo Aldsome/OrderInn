@@ -11,8 +11,8 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=75" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=83" />
 
   <script>
     (function () {
@@ -152,22 +152,15 @@
            (hidden) only because the admin header logic references it. -->
       <button class="link-mini" id="changeTableBtn" hidden>change</button>
 
-      <!-- Customer's active-order status banner (poll-driven).
-           After a few seconds it auto-collapses the status into a small
-           cube on the right and reveals an auto-scrolling best-seller
-           carousel in the freed space. Tapping the cube (‹) restores it. -->
+      <!-- Auto-scrolling best-seller carousel — always shown (it's the
+           shop's "here's what's good" pitch, not an order-status thing;
+           live STATUS lives on the My Orders pill's count badge).
+           Starts `hidden` only so an empty strip doesn't flash before
+           showBestSellerCarousel() fills it on boot. -->
       <div class="order-status-banner container" id="orderStatusBanner" hidden>
-        <div class="osb-carousel" id="osbCarousel" aria-label="Popular picks" aria-hidden="true">
+        <div class="osb-carousel" id="osbCarousel" aria-label="Popular picks">
           <div class="osb-track" id="osbTrack"></div>
         </div>
-        <button type="button" class="status-banner-btn" id="orderStatusBtn">
-          <span class="status-icon" id="bannerStatusIcon">⏳</span>
-          <div class="status-text">
-            <strong>Order #<span id="bannerOrderNumber">—</span></strong>
-            <small id="bannerStatusText">Sent to kitchen</small>
-          </div>
-          <span class="status-arrow" aria-hidden="true"></span>
-        </button>
       </div>
     </header>
 
@@ -545,27 +538,74 @@
        STAFF LOGIN MODAL  (admin-only, no register)
        ========================================================== -->
   <div class="modal" id="staffLoginModal" aria-hidden="true">
-    <div class="modal-card auth-card" role="dialog" aria-labelledby="staffLoginTitle">
-      <header class="modal-head">
-        <h3 id="staffLoginTitle">Staff Login</h3>
-        <button class="icon-btn close-btn" id="closeStaffLoginBtn" aria-label="Close">✕</button>
-      </header>
-
+    <div class="modal-card auth-card auth-card-composed" role="dialog" aria-labelledby="staffLoginTitle">
+      <button class="icon-btn close-btn auth-card-close" id="closeStaffLoginBtn" aria-label="Close">✕</button>
+      <div class="auth-card-header">
+        <span class="auth-badge" aria-hidden="true">
+          <img src="icon/brand-logo.png" alt="" />
+        </span>
+        <h3 id="staffLoginTitle">Staff sign in</h3>
+        <p class="auth-card-subtitle">Sign in to the OrderInn admin panel</p>
+      </div>
       <form id="staffLoginForm" class="auth-form">
-        <label>Email
-          <input type="email" name="email" required autocomplete="username" placeholder="you@email.com" />
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 6.5A1.5 1.5 0 0 1 4.5 5h15A1.5 1.5 0 0 1 21 6.5v11A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-11Z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m4 7 8 6 8-6"/></svg>
+          <input type="email" name="email" required autocomplete="username" placeholder="Email address" />
         </label>
-        <label>Password
-          <input type="password" name="password" required autocomplete="current-password" minlength="8" />
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 11V8a6 6 0 1 1 12 0v3"/><rect x="4.5" y="11" width="15" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          <input type="password" name="password" required autocomplete="current-password" minlength="8" placeholder="Password" id="staffLoginPassword" />
+          <button type="button" class="field-toggle-text" id="staffLoginPasswordToggle" aria-label="Show password" aria-pressed="false">Show</button>
         </label>
         <p class="form-error" id="staffLoginError" hidden></p>
-        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
-        <p class="hint muted small">
+        <button type="submit" class="btn btn-primary btn-block">Sign In <span aria-hidden="true">→</span></button>
+
+        <div class="auth-divider"><span>or</span></div>
+
+        <button type="button" class="btn btn-google btn-block" id="staffGoogleSignInBtn">
+          <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
+            <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.71v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.61z"/>
+            <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+            <path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.05l3.01-2.33z"/>
+            <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+          </svg>
+          <span>Sign in with Google</span>
+        </button>
+        <p class="hint muted small" style="margin-top:6px;">
+          New staff signing in with Google will still be asked for the invite code.
+        </p>
+
+        <p class="hint muted small auth-card-footer">
           <a href="register.html" class="link-mini">Create staff account</a>
         </p>
-        <p class="hint muted small" style="margin-top:4px;">
+        <p class="hint muted small" style="margin-top:4px; text-align:center;">
           <a href="?reset=1" class="link-mini">Having issues? Reset app data on this device</a>
         </p>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       STAFF INVITE CODE MODAL  (shown only when a staff member
+       signs in with Google for the first time, no matching admin
+       account yet — mirrors the invite-code gate on the manual
+       "Create staff account" form so Google can't be used to skip it)
+       ========================================================== -->
+  <div class="modal" id="staffInviteModal" aria-hidden="true">
+    <div class="modal-card auth-card" role="dialog" aria-labelledby="staffInviteTitle">
+      <header class="modal-head">
+        <h3 id="staffInviteTitle">Staff invite code</h3>
+        <button class="icon-btn close-btn" id="closeStaffInviteBtn" aria-label="Close">✕</button>
+      </header>
+      <form id="staffInviteForm" class="auth-form">
+        <p class="muted small" id="staffInviteEmailNote"></p>
+        <label>Invite code
+          <input type="text" name="inviteCode" required autocomplete="off"
+                 placeholder="BB-XXXX-XXXX-XXXX" spellcheck="false" />
+          <small class="hint muted">Ask an existing admin for the current code.</small>
+        </label>
+        <p class="form-error" id="staffInviteError" hidden></p>
+        <button type="submit" class="btn btn-primary btn-block">Continue</button>
       </form>
     </div>
   </div>
@@ -574,12 +614,40 @@
        CUSTOMER LOGIN MODAL  (earns points / vouchers / loyalty)
        ========================================================== -->
   <div class="modal" id="customerLoginModal" aria-hidden="true">
-    <div class="modal-card auth-card" role="dialog" aria-labelledby="customerLoginTitle">
-      <header class="modal-head">
-        <h3 id="customerLoginTitle">Sign in</h3>
-        <button class="icon-btn close-btn" id="closeCustomerLoginBtn" aria-label="Close">✕</button>
-      </header>
-      <div class="auth-form">
+    <div class="modal-card auth-card auth-card-composed" role="dialog" aria-labelledby="customerLoginTitle">
+      <button class="icon-btn close-btn auth-card-close" id="closeCustomerLoginBtn" aria-label="Close">✕</button>
+      <div class="auth-card-header">
+        <span class="auth-badge" aria-hidden="true">
+          <img src="icon/brand-logo.png" alt="" />
+        </span>
+        <h3 id="customerLoginTitle">Welcome back</h3>
+        <p class="auth-card-subtitle">Sign in to continue to OrderInn</p>
+        <p class="auth-card-note">Optional — sign in to save your order history and unlock promo discounts and future freebies.</p>
+      </div>
+      <form id="customerLoginForm" class="auth-form">
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 6.5A1.5 1.5 0 0 1 4.5 5h15A1.5 1.5 0 0 1 21 6.5v11A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-11Z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m4 7 8 6 8-6"/></svg>
+          <input type="email" name="email" required autocomplete="username" placeholder="Email address" />
+        </label>
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 11V8a6 6 0 1 1 12 0v3"/><rect x="4.5" y="11" width="15" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          <input type="password" name="password" required autocomplete="current-password" placeholder="Password" id="customerLoginPassword" />
+          <button type="button" class="field-toggle-text" id="customerLoginPasswordToggle" aria-label="Show password" aria-pressed="false">Show</button>
+        </label>
+
+        <div class="auth-row">
+          <label class="check-row">
+            <input type="checkbox" name="remember" />
+            <span>Remember me</span>
+          </label>
+          <button type="button" class="link-mini" id="forgotPasswordBtn">Forgot password?</button>
+        </div>
+
+        <p class="form-error" id="customerLoginError" hidden></p>
+        <button type="submit" class="btn btn-primary btn-block">Sign In <span aria-hidden="true">→</span></button>
+
+        <div class="auth-divider"><span>or</span></div>
+
         <button type="button" class="btn btn-google btn-block" id="googleSignInBtn">
           <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
             <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.71v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.61z"/>
@@ -587,22 +655,39 @@
             <path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.05l3.01-2.33z"/>
             <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
           </svg>
-          <span>Continue with Google</span>
+          <span>Sign in with Google</span>
         </button>
-        <div class="auth-divider"><span>or</span></div>
-      </div>
-      <form id="customerLoginForm" class="auth-form">
-        <label>Email
-          <input type="email" name="email" required autocomplete="username" placeholder="you@email.com" />
-        </label>
-        <label>Password
-          <input type="password" name="password" required autocomplete="current-password" />
-        </label>
-        <p class="form-error" id="customerLoginError" hidden></p>
-        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
-        <p class="hint muted small">
-          New here? <a href="signup.html" class="link-mini">Create an account</a> — earn points &amp; rewards.
+
+        <p class="hint muted small auth-card-footer">
+          Don't have an account? <a href="signup.html" class="link-mini">Sign up</a>
         </p>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================
+       RESET PASSWORD MODAL  (opened after clicking the "Forgot
+       password?" email link — a recovery session is already active)
+       ========================================================== -->
+  <div class="modal" id="resetPasswordModal" aria-hidden="true">
+    <div class="modal-card auth-card auth-card-composed" role="dialog" aria-labelledby="resetPasswordTitle">
+      <button class="icon-btn close-btn auth-card-close" id="closeResetPasswordBtn" aria-label="Close">✕</button>
+      <div class="auth-card-header">
+        <span class="auth-badge" aria-hidden="true">
+          <img src="icon/brand-logo.png" alt="" />
+        </span>
+        <h3 id="resetPasswordTitle">Set a new password</h3>
+        <p class="auth-card-subtitle">Choose a new password for your account</p>
+      </div>
+      <form id="resetPasswordForm" class="auth-form">
+        <label class="field-icon">
+          <svg class="field-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 11V8a6 6 0 1 1 12 0v3"/><rect x="4.5" y="11" width="15" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+          <input type="password" name="password" required minlength="8" autocomplete="new-password" placeholder="New password" id="resetPasswordInput" />
+          <button type="button" class="field-toggle-text" id="resetPasswordToggle" aria-label="Show password" aria-pressed="false">Show</button>
+        </label>
+        <p class="form-error" id="resetPasswordError" hidden></p>
+        <p class="form-success" id="resetPasswordSuccess" hidden></p>
+        <button type="submit" class="btn btn-primary btn-block">Update password</button>
       </form>
     </div>
   </div>
@@ -647,6 +732,15 @@
         <div class="voucher-list" id="voucherList"></div>
 
         <button class="btn btn-ghost btn-block" id="customerLogoutBtn">Sign out</button>
+
+        <div class="danger-zone" id="deletionPending" hidden>
+          <p class="small">
+            <strong>Account scheduled for deletion.</strong>
+            <span id="deletionDaysLeftText"></span>
+          </p>
+          <button class="btn btn-primary btn-block" id="cancelDeletionBtn">Cancel deletion — keep my account</button>
+        </div>
+        <button class="btn-link-danger" id="deleteAccountBtn">Delete my account</button>
       </div>
     </div>
   </div>
@@ -674,7 +768,8 @@
   <div class="admin-panel" id="adminPanel" hidden>
     <header class="admin-topbar">
       <div class="admin-brand">
-        <span class="brand-mark sm">OI</span>
+        <img class="brand-logo sm" src="icon/brand-logo.png" alt="OrderInn Coffee"
+             onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'brand-mark sm',textContent:Store.brandInitials()}))" />
         <strong>Admin Panel</strong>
       </div>
       <div class="admin-topbar-right">
@@ -782,7 +877,7 @@
               <option value="served">Served</option>
               <option value="all">All</option>
             </select>
-            <button class="btn btn-ghost" id="exportCsvBtn">Export today (.csv)</button>
+            <button class="btn btn-ghost" id="exportCsvBtn">Export today (.xlsx)</button>
             <button class="btn btn-ghost" id="clearServedBtn">Clear served</button>
             <button class="btn btn-ghost" id="orderSelectToggle">Select</button>
             <button class="btn btn-ghost" id="orderSelectAllBtn" hidden>Select all</button>
@@ -935,8 +1030,9 @@
         </div>
 
         <!-- Staff access controls. The invite code is what a new
-             hire needs to register at /register.html. Existing
-             admins can also create accounts directly here. -->
+             hire needs to register at /register.html — they create
+             their own account there (password or Google); an admin
+             can no longer create one directly on their behalf here. -->
         <div class="danger-card">
           <h4>Staff access</h4>
           <p class="muted small">
@@ -949,7 +1045,7 @@
             <button class="btn btn-ghost"  id="copyInviteBtn">Copy</button>
             <button class="btn btn-ghost"  id="rotateInviteBtn">Rotate</button>
           </div>
-          <button class="btn btn-primary" id="openAddStaffBtn">+ Add staff account</button>
+          <button class="btn btn-primary" id="openAddStaffBtn">Copy sign-up link</button>
         </div>
 
         <div class="danger-card">
@@ -1068,33 +1164,6 @@
   </div>
 
   <!-- ==========================================================
-       ADD STAFF MODAL  (admin-only; bypasses the invite code
-       because the caller is already authenticated)
-       ========================================================== -->
-  <div class="modal" id="addStaffModal" aria-hidden="true">
-    <div class="modal-card auth-card" role="dialog" aria-labelledby="addStaffTitle">
-      <header class="modal-head">
-        <h3 id="addStaffTitle">Add staff account</h3>
-        <button class="icon-btn close-btn" id="closeAddStaffBtn" aria-label="Close">✕</button>
-      </header>
-      <form id="addStaffForm" class="auth-form">
-        <label>Display name
-          <input type="text" name="name" required autocomplete="name" />
-        </label>
-        <label>Email
-          <input type="email" name="email" required autocomplete="username" />
-        </label>
-        <label>Password
-          <input type="password" name="password" required minlength="8" autocomplete="new-password" />
-          <small class="hint muted">At least 8 characters. Share it with the staff member after creation.</small>
-        </label>
-        <p class="form-error" id="addStaffError" hidden></p>
-        <button type="submit" class="btn btn-primary btn-block">Create account</button>
-      </form>
-    </div>
-  </div>
-
-  <!-- ==========================================================
        MODIFY ORDER MODAL  (admin) — edit quantities / remove items
        on an order that hasn't started preparing yet
        ========================================================== -->
@@ -1146,9 +1215,13 @@
   <div class="admin-toast-stack" id="adminToastStack" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <!-- Admin "Export today" report: workbook generation + the bar/line
+       chart embedded into it. Only exercised from the admin panel. -->
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="config.js?v=1"></script>
-  <script src="store.js?v=43"></script>
+  <script src="store.js?v=47"></script>
   <script src="common.js?v=2"></script>
-  <script src="script.js?v=90"></script>
+  <script src="script.js?v=96"></script>
 </body>
 </html>
