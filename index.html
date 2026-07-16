@@ -1042,6 +1042,21 @@
           <p class="form-error" id="grantVoucherMsg" hidden></p>
         </div>
 
+        <!-- Table QR: one generic QR that just opens the ordering app.
+             Not table-specific — print it once, place it anywhere.
+             qr.html generates + prints/downloads it, deriving the live
+             URL from its own location so it works on GitHub Pages too. -->
+        <div class="danger-card">
+          <h4>Table QR code</h4>
+          <p class="muted small">
+            A single QR that opens the ordering app. Print it and place it on
+            tables, the counter, or a poster — guests scan it with their phone
+            camera, no app install needed. Works kiosk-style too, so a QR is
+            optional.
+          </p>
+          <a class="btn btn-primary" href="qr.html" target="_blank" rel="noopener">Open QR generator</a>
+        </div>
+
         <!-- Staff access controls. The invite code is what a new
              hire needs to register at /register.html — they create
              their own account there (password or Google); an admin
