@@ -2220,6 +2220,28 @@ const Store = {
      wrong code never starts a signUp call. LOCAL mode falls through
      to registerAccount exactly as it always has (skipInviteCheck:true
      since the code was already validated above). */
+  /* Turns a Supabase signUp() error into a message a user can act on.
+     The important case: with "Confirm email" ON, signUp sends a
+     confirmation email, and if the SMTP provider rejects the address
+     (disposable domains like mailinator, an unverified sender, a
+     provider outage) Supabase returns a 500 with an EMPTY message —
+     which rendered as "{}" in the form. Map that to something real. */
+  _signupError(error) {
+    const raw = (error && (error.message || error.error_description || error.msg)) || '';
+    if (/already registered|already exists|user.*exists/i.test(raw)) {
+      return 'An account with that email already exists.';
+    }
+    if (/invalid.*email|email.*invalid/i.test(raw)) {
+      return 'That email address looks invalid — please check it.';
+    }
+    // 5xx or empty → almost always the confirmation email failed to send.
+    if (!raw || (error && error.status >= 500) || /error sending|smtp|mail/i.test(raw)) {
+      return 'We couldn’t send the confirmation email to that address. ' +
+             'Try a different email — some disposable or unverified addresses are rejected.';
+    }
+    return raw;
+  },
+
   async signupAdmin({ email, name, password, inviteCode }) {
     email = String(email || '').trim().toLowerCase();
     name  = String(name  || '').trim();
@@ -2243,10 +2265,7 @@ const Store = {
     const { data, error } = await sb.auth.signUp({
       email, password, options: { data: { display_name: name } },
     });
-    if (error) {
-      throw new Error(/already registered|already exists/i.test(error.message)
-        ? 'An account with that email already exists' : (error.message || 'Could not create account'));
-    }
+    if (error) throw new Error(Store._signupError(error));
     // Same two outcomes as signupCustomer, depending on the project's
     // "Confirm email" Auth setting — see that function for detail.
     if (data.session) {
@@ -2303,10 +2322,7 @@ const Store = {
     const { data, error } = await sb.auth.signUp({
       email, password, options: { data: { display_name: name } },
     });
-    if (error) {
-      throw new Error(/already registered|already exists/i.test(error.message)
-        ? 'An account with that email already exists' : (error.message || 'Could not create account'));
-    }
+    if (error) throw new Error(Store._signupError(error));
     // Two possible outcomes depending on the project's Auth settings
     // (Supabase dashboard -> Authentication -> Providers -> Email ->
     // "Confirm email"):
